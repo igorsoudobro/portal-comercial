@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<!-- FASE 3: login Microsoft para buscar os dados no OneDrive -->
+<!-- FASE 3: login Microsoft para buscar os dados no SharePoint (Dobro BI) -->
 <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
 <script>
 if(!window.msal){
@@ -346,8 +346,8 @@ table.mapa-tbl tbody tr:hover td{background:#F0F3FA}
 /* ===== dados comprimidos (gzip+base64), descompactados no navegador em runtime ===== */
 /* ============================================================
    FASE 3 — os dados NAO ficam mais embutidos aqui.
-   Vem de dados_dashboard.json na pasta OneDrive - Dobro, baixado via
-   Microsoft Graph depois do login Microsoft (MSAL).
+   Vem de dados_dashboard.json na pasta compartilhada do site Dobro BI
+   (Comercial/Trade MKT), baixado via Microsoft Graph depois do login (MSAL).
    O formato e o mesmo de antes: 6 blobs gzip+base64.
    ============================================================ */
 let _Z = null;
@@ -357,6 +357,17 @@ const MS_AUTHORITY = "https://login.microsoftonline.com/organizations";
 const MS_SCOPES    = ["Files.Read.All", "Sites.Read.All", "User.Read"];
 const GRAPH_BASE   = "https://graph.microsoft.com/v1.0";
 const ARQ_DADOS    = "dados_dashboard.json";
+/* O JSON mora numa pasta COMPARTILHADA do site DOBRO BI, nao no OneDrive de
+   ninguem. Ate 30/07/2026 aqui estava "/me/drive", que significa "o OneDrive de
+   quem esta logado" - entao o Portal funcionava apenas para o Igor, e qualquer
+   outra pessoa da Dobro recebia Graph 404 ao abrir o link. Um dashboard da
+   empresa nao pode morar na conta pessoal de uma pessoa.
+   O siteId foi medido em 30/07/2026 (_api/site/id + _api/web/id) e e estavel. */
+const MS_SITE_ID   = "soudobro.sharepoint.com," +
+                     "ed56c3d2-cf1b-4539-84a1-75471fd3cbfc," +
+                     "974cbc5a-dbf6-4640-b622-64d5eadd2156";
+const PASTA_DADOS  = "Comercial/Trade MKT";
+const LOCAL_HUMANO = "Dobro BI > Documentos > Comercial > Trade MKT";
 /* redirectUri calculado da PASTA da pagina atual.
    Nao usar origin + "/": no GitHub Pages a pagina fica numa subpasta
    (/portal-comercial/) e origin sozinho aponta para a raiz do dominio, o que
@@ -397,10 +408,15 @@ async function msToken(){
    a @microsoft.graph.downloadUrl, e depois um fetch NESSA url SEM o header
    Authorization. Ir direto no /content faz o Graph responder 302 para o
    storage, e o header viaja no redirect causando 401 ou erro de CORS. */
-async function _baixarDoOneDrive(){
+async function _baixarOsDados(){
   const token = await msToken();
   if(!token) return null;                       // a pagina vai navegar
-  const url = GRAPH_BASE + "/me/drive/root:/" + encodeURIComponent(ARQ_DADOS);
+  /* Cada SEGMENTO e codificado separado. encodeURIComponent no caminho inteiro
+     transformaria a "/" em %2F e o Graph procuraria um arquivo cujo nome tem
+     barra dentro - 404 garantido. "Trade MKT" tem espaco, por isso precisa. */
+  const caminho = (PASTA_DADOS + "/" + ARQ_DADOS)
+                    .split("/").map(encodeURIComponent).join("/");
+  const url = GRAPH_BASE + "/sites/" + MS_SITE_ID + "/drive/root:/" + caminho;
   const res = await fetch(url, { headers: { Authorization: "Bearer " + token } });
   if(!res.ok){
     const corpo = await res.text();
@@ -431,7 +447,7 @@ async function _unz(b64){
   return JSON.parse(new TextDecoder().decode(buf));
 }
 async function _loadData(){
-  if(!_Z){ _Z = await _baixarDoOneDrive(); }
+  if(!_Z){ _Z = await _baixarOsDados(); }
   if(!_Z) return;                 // esta navegando para o login; volta depois
   [FATO,CALC,BR_SVG,CARTEIRA,CART_MET,CART_DATAS]=await Promise.all(
     [_Z.FATO,_Z.CALC,_Z.BR_SVG,_Z.CARTEIRA,_Z.CART_MET,_Z.CART_DATAS].map(_unz)
@@ -1621,7 +1637,7 @@ el('loginBtn').disabled=true;
 
 /* ============================================================
    FASE 3 — o carregamento agora depende do login Microsoft.
-   Fluxo: sessao Microsoft -> baixa o JSON do OneDrive -> libera o
+   Fluxo: sessao Microsoft -> baixa o JSON do SharePoint -> libera o
    login do Portal (usuario/senha), que continua igual ao de antes.
    Perfis de permissao NAO foram alterados.
    ============================================================ */
@@ -1645,7 +1661,7 @@ async function msEntrar(){
 
 async function msCarregar(){
   try{
-    msStatus('Baixando os dados do OneDrive…');
+    msStatus('Baixando os dados…');
     await _loadData();
     if(!DATA_READY) return;            // navegou para o login
     var i = window.__DADOS_INFO || {};
@@ -1659,10 +1675,15 @@ async function msCarregar(){
     var lg = el('loginScreen'); if(lg) lg.style.display = 'flex';
   }catch(e){
     console.error(e);
+    /* Mensagens que dizem o que FAZER. As duas causas sao diferentes:
+       404 = o pipeline nao publicou o arquivo hoje (problema do Igor);
+       403 = a pessoa nao tem acesso ao site (problema de permissao dela). */
     var extra = '';
     if(e && e.status === 404) extra = ' O arquivo ' + ARQ_DADOS +
-      ' nao foi encontrado na raiz do OneDrive - Dobro.';
-    if(e && e.status === 403) extra = ' Sem permissao de leitura (403).';
+      ' nao esta em ' + LOCAL_HUMANO + '. Isso e do lado da geracao, ' +
+      'nao do seu acesso - avise o Igor.';
+    if(e && e.status === 403) extra = ' Sua conta nao tem acesso a pasta ' +
+      LOCAL_HUMANO + '. Peca acesso ao site Dobro BI.';
     msStatus('Erro ao carregar os dados.' + extra + ' Detalhe: ' +
              (e.message || e), '#b3261e');
   }
