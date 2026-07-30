@@ -205,9 +205,22 @@ table.mapa-tbl tbody tr:hover td{background:#F0F3FA}
 #v-ranking table thead th:first-child{
   position: sticky; left: 0; z-index: 4;   /* canto: acima das duas */
 }
+/* A cor do texto e OBRIGATORIA aqui, nao decoracao: a regra base do Portal e
+   `thead th{ background: var(--navy); color: #fff }`. Ao trocar so o fundo para
+   claro, o texto continuava branco - cabecalho invisivel em Carteira, Ranking e
+   Rentab. por CNPJ (CNPJ, Razao Social, etc. simplesmente nao apareciam).
+   Cometi exatamente este erro no Mix por CNPJ, consertei la em 29/07/2026 e
+   deixei aqui. `!important` porque a regra base tambem casa com estes <th>. */
 #v-carteira table thead th, #v-cnpj table thead th, #v-ranking table thead th{
   position: sticky; top: 0; z-index: 3;
   background: #F6F7F9; box-shadow: 0 1px 0 #E6E8EC;
+  color: var(--navy) !important;
+}
+/* Estas duas tabelas tem CSS proprio (table.cart-tbl th, table.mapa-tbl th) que
+   tambem fixa fundo navy + texto branco. Sem isto, a Carteira volta a sumir. */
+#v-carteira table.cart-tbl thead th,
+#v-ranking table.cart-tbl thead th{
+  background: #F6F7F9 !important; color: var(--navy) !important;
 }
 #mixCnpjOut table tbody tr:hover td:first-child,
 #v-carteira table tbody tr:hover td:first-child,
@@ -239,6 +252,26 @@ table.mapa-tbl tbody tr:hover td{background:#F0F3FA}
   outline: none;
 }
 .chip-todos{ color: var(--muted); font-size: 11.5px; padding: 3px 6px; }
+
+/* ---------- balaozinho de explicacao nos KPIs ----------------------------
+   Usado em Margem bruta e Rentabilidade do Resumo. Explica a CONTA, nunca o
+   valor - pedido do Igor. `cursor: help` para o usuario descobrir que existe. */
+.kpi[data-dica]{ position: relative; cursor: help; }
+.kpi[data-dica]:hover::after{
+  content: attr(data-dica);
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: calc(100% + 8px); width: max-content; max-width: 270px;
+  background: var(--navy); color: #fff; text-align: left;
+  font-size: 11.5px; font-weight: 500; line-height: 1.45;
+  padding: 8px 11px; border-radius: 7px; white-space: normal;
+  box-shadow: 0 6px 20px rgba(14,23,38,.28); z-index: 60;
+  text-transform: none; letter-spacing: normal;
+}
+.kpi[data-dica]:hover::before{
+  content: ''; position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: calc(100% + 2px);
+  border: 6px solid transparent; border-top-color: var(--navy); z-index: 61;
+}
 
 /* ---------- tabela por vendedor do Resumo -------------------------------- */
 .tbl-vend th{ white-space: nowrap; }
@@ -1809,18 +1842,93 @@ function multiOK(filtro, valor){
 }
 window.multiOK = multiOK;
 
+/* ------------------- perfil SUPERVISOR (Fellipe): RCAs + ele --------------- */
+/* Pedido do Igor (30/07/2026): "o user do Fellipe tem que conseguir ter acesso
+   aos filtros e dados, porem apenas dos users RCAs e o dele".
+
+   Duas coisas mudam:
+   1) a lista visivel dele perde 'Cristiane Leão', que o codigo original
+      incluia. Ela nao e RCA e nao esta no pedido.
+   2) ele passa a ter os filtros, que eram exclusivos de admin - mas as opcoes
+      saem apenas dos vendedores que ele pode ver, nao de todos.
+
+   O recorte de seguranca continua sendo VEND_VIS: o filtro escolhe DENTRO do
+   que ele ja podia ver, nunca alarga. Um vendedor comum segue sem filtro. */
+const SUPERVISOR = 'Fellipe Argentati';
+
+function ehSupervisor(){ return !SESSION.isAdmin && SESSION.user === SUPERVISOR; }
+function podeFiltrar(){ return SESSION.isAdmin || ehSupervisor(); }
+window.ehSupervisor = ehSupervisor;
+window.podeFiltrar = podeFiltrar;
+
+window.vendedoresVisiveis = function(){
+  if(SESSION.isAdmin) return null;
+  const u = SESSION.user;
+  if(u === SUPERVISOR){
+    const set = new Set([u]);
+    [...new Set(ROWS.map(r => r.v))].forEach(v => {
+      if(v && v.indexOf('RCA - ') === 0) set.add(v);
+    });
+    return set;
+  }
+  return new Set([u]);
+};
+
+/* Preenche os <select> da barra de filtros para o supervisor e mostra os grupos.
+   Roda dentro do refresh (antes do ativarChips, que le as opcoes desses select)
+   e e idempotente: refaz so quando a lista de opcoes mudaria. */
+function prepararFiltrosSupervisor(){
+  if(!ehSupervisor()) return;
+  const base = ROWS.filter(r => VEND_VIS.has(r.v));
+  const opcoes = [
+    ['admVend',  base.map(r => r.v)],
+    ['admMod',   base.map(r => r.mo)],
+    ['admReg',   base.map(r => r.reg)],
+    ['admUf',    base.map(r => r.uf)],
+    ['admCanal', base.map(r => r.ca)],
+  ];
+  opcoes.forEach(([id, vals]) => {
+    const s = el2(id);
+    if(!s) return;
+    const lista = ['(todos)', ...[...new Set(vals)].filter(Boolean).sort()];
+    const assinatura = lista.join('|');
+    if(s.dataset.supAssinatura === assinatura) return;   // nada mudou
+    s.dataset.supAssinatura = assinatura;
+    s.innerHTML = lista.map(v => '<option>' + v + '</option>').join('');
+    const grupo = el2(id + 'Group');
+    if(grupo) grupo.style.display = '';
+  });
+}
+window.prepararFiltrosSupervisor = prepararFiltrosSupervisor;
+
+/* Pendurar no buildFilters, e NAO so no refresh: o doLogin chama
+   `buildFilters(); buildNav(); showView();` - nunca refresh(). Com o gancho so
+   no refresh, os filtros do supervisor apareciam apenas depois de ele mexer em
+   algum filtro... que nao existia ainda. Impasse que o teste pegou. */
+const _buildFiltersOrig = window.buildFilters;
+window.buildFilters = function(){
+  const r = _buildFiltersOrig.apply(this, arguments);
+  try{
+    prepararFiltrosSupervisor();
+    ativarChips();
+  }catch(e){ console.error('filtros do supervisor:', e); }
+  return r;
+};
+
 window.linhas = function(){
   const ms = new Set(mesesAtivos());
+  const filtra = podeFiltrar();
   return ROWS.filter(r => {
     if(!ms.has(r.m)) return false;
-    if(!SESSION.isAdmin){ if(!VEND_VIS.has(r.v)) return false; }
-    else{
-      if(!multiOK(FILTER.vend, r.v))  return false;
-      if(!multiOK(FILTER.mod,  r.mo)) return false;
-      if(!multiOK(FILTER.reg,  r.reg))return false;
-      if(!multiOK(FILTER.uf,   r.uf)) return false;
-      if(!multiOK(FILTER.canal,r.ca)) return false;
-    }
+    // O recorte por vendedor vem PRIMEIRO e vale para todo nao-admin: o filtro
+    // nunca amplia o que a pessoa pode ver, so recorta dentro dele.
+    if(!SESSION.isAdmin && !VEND_VIS.has(r.v)) return false;
+    if(!filtra) return true;
+    if(!multiOK(FILTER.vend, r.v))  return false;
+    if(!multiOK(FILTER.mod,  r.mo)) return false;
+    if(!multiOK(FILTER.reg,  r.reg))return false;
+    if(!multiOK(FILTER.uf,   r.uf)) return false;
+    if(!multiOK(FILTER.canal,r.ca)) return false;
     return true;
   });
 };
@@ -2012,10 +2120,54 @@ window.verNovosClientes = function(){
 /* ----------------------------------------- 4) Resumo: KPIs + tabela vendedor */
 const vResumoOriginal = VIEWS.find(v => v.id === 'resumo').fn;
 
+/* Faturamento BRUTO no Resumo + balaozinho explicando as duas margens.
+   O bruto e o faturado antes das devolucoes (d.fat); o liquido, que ja existia,
+   e depois (d.fatLiq). Ter os dois lado a lado deixa o peso da devolucao visivel
+   sem precisar abrir o DRE.
+   As dicas descrevem a CONTA e nunca o valor, como o Igor pediu. */
+function ajustarKpisResumo(){
+  const row = document.querySelector('#v-resumo .kpirow');
+  if(!row) return;
+  const d = dre(linhas());
+
+  const acha = (rotulo) => [...row.querySelectorAll('.kpi')].find(k => {
+    const lab = k.querySelector('.lab');
+    return lab && lab.textContent.trim().toLowerCase().indexOf(rotulo) === 0;
+  });
+
+  const liq = acha('faturamento líquido');
+  if(liq && !row.querySelector('#kpiFatBruto')){
+    const dev = d.fat ? Math.abs(d.dev) / d.fat : 0;
+    const box = document.createElement('div');
+    box.className = 'kpi';
+    box.id = 'kpiFatBruto';
+    box.innerHTML = '<div class="lab">Faturamento bruto</div>' +
+      '<div class="val">' + brl(d.fat) + '</div>' +
+      '<div class="sub">antes das devoluções' +
+      (d.fat ? ' (' + pct(dev) + ')' : '') + '</div>';
+    box.dataset.dica = 'Tudo o que foi faturado no período, sem descontar ' +
+      'devolução. O KPI ao lado é o mesmo número já líquido de devoluções.';
+    row.insertBefore(box, liq);          // bruto vem ANTES do liquido
+  }
+
+  const marg = acha('margem bruta');
+  if(marg) marg.dataset.dica =
+    'Margem bruta = (faturamento líquido − CMV) ÷ faturamento líquido. ' +
+    'Faturamento líquido é venda menos devolução. Só o custo da mercadoria ' +
+    'entra aqui: imposto, frete, comissão e bonificação ficam de fora.';
+
+  const rent = acha('rentabilidade');
+  if(rent) rent.dataset.dica =
+    'Rentabilidade = lucro final ÷ faturamento líquido. O lucro final parte da ' +
+    'margem bruta e ainda desconta imposto, frete, comissão e bonificação. ' +
+    'É a margem que sobra de verdade.';
+}
+
 function vResumoNovo(){
   vResumoOriginal();          // monta tudo o que ja existia
   indexarCarteira();
   mostrarCarimbo();
+  ajustarKpisResumo();
 
   const L = linhas();
   const compraram = new Set(L.filter(r => r.venda && r.cn).map(r => r.cn));
@@ -2144,6 +2296,12 @@ function vResumoNovo(){
   }
 }
 VIEWS.find(v => v.id === 'resumo').fn = vResumoNovo;
+VIEWS.find(v => v.id === 'canais').fn = vCanaisNovo;
+VIEWS.find(v => v.id === 'ranking').fn = vRankingNovo;
+/* A captura vem ANTES da troca, sempre: vPenetracaoNovo chama a original por
+   dentro. Se a ordem invertesse, ela chamaria a si mesma. */
+const vPenetracaoOriginal = VIEWS.find(v => v.id === 'penetracao').fn;
+VIEWS.find(v => v.id === 'penetracao').fn = vPenetracaoNovo;
 
 /* ------------- AJUSTE 4: medir a 1a linha do cabecalho do Mix ---------------
    A 2a linha (os percentuais) e sticky com top = altura da 1a. Essa altura muda
@@ -2167,9 +2325,521 @@ function ajustarTopoMix(){
   if(nav && nav.children.length && typeof buildNav === 'function') buildNav();
 })();
 
+/* ------------------- Canais & Ticket: margem bruta e liquida ---------------
+   As colunas que ja existiam ficam INTACTAS, inclusive a de Faturamento, que
+   segue vindo do groupSum (so venda). As duas novas vem do dre() do canal, que
+   e a mesma conta do Resumo e do DRE - por isso a base delas e o faturamento
+   LIQUIDO (venda menos devolucao). Nao unifiquei as duas bases de proposito:
+   mudar a coluna Faturamento mexeria em numero que o Igor ja confere hoje.
+
+   So admin: margem revela custo. */
+function vCanaisNovo(){
+  const L = linhas();
+  const g = groupSum(L, 'ca');
+  const arr = Object.entries(g)
+    .map(([k, o]) => ({k, ...o, clientes: o.cnpjs.size,
+                       ticket: o.nfs ? o.fat / o.nfs : 0}))
+    .sort((a, b) => b.fat - a.fat);
+  const tf = arr.reduce((a, r) => a + r.fat, 0);
+
+  const adm = SESSION.isAdmin;
+  const porCanal = {};
+  L.forEach(r => { const k = r.ca || '(vazio)';
+                   (porCanal[k] = porCanal[k] || []).push(r); });
+  const dCanal = {};
+  Object.keys(porCanal).forEach(k => { dCanal[k] = dre(porCanal[k]); });
+  const dTot = dre(L);
+
+  const thExtra = adm ? '<th>Margem bruta</th><th>Margem líquida</th>' : '';
+  const tdExtra = (k) => {
+    if(!adm) return '';
+    const d = dCanal[k];
+    if(!d || !d.fatLiq) return '<td class="mono">—</td><td class="mono">—</td>';
+    return '<td class="mono" style="color:' + farolCor(d.margem) + ';font-weight:700">'
+         + pct(d.margem) + '</td>'
+         + '<td class="mono" style="color:' + farolCor(d.rent) + ';font-weight:700">'
+         + pct(d.rent) + '</td>';
+  };
+
+  el2('v-canais').innerHTML =
+    '<div class="card"><div class="card-h"><h3>Faturamento e ticket por canal</h3></div>' +
+    '<div class="scroll"><table><thead><tr><th>Canal</th><th>Faturamento</th>' +
+    '<th>% total</th><th>Clientes</th><th>Notas</th><th>Ticket médio</th>' +
+    thExtra + '</tr></thead><tbody>' +
+    arr.map(r =>
+      '<tr><td class="rowlab">' + r.k + '</td>' +
+      '<td class="mono">' + brl(r.fat) + '</td>' +
+      '<td class="mono" style="color:var(--muted)">' + (tf ? pct(r.fat / tf) : '') + '</td>' +
+      '<td class="mono">' + r.clientes + '</td>' +
+      '<td class="mono">' + n0(r.nfs) + '</td>' +
+      '<td class="mono">' + brl(r.ticket) + '</td>' + tdExtra(r.k) + '</tr>').join('') +
+    '<tr class="tot"><td class="tot">Total</td>' +
+    '<td class="mono tot">' + brl(tf) + '</td><td class="tot"></td>' +
+    '<td class="mono tot">' +
+      new Set(L.filter(r => r.venda && r.cn).map(r => r.cn)).size + '</td>' +
+    '<td class="mono tot">' + n0(arr.reduce((a, r) => a + r.nfs, 0)) + '</td>' +
+    '<td class="tot"></td>' +
+    (adm ? '<td class="mono tot">' + pct(dTot.margem) + '</td>' +
+           '<td class="mono tot">' + pct(dTot.rent) + '</td>' : '') +
+    '</tr></tbody></table></div>' +
+    (adm ? '<div class="note"><b>As duas margens</b> usam a mesma conta do ' +
+           'Resumo e do DRE, sobre o faturamento <b>líquido</b> do canal (venda ' +
+           '− devolução). A coluna Faturamento acima é só venda, como sempre foi ' +
+           '— então num canal com muita devolução os dois não se dividem ' +
+           'diretamente. Margem bruta desconta só o CMV; a líquida desconta ' +
+           'também imposto, frete, comissão e bonificação.</div>' : '') +
+    '</div>';
+}
+
+/* ------------------------ Ranking: bonificacao e ticket --------------------
+   Pedido do Igor: bonificacao em valor SO no admin, e ticket em todas as visoes.
+
+   A coluna de bonificacao JA existia e aparecia em valor tambem para vendedor
+   nao-RCA - o pedido, na pratica, e restringir. Para RCA ela aparecia em % e sai
+   junto: se e sensivel em valor, e sensivel em proporcao.
+
+   Ticket do cliente = faturamento liquido / pedidos, mesmo criterio do dre()
+   (pedido = CNPJ + mes distinto). Nao revela custo, entao vai para todos. */
+function vRankingNovo(){
+  const L = linhas();
+  if(!L.length){
+    el2('v-ranking').innerHTML =
+      '<div class="empty">Sem dados nos filtros selecionados.</div>';
+    return;
+  }
+  const isAdm = SESSION.isAdmin;
+  const rca = isRCA();
+  const verNum = verNumeroRent();
+
+  const byCn = {};
+  L.forEach(r => { if(r.cn) (byCn[r.cn] = byCn[r.cn] || []).push(r); });
+  let rows = Object.keys(byCn).map(cn => {
+    const d = dre(byCn[cn]);
+    return {cn, nome: cliName(cn), fat: d.fatLiq, boni: d.boni, lucro: d.lucro,
+            rent: d.rent, ticket: d.ticket, peds: d.nfs};
+  }).filter(r => r.fat > 0);
+  const tot = rows.reduce((a, r) => ({fat: a.fat + r.fat, boni: a.boni + r.boni,
+                                      lucro: a.lucro + r.lucro}),
+                          {fat: 0, boni: 0, lucro: 0});
+  // Ordenar por coluna que saiu da visao deixaria a tabela sem seta e sem
+  // sentido; volto para faturamento nesse caso.
+  if(!isAdm && RANK_SORT.key === 'boni') RANK_SORT = {key: 'fat', dir: -1};
+  if(rca && RANK_SORT.key === 'lucro') RANK_SORT = {key: 'fat', dir: -1};
+  const {key, dir} = RANK_SORT;
+  rows.sort((a, b) => ((a[key] || 0) - (b[key] || 0)) * dir);
+
+  const th = (k, lab) => {
+    const act = RANK_SORT.key === k;
+    const arrow = act ? (RANK_SORT.dir < 0 ? ' ▼' : ' ▲') : '';
+    return '<th class="rank-th" data-k="' + k + '" style="cursor:pointer;' +
+           'text-align:right' + (act ? ';color:var(--navy)' : '') + '">' +
+           lab + arrow + '</th>';
+  };
+
+  let cols;
+  if(rca){
+    cols = [['fat', '% do faturamento'], ['ticket', 'Ticket médio'],
+            ['rent', 'Rentabilidade']];
+  } else if(!isAdm){
+    cols = [['fat', 'Faturamento líq.'], ['ticket', 'Ticket médio'],
+            ['lucro', 'Lucro final'], ['rent', 'Rentabilidade']];
+  } else {
+    cols = [['fat', 'Faturamento líq.'], ['ticket', 'Ticket médio'],
+            ['boni', 'Bonif.+Amostra'], ['lucro', 'Lucro final'],
+            ['rent', 'Rentabilidade']];
+  }
+
+  const head = '<tr><th style="text-align:left">#</th>' +
+               '<th style="text-align:left">Cliente</th>' +
+               cols.map(([k, l]) => th(k, l)).join('') + '</tr>';
+  const fmtVal = (r, k) => {
+    if(k === 'rent') return verNum
+      ? '<span class="mono" style="color:' + farolCor(r.rent) +
+        ';font-weight:700">' + pct(r.rent) + '</span>'
+      : farol(r.rent, false);
+    // Ticket e sempre valor: em % nao diria nada (seria fat/fat do cliente).
+    if(k === 'ticket') return '<span class="mono">' + brl(r.ticket) + '</span>';
+    if(rca){ const base = tot[k] || 0;
+             return '<span class="mono">' + pct(base ? r[k] / base : 0) + '</span>'; }
+    return '<span class="mono">' + brl(r[k]) + '</span>';
+  };
+  const body = rows.slice(0, 100).map((r, i) =>
+    '<tr><td class="mono" style="color:var(--muted)">' + (i + 1) + '</td>' +
+    '<td class="rowlab" title="' + r.cn + ' · ' + n0(r.peds) + ' pedido(s)">' +
+    r.nome.substring(0, 38) + '</td>' +
+    cols.map(([k]) => '<td style="text-align:right">' + fmtVal(r, k) + '</td>')
+        .join('') + '</tr>').join('');
+
+  const nota = isAdm
+    ? 'Valores absolutos do período/filtros selecionados. Clique num cabeçalho para reordenar.'
+    : (rca ? 'Sua carteira, em percentual sobre o seu total. Clique num cabeçalho para reordenar.'
+           : 'Sua carteira. Clique num cabeçalho para reordenar.');
+  el2('v-ranking').innerHTML =
+    '<div class="note"><b>Ranking de clientes</b> — ' + nota +
+    ' <b>Ticket médio</b> = faturamento líquido ÷ pedidos do cliente ' +
+    '(pedido = CNPJ + mês).</div>' +
+    '<div class="card"><div class="card-h"><h3>Clientes por desempenho</h3>' +
+    '<span class="hint">' + rows.length + ' clientes · top 100</span></div>' +
+    '<div class="scroll"><table class="rank-tbl"><thead>' + head +
+    '</thead><tbody>' + body + '</tbody></table></div></div>';
+  document.querySelectorAll('.rank-th').forEach(t =>
+    t.addEventListener('click', () => {
+      const k = t.getAttribute('data-k');
+      if(RANK_SORT.key === k) RANK_SORT.dir *= -1;
+      else RANK_SORT = {key: k, dir: -1};
+      vRankingNovo();
+    }));
+}
+
+/* ------------- Penetracao por SKU: preco medio e share de faturamento ------
+   Pedido do Igor: ao lado do faturamento, o preco medio praticado no SKU e a
+   fatia dele no faturamento.
+
+   Reaproveito a view original inteira e troco SO a tabela de SKU (#penSkuOut),
+   recalculando com a MESMA logica de la (pedido = CNPJ + mes, e L ja e
+   filtrado por r.venda) para as colunas antigas nao mudarem de valor.
+
+   preco medio = faturamento do SKU / quantidade vendida. Nao e o preco de
+   tabela: e o que saiu na nota, ja com desconto. Comparar os dois mostra o
+   desconto medio real - por isso vale a coluna. */
+/* vPenetracaoOriginal e capturado LA EM CIMA, junto da troca do VIEWS.fn:
+   capturar aqui embaixo pegaria a propria vPenetracaoNovo (a troca acontece
+   antes desta linha executar) e a view entraria em recursao infinita. */
+function vPenetracaoNovo(){
+  vPenetracaoOriginal();
+  const out = el2('penSkuOut');
+  if(!out) return;                       // caiu no "sem vendas nos filtros"
+
+  const L = linhas().filter(r => r.venda);
+  const totalPed = new Set(L.filter(r => r.cn).map(r => r.cn + '|' + r.m)).size;
+  if(!totalPed) return;
+
+  const skuPed = {}, skuFat = {}, skuCat = {}, skuQtd = {};
+  L.forEach(r => {
+    if(!r.cn) return;
+    (skuPed[r.sk] = skuPed[r.sk] || new Set()).add(r.cn + '|' + r.m);
+    skuFat[r.sk] = (skuFat[r.sk] || 0) + r.fat;
+    skuQtd[r.sk] = (skuQtd[r.sk] || 0) + r.q;
+    skuCat[r.sk] = r.cat;
+  });
+  const fatTot = Object.values(skuFat).reduce((a, v) => a + v, 0);
+  const skuArr = Object.keys(skuPed).map(s => ({
+    k: s, cat: skuCat[s], peds: skuPed[s].size,
+    pen: skuPed[s].size / totalPed,
+    fat: skuFat[s] || 0, q: skuQtd[s] || 0,
+    preco: skuQtd[s] ? (skuFat[s] || 0) / skuQtd[s] : 0,
+    share: fatTot ? (skuFat[s] || 0) / fatTot : 0,
+  }));
+
+  function render(){
+    const sel = el2('penSkuSort');
+    const sort = sel ? sel.value : 'pen';
+    const arr = skuArr.slice().sort((a, b) =>
+      sort === 'fat' ? b.fat - a.fat
+      : sort === 'ped' ? b.peds - a.peds
+      : (b.pen - a.pen || b.fat - a.fat)).slice(0, 30);
+    out.innerHTML =
+      '<table><thead><tr><th>#</th><th>Produto</th><th>Categoria</th>' +
+      '<th>Pedidos c/ SKU</th><th>Penetração</th><th></th><th>Faturamento</th>' +
+      '<th>Preço médio</th><th>Share do fat.</th></tr></thead><tbody>' +
+      arr.map((r, i) =>
+        '<tr><td class="mono" style="color:var(--muted)">' + (i + 1) + '</td>' +
+        '<td class="rowlab">' + prodName(r.k) + '</td>' +
+        '<td>' + r.cat + '</td>' +
+        '<td class="mono">' + n0(r.peds) + '</td>' +
+        '<td class="mono">' + pct(r.pen) + '</td>' +
+        '<td style="width:16%"><div class="bar" style="width:' +
+          Math.max(2, r.pen * 100) + '%"></div></td>' +
+        '<td class="mono">' + brl(r.fat) + '</td>' +
+        '<td class="mono">' + (r.q ? brl(r.preco) : '—') + '</td>' +
+        '<td class="mono" style="color:var(--muted)">' + pct(r.share) +
+        '</td></tr>').join('') +
+      '</tbody></table>' +
+      '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">' +
+      'Top 30 SKUs por ' +
+      (sort === 'fat' ? 'faturamento' : sort === 'ped' ? 'nº de pedidos' : 'penetração') +
+      ' — de ' + skuArr.length + ' SKUs vendidos no recorte. ' +
+      '<b>Preço médio</b> = faturamento ÷ quantidade (o praticado na nota, já ' +
+      'com desconto — não é o preço de tabela). <b>Share do fat.</b> = fatia ' +
+      'do SKU no faturamento do recorte.</div>';
+  }
+
+  // Trocar o <select> por um CLONE: o clone nao carrega o listener que a view
+  // original pendurou, senao os dois renderizariam e a tabela piscaria entre a
+  // versao antiga e a nova.
+  const sel = el2('penSkuSort');
+  if(sel && sel.parentNode){
+    const novo = sel.cloneNode(true);
+    sel.parentNode.replaceChild(novo, sel);
+    novo.addEventListener('change', render);
+  }
+  render();
+}
+
+/* ========================= CALCULADORA DE PEDIDO ==========================
+   Quatro pedidos do Igor (30/07/2026):
+     a) total do pedido em valor, ao lado de "lance a quantidade";
+     b) bonificacao sem CMV para vendedor (so admin);
+     c) brinde com custo R$ 0,00 nem aparece para lancar quantidade;
+     d) rentabilidade: semaforo para vendedor, valor para admin - e CMV total,
+        margem bruta e a soma imposto+frete+comissao so no admin.
+
+   Um aviso honesto sobre (b) e (d): isto melhora a TELA, nao e sigilo. O JSON
+   inteiro - com CMV de todos os SKUs - chega ao navegador de quem loga, e o
+   ADMINS esta em texto puro no HTML publico. Sigilo de verdade exige um JSON
+   reduzido para vendedor, que e outro assunto.
+
+   Escopo: o Igor pediu "sem CMV" so na bonificacao. Estendi aos BRINDES pela
+   mesma razao - deixar o custo do brinde visivel ao vendedor enquanto o da
+   bonificacao esconde seria incoerente. Se ele quiser de volta, e apagar o
+   `adm ?` da linha do custo unitario em renderCalcBrindes.                    */
+
+function calcEhAdmin(){ return SESSION.isAdmin === true; }
+
+/* (a) caixa com o total do pedido no cabecalho de "2 - Itens do pedido" */
+function mostrarTotalPedido(){
+  const cont = el2('calcItens');
+  if(!cont) return;
+  const card = cont.closest('.card');
+  const head = card && card.querySelector('.card-h');
+  if(!head) return;
+  let box = el2('calcTotalBox');
+  if(!box){
+    box = document.createElement('div');
+    box.id = 'calcTotalBox';
+    box.style.cssText =
+      'margin-left:auto;text-align:right;background:#EEF2F8;' +
+      'border:1px solid #D8DEE8;border-radius:8px;padding:6px 12px;' +
+      'line-height:1.25;min-width:150px';
+    head.appendChild(box);
+  }
+  const c = calcCompute();
+  const qtdItens = c.itens.reduce((a, it) => a + it.q, 0);
+  box.innerHTML =
+    '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;' +
+    'color:var(--muted);font-weight:700">Total do pedido</div>' +
+    '<div style="font-size:19px;font-weight:800;color:var(--navy)">' +
+    brl(c.liq) + '</div>' +
+    '<div style="font-size:10.5px;color:var(--muted)">' +
+    (c.itens.length
+      ? n0(qtdItens) + ' un · bruto ' + brl(c.bruto)
+      : 'nenhum item lançado') + '</div>';
+}
+
+const renderCalcItensOriginal = window.renderCalcItens;
+window.renderCalcItens = function(){
+  const r = renderCalcItensOriginal.apply(this, arguments);
+  try{ mostrarTotalPedido(); }catch(e){ console.error('total do pedido:', e); }
+  return r;
+};
+
+/* (b) bonificacao: colunas de custo so para admin */
+window.renderCalcBoni = function(){
+  const cont = el2('calcBoni');
+  if(!cont) return;
+  const adm = calcEhAdmin();
+  const skus = calcSkusDe(CALC_BONISEL);
+  cont.innerHTML =
+    '<table class="calc-grid"><thead><tr><th style="min-width:280px">Produto</th>' +
+    (adm ? '<th>CMV unit. ' + SENS + '</th>' : '') +
+    '<th>Qtd bonificada</th>' +
+    (adm ? '<th>Custo total ' + SENS + '</th>' : '') +
+    '</tr></thead><tbody>' +
+    skus.map(sk => {
+      const cmv = CALC.cmv[sk] || 0, q = CALC_BONI[sk] || 0;
+      return '<tr class="' + (q > 0 ? 'filled' : '') + '">' +
+        '<td class="rowlab">' + prodName(sk) + '</td>' +
+        (adm ? '<td class="mono">' + brl(cmv) + '</td>' : '') +
+        '<td><input type="number" min="0" value="' + (q || '') +
+        '" placeholder="0" oninput="CALC_BONI[\'' + sk +
+        '\']=+this.value||0;renderCalcBoni();renderCalcResumo()" ' +
+        'class="calc-in" style="width:70px"></td>' +
+        (adm ? '<td class="mono ' + (q > 0 ? 'neg' : '') + '">' +
+               (q > 0 ? brl(cmv * q) : '—') + '</td>' : '') +
+        '</tr>';
+    }).join('') + '</tbody></table>' +
+    (adm ? '' : '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">' +
+                'Bonificação sai com receita zero e entra como custo no ' +
+                'resultado do pedido.</div>');
+};
+
+/* (c) brindes: sem custo cadastrado, fora da lista */
+window.renderCalcBrindes = function(){
+  const cont = el2('calcBrindes');
+  if(!cont) return;
+  const adm = calcEhAdmin();
+  const todos = brindeSkus();
+  // Custo 0,00 quase sempre e cadastro faltando, nao brinde de graca. Deixar
+  // lancavel fazia o pedido parecer mais rentavel do que e.
+  const skus = todos.filter(sk => (CALC.cmv[sk] || 0) > 0);
+  const fora = todos.length - skus.length;
+  cont.innerHTML =
+    '<table class="calc-grid"><thead><tr>' +
+    '<th style="min-width:280px">Item (acessório / PDV / vestuário)</th>' +
+    (adm ? '<th>Custo unit. ' + SENS + '</th>' : '') +
+    '<th>Qtd</th>' +
+    (adm ? '<th>Custo total ' + SENS + '</th>' : '') +
+    '</tr></thead><tbody>' +
+    skus.map(sk => {
+      const cmv = CALC.cmv[sk] || 0, q = CALC_BRINDE[sk] || 0;
+      return '<tr class="' + (q > 0 ? 'filled' : '') + '">' +
+        '<td class="rowlab">' + prodName(sk) + '</td>' +
+        (adm ? '<td class="mono">' + brl(cmv) + '</td>' : '') +
+        '<td><input type="number" min="0" value="' + (q || '') +
+        '" placeholder="0" oninput="CALC_BRINDE[\'' + sk +
+        '\']=+this.value||0;renderCalcBrindes();renderCalcResumo()" ' +
+        'class="calc-in" style="width:70px"></td>' +
+        (adm ? '<td class="mono ' + (q > 0 ? 'neg' : '') + '">' +
+               (q > 0 ? brl(cmv * q) : '—') + '</td>' : '') +
+        '</tr>';
+    }).join('') + '</tbody></table>' +
+    '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">' +
+    'Brindes e materiais saem com receita zero — entram só como custo.' +
+    (fora && adm
+      ? ' <b>' + fora + ' item(ns)</b> não aparecem por estarem sem custo ' +
+        'cadastrado em <i>Parametros!J:L</i> do V8 — cadastre o CMV para ' +
+        'liberá-los.'
+      : '') + '</div>';
+};
+
+/* (d) rentabilidade: semaforo para vendedor, numero para admin */
+window.renderCalcResumo = function(){
+  const resumo = el2('calcResumo'), insights = el2('calcInsights');
+  if(!resumo) return;
+  const adm = calcEhAdmin();
+  const c = calcCompute();
+  try{ mostrarTotalPedido(); }catch(e){}
+  if(!c.itens.length && !c.boni.length && !c.brindes.length){
+    resumo.innerHTML =
+      '<div class="empty">Lance as quantidades para ver a rentabilidade.</div>';
+    if(insights) insights.innerHTML = '';
+    return;
+  }
+  const dg = el2('calcDescGeral');
+  const descGeral = (dg ? (+dg.value || 0) : 0) / 100;
+
+  const kpiRent = '<div class="kpi ' +
+    (c.rent >= 0.15 ? 'pos' : c.rent < 0 ? 'sens' : '') + '">' +
+    '<div class="lab">Rentabilidade</div><div class="val">' +
+    (adm ? pct(c.rent) : farol(c.rent, false)) + '</div>' +
+    '<div class="sub">' + (adm ? brl(c.lucro) : 'do pedido') + '</div></div>';
+
+  const kpisAdm = !adm ? '' :
+    '<div class="kpi sens"><div class="lab">CMV total ' + SENS + '</div>' +
+    '<div class="val" style="font-size:20px">' + brl(c.cmvT) + '</div>' +
+    '<div class="sub">itens ' + brl(c.cmvItens) +
+    (c.cmvBoni ? ' · bonif ' + brl(c.cmvBoni) : '') +
+    (c.cmvBrinde ? ' · brinde ' + brl(c.cmvBrinde) : '') + '</div></div>' +
+    '<div class="kpi sens"><div class="lab">Margem bruta ' + SENS + '</div>' +
+    '<div class="val" style="font-size:20px">' +
+    pct(c.liq ? c.lucroBruto / c.liq : 0) + '</div>' +
+    '<div class="sub">' + brl(c.lucroBruto) + '</div></div>' +
+    '<div class="kpi"><div class="lab">Imp+Frete+Comissão</div>' +
+    '<div class="val" style="font-size:20px">' +
+    brl(c.imp + c.fr + c.comissaoVal) + '</div>' +
+    '<div class="sub">imp ' + brl(c.imp) + ' · frete ' + brl(c.fr) +
+    (c.comissaoVal ? ' · com ' + brl(c.comissaoVal) : '') + '</div></div>';
+
+  const colLucro = adm ? '<th>Lucro unit. ' + SENS + '</th>' : '';
+  const tdLucro = (v) => adm
+    ? '<td class="mono ' + (v < 0 ? 'neg' : '') + '">' + brl(v) + '</td>' : '';
+
+  resumo.innerHTML =
+    '<div class="kpirow" style="margin-bottom:14px">' +
+    '<div class="kpi accent"><div class="lab">Valor líquido</div>' +
+    '<div class="val">' + brl(c.liq) + '</div>' +
+    '<div class="sub">bruto ' + brl(c.bruto) +
+    (descGeral ? ' · desc. geral ' + pct(descGeral) : '') + '</div></div>' +
+    kpisAdm + kpiRent + '</div>' +
+    '<h4 style="color:var(--navy);margin:6px 0 8px">Itens do pedido (qtd &gt; 0)</h4>' +
+    '<table><thead><tr><th>Produto</th><th>Qtd</th><th>Preço final</th>' +
+    '<th>Subtotal</th>' + colLucro + '</tr></thead><tbody>' +
+    c.itens.slice().sort((a, b) => b.liq - a.liq).map(it =>
+      '<tr><td class="rowlab">' + prodName(it.sk).substring(0, 44) + '</td>' +
+      '<td class="mono">' + it.q + '</td>' +
+      '<td class="mono">' + brl(it.pf) + '</td>' +
+      '<td class="mono">' + brl(it.liq) + '</td>' +
+      tdLucro(it.lucroUnit) + '</tr>').join('') +
+    c.boni.map(b =>
+      '<tr style="opacity:.75"><td class="rowlab">' +
+      prodName(b.sk).substring(0, 44) + ' <span class="pill y">bonif</span></td>' +
+      '<td class="mono">' + b.q + '</td><td class="mono">R$ 0,00</td>' +
+      '<td class="mono">R$ 0,00</td>' +
+      tdLucro(-(CALC.cmv[b.sk] || 0)) + '</tr>').join('') +
+    c.brindes.map(b =>
+      '<tr style="opacity:.75"><td class="rowlab">' +
+      prodName(b.sk).substring(0, 44) + ' <span class="pill">brinde</span></td>' +
+      '<td class="mono">' + b.q + '</td><td class="mono">R$ 0,00</td>' +
+      '<td class="mono">R$ 0,00</td>' +
+      tdLucro(-(CALC.cmv[b.sk] || 0)) + '</tr>').join('') +
+    '</tbody></table>';
+
+  if(!insights) return;
+  const ins = [];
+  // O vendedor recebe a LEITURA sem o numero: "aperte o desconto" vale para ele
+  // tanto quanto para o admin; o percentual e que nao.
+  if(c.rent < 0) ins.push({t: 'alert', x: adm
+    ? 'Rentabilidade <b>negativa</b> (' + pct(c.rent) + '). Revise desconto, ' +
+      'bonificação e brindes antes de fechar.'
+    : 'Este pedido está <b>no vermelho</b>. Revise desconto, bonificação e ' +
+      'brindes antes de fechar.'});
+  else if(c.rent < 0.10) ins.push({t: 'warn', x: adm
+    ? 'Rentabilidade apertada em <b>' + pct(c.rent) + '</b>, abaixo de 10%.'
+    : 'Rentabilidade <b>apertada</b> neste pedido.'});
+  else if(c.rent >= 0.15) ins.push({t: 'ok', x: adm
+    ? 'Rentabilidade saudável em <b>' + pct(c.rent) + '</b>.'
+    : 'Rentabilidade <b>saudável</b> neste pedido.'});
+  if(adm && c.cmvBoni > 0){
+    const r = c.liq ? c.cmvBoni / c.liq : 0;
+    ins.push({t: r > 0.05 ? 'warn' : 'info', x: 'A bonificação custa <b>' +
+      brl(c.cmvBoni) + '</b> em CMV (' + pct(r) + ' da receita líquida).'});
+  }
+  if(adm && c.cmvBrinde > 0){
+    const r = c.liq ? c.cmvBrinde / c.liq : 0;
+    ins.push({t: r > 0.03 ? 'warn' : 'info', x: 'Os brindes/materiais custam <b>' +
+      brl(c.cmvBrinde) + '</b> (' + pct(r) + ' da receita).'});
+  }
+  if(!adm && (c.cmvBoni > 0 || c.cmvBrinde > 0)){
+    ins.push({t: 'info', x: 'Bonificação e brindes entram no resultado do ' +
+      'pedido mesmo saindo com receita zero — é o que puxa a rentabilidade ' +
+      'para baixo.'});
+  }
+  // Item com lucro unitario negativo: a CONCLUSAO serve para os dois, o valor
+  // por unidade e que e custo. Vendedor recebe sem o numero.
+  const neg = c.itens.filter(it => it.lucroUnit < 0)
+                     .sort((a, b) => a.lucroUnit - b.lucroUnit)[0];
+  if(neg) ins.push({t: 'warn', x: '<b>' + prodName(neg.sk).substring(0, 40) +
+    '</b> está ' + (adm
+      ? 'com lucro unitário negativo (' + brl(neg.lucroUnit) + '/un) — desconto ' +
+        'alto demais para esse item.'
+      : 'saindo <b>no prejuízo</b> — o desconto está alto demais nesse item.')});
+  const fm = el2('calcFreteModo');
+  if(fm && fm.value === 'auto') ins.push({t: 'info', x:
+    'Frete pelo médio real de <b>' + c.uf + '</b> (' + pct(c.frPct) +
+    '). Para cotação específica, use o modo manual.'});
+  if(!ins.some(o => o.t === 'alert' || o.t === 'warn')) ins.push({t: 'ok',
+    x: 'Pedido equilibrado — nada pressionando a margem de forma preocupante.'});
+
+  // Mesmo markup do original: nao existe classe .ins no CSS, e estilo inline
+  // com mapa de cor e icone. Usar class="ins" deixaria os avisos sem formato.
+  const col = {info: 'var(--sky)', ok: 'var(--pos)', warn: 'var(--warn)',
+               alert: 'var(--neg)'};
+  const ic = {info: 'ℹ', ok: '✓', warn: '!', alert: '✕'};
+  insights.innerHTML =
+    '<div style="display:flex;flex-direction:column;gap:8px">' +
+    ins.map(o =>
+      '<div style="display:flex;gap:10px;align-items:flex-start;' +
+      'background:#F8FAFE;border-left:3px solid ' + col[o.t] +
+      ';border-radius:8px;padding:10px 14px">' +
+      '<span style="color:' + col[o.t] + ';font-weight:800">' + ic[o.t] +
+      '</span><span style="font-size:12.5px;line-height:1.5">' + o.x +
+      '</span></div>').join('') + '</div>';
+};
+
 /* ---------------------------------------------------- 5) engatar no refresh */
 const refreshOriginal = window.refresh;
 window.refresh = function(){
+  prepararFiltrosSupervisor();   // antes do ativarChips: ele le esses <select>
   ativarChips();
   refreshOriginal.apply(this, arguments);
   mostrarCarimbo();
