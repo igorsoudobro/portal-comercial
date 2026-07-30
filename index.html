@@ -2160,7 +2160,23 @@ function ajustarKpisResumo(){
   if(rent) rent.dataset.dica =
     'Rentabilidade = lucro final ÷ faturamento líquido. O lucro final parte da ' +
     'margem bruta e ainda desconta imposto, frete, comissão e bonificação. ' +
-    'É a margem que sobra de verdade.';
+    'É a margem que sobra de verdade. Régua do farol: verde acima de ' +
+    pct(FAROL_VERDE) + ', amarelo acima de ' + pct(FAROL_AMARELO) +
+    ' (precisa de aprovação), vermelho abaixo (negado).';
+
+  /* Lucro final para o SUPERVISOR tambem. No original este KPI e montado dentro
+     do vResumo com `SESSION.isAdmin ? ... : ''`, entao para o Fellipe ele nao
+     vinha - e o Igor pediu que ele tenha a visao sensivel completa. Insiro aqui
+     em vez de reescrever a view inteira. */
+  if(veSensivel() && !SESSION.isAdmin && !row.querySelector('#kpiLucroSup')){
+    const box = document.createElement('div');
+    box.className = 'kpi sens';
+    box.id = 'kpiLucroSup';
+    box.innerHTML = '<div class="lab">Lucro final ' + SENS + '</div>' +
+      '<div class="val">' + brl(d.lucro) + '</div>' +
+      '<div class="sub">Rentab. ' + pct(d.rent) + '</div>';
+    row.appendChild(box);
+  }
 }
 
 function vResumoNovo(){
@@ -2175,7 +2191,10 @@ function vResumoNovo(){
   /* --- universo da carteira conforme o filtro de vendedor/modelo --- */
   const carteiraFiltrada = (typeof CARTEIRA !== 'undefined' && CARTEIRA || [])
     .filter(c => {
-      if(!SESSION.isAdmin) return VEND_VIS.has(c.v);
+      // O supervisor tem filtro; sem isto os KPIs de carteira ignorariam o que
+      // ele escolheu e a tela se contradiria com a barra de filtros.
+      if(!SESSION.isAdmin && !VEND_VIS.has(c.v)) return false;
+      if(!podeFiltrar()) return true;
       return multiOK(FILTER.vend, c.v) && multiOK(FILTER.mod, c.mo);
     });
   const naoCompraram = carteiraFiltrada.filter(c => !compraram.has(c.cn)).length;
@@ -2303,6 +2322,19 @@ VIEWS.find(v => v.id === 'ranking').fn = vRankingNovo;
 const vPenetracaoOriginal = VIEWS.find(v => v.id === 'penetracao').fn;
 VIEWS.find(v => v.id === 'penetracao').fn = vPenetracaoNovo;
 
+/* Carteira: o supervisor tem filtro de vendedor, mas a view usa VEND_VIS direto
+   (nao passa por linhas()). Em vez de reescrever a view inteira, estreito
+   VEND_VIS para a selecao dele durante a chamada e devolvo depois. */
+const vCarteiraOriginal = VIEWS.find(v => v.id === 'carteira').fn;
+VIEWS.find(v => v.id === 'carteira').fn = function(){
+  if(!ehSupervisor()) return vCarteiraOriginal();
+  const todos = VEND_VIS;
+  const sel = selecionados('vend');
+  if(sel.length) VEND_VIS = new Set([...todos].filter(v => sel.indexOf(v) >= 0));
+  try{ return vCarteiraOriginal(); }
+  finally{ VEND_VIS = todos; }      // sempre restaura, mesmo se a view estourar
+};
+
 /* ------------- AJUSTE 4: medir a 1a linha do cabecalho do Mix ---------------
    A 2a linha (os percentuais) e sticky com top = altura da 1a. Essa altura muda
    com o zoom e com o tamanho do nome da categoria, entao e medida depois do
@@ -2342,7 +2374,7 @@ function vCanaisNovo(){
     .sort((a, b) => b.fat - a.fat);
   const tf = arr.reduce((a, r) => a + r.fat, 0);
 
-  const adm = SESSION.isAdmin;
+  const adm = veSensivel();
   const porCanal = {};
   L.forEach(r => { const k = r.ca || '(vazio)';
                    (porCanal[k] = porCanal[k] || []).push(r); });
@@ -2407,7 +2439,7 @@ function vRankingNovo(){
       '<div class="empty">Sem dados nos filtros selecionados.</div>';
     return;
   }
-  const isAdm = SESSION.isAdmin;
+  const isAdm = veSensivel();
   const rca = isRCA();
   const verNum = verNumeroRent();
 
@@ -2576,6 +2608,82 @@ function vPenetracaoNovo(){
   render();
 }
 
+/* ===================== FAROL: A REGRA DE APROVACAO ========================
+   Regra do Igor (30/07/2026), valendo em TODA a plataforma:
+       >= 30%  verde     aprovado
+       >= 20%  amarelo   precisa de aprovacao
+       <  20%  vermelho  negado
+
+   Antes eram 25% / 22%, e havia uma SEGUNDA escala solta nos avisos da
+   Calculadora (0%, 10%, 15%) - por isso o print do Igor mostrava o farol
+   VERMELHO e, logo abaixo, "Rentabilidade saudavel neste pedido". Duas reguas
+   no mesmo lugar dizendo coisas opostas. Agora ha uma so, aqui. */
+const FAROL_VERDE = 0.30;
+const FAROL_AMARELO = 0.20;
+
+function farolFaixa(p){
+  if(p >= FAROL_VERDE) return 'verde';
+  if(p >= FAROL_AMARELO) return 'amarelo';
+  return 'vermelho';
+}
+function farolRotulo(p){
+  const f = farolFaixa(p);
+  return f === 'verde' ? 'aprovado'
+       : f === 'amarelo' ? 'precisa de aprovação' : 'negado';
+}
+window.farolFaixa = farolFaixa;
+window.farolRotulo = farolRotulo;
+window.FAROL_VERDE = FAROL_VERDE;
+window.FAROL_AMARELO = FAROL_AMARELO;
+
+window.farolCor = function(p){
+  const f = farolFaixa(p);
+  return f === 'verde' ? '#1BA466' : f === 'amarelo' ? '#E0A800' : '#D64550';
+};
+
+/* O title da bolinha mostrava SEMPRE o percentual - inclusive para quem nao
+   pode ver numero. Quem nao ve numero passa a ver o rotulo da regra. */
+window.farol = function(p, mostrarNum){
+  const cor = farolCor(p);
+  const rot = farolRotulo(p);
+  const dica = mostrarNum ? pct(p) + ' · ' + rot : rot;
+  const dot = '<span title="' + dica + '" style="display:inline-block;' +
+    'width:14px;height:14px;border-radius:50%;background:' + cor +
+    ';box-shadow:0 0 0 3px ' + cor + '33;vertical-align:middle"></span>';
+  if(mostrarNum) return '<span style="white-space:nowrap">' + dot +
+    ' <span class="mono" style="color:' + cor + ';font-weight:700;' +
+    'vertical-align:middle">' + pct(p) + '</span></span>';
+  return dot;
+};
+
+/* Bolinha + a palavra, para onde a decisao acontece (a Calculadora). */
+function farolComRotulo(p, mostrarNum){
+  const cor = farolCor(p);
+  return '<span style="white-space:nowrap">' + farol(p, mostrarNum) +
+    '</span><div style="font-size:11px;font-weight:700;color:' + cor +
+    ';text-transform:uppercase;letter-spacing:.03em;margin-top:2px">' +
+    farolRotulo(p) + '</div>';
+}
+
+/* ============ Fellipe: visao de admin, dados de RCA ========================
+   Pedido do Igor (30/07/2026): "o Fellipe pode ter as mesmas visoes de margens,
+   cmvs, etc... como se fosse uma visao de admin. Porem e limitada aos dados de
+   RCAs e os dele."
+
+   Separa dois conceitos que estavam colados num unico SESSION.isAdmin:
+     veSensivel()  -> PODE ver custo, margem, CMV, lucro   (admin + Fellipe)
+     VEND_VIS      -> QUAIS dados                          (recorte, ja existia)
+   O recorte continua valendo: dar visao sensivel nao alarga o que ele ve. */
+function veSensivel(){ return SESSION.isAdmin || ehSupervisor(); }
+window.veSensivel = veSensivel;
+
+/* DRE completo para o supervisor tambem (linhas de CMV, margem, lucro). */
+if(typeof window.dreRowsFor === 'function'){
+  window.dreRowsFor = function(){
+    return veSensivel() ? DRE_ROWS_FULL : DRE_ROWS_VEND;
+  };
+}
+
 /* ========================= CALCULADORA DE PEDIDO ==========================
    Quatro pedidos do Igor (30/07/2026):
      a) total do pedido em valor, ao lado de "lance a quantidade";
@@ -2594,7 +2702,9 @@ function vPenetracaoNovo(){
    bonificacao esconde seria incoerente. Se ele quiser de volta, e apagar o
    `adm ?` da linha do custo unitario em renderCalcBrindes.                    */
 
-function calcEhAdmin(){ return SESSION.isAdmin === true; }
+/* Na Calculadora, "adm" sempre quis dizer "pode ver custo" - nunca "e o dono
+   da conta". Com o Fellipe entrando nessa visao, o nome vira o que ele faz. */
+function calcEhAdmin(){ return veSensivel(); }
 
 /* (a) caixa com o total do pedido no cabecalho de "2 - Itens do pedido" */
 function mostrarTotalPedido(){
@@ -2730,10 +2840,14 @@ window.renderCalcResumo = function(){
     pct(c.liq ? impTot / c.liq : 0) + '</div>' +
     '<div class="sub">pontos que saem da margem deste pedido</div></div>';
 
+  /* A regra de aprovacao E a rentabilidade: o KPI mostra a bolinha, o rotulo
+     ("aprovado" / "precisa de aprovacao" / "negado") e, para quem pode, o
+     numero. Admin tambem ve o rotulo - a decisao e a mesma para os dois. */
+  const faixa = farolFaixa(c.rent);
   const kpiRent = '<div class="kpi ' +
-    (c.rent >= 0.15 ? 'pos' : c.rent < 0 ? 'sens' : '') + '">' +
+    (faixa === 'verde' ? 'pos' : faixa === 'vermelho' ? 'sens' : '') + '">' +
     '<div class="lab">Rentabilidade</div><div class="val">' +
-    (adm ? pct(c.rent) : farol(c.rent, false)) + '</div>' +
+    farolComRotulo(c.rent, adm) + '</div>' +
     '<div class="sub">' + (adm ? brl(c.lucro) : 'do pedido') + '</div></div>';
 
   const kpisAdm = !adm ? '' :
@@ -2815,17 +2929,19 @@ window.renderCalcResumo = function(){
   const ins = [];
   // O vendedor recebe a LEITURA sem o numero: "aperte o desconto" vale para ele
   // tanto quanto para o admin; o percentual e que nao.
-  if(c.rent < 0) ins.push({t: 'alert', x: adm
-    ? 'Rentabilidade <b>negativa</b> (' + pct(c.rent) + '). Revise desconto, ' +
-      'bonificação e brindes antes de fechar.'
-    : 'Este pedido está <b>no vermelho</b>. Revise desconto, bonificação e ' +
-      'brindes antes de fechar.'});
-  else if(c.rent < 0.10) ins.push({t: 'warn', x: adm
-    ? 'Rentabilidade apertada em <b>' + pct(c.rent) + '</b>, abaixo de 10%.'
-    : 'Rentabilidade <b>apertada</b> neste pedido.'});
-  else if(c.rent >= 0.15) ins.push({t: 'ok', x: adm
-    ? 'Rentabilidade saudável em <b>' + pct(c.rent) + '</b>.'
-    : 'Rentabilidade <b>saudável</b> neste pedido.'});
+  /* MESMA regua do farol. Antes aqui havia 0% / 10% / 15% enquanto o farol usava
+     22% / 25%: um pedido a 18% saia com farol VERMELHO e o texto dizendo
+     "rentabilidade saudavel". Foi o que o Igor viu no print de 30/07/2026. */
+  const numero = adm ? ' (' + pct(c.rent) + ')' : '';
+  if(faixa === 'vermelho') ins.push({t: 'alert',
+    x: 'Rentabilidade abaixo de ' + pct(FAROL_AMARELO) + numero +
+       ' — <b>pedido negado</b>. Revise desconto, bonificação e brindes.'});
+  else if(faixa === 'amarelo') ins.push({t: 'warn',
+    x: 'Rentabilidade entre ' + pct(FAROL_AMARELO) + ' e ' + pct(FAROL_VERDE) +
+       numero + ' — <b>precisa de aprovação</b> para seguir.'});
+  else ins.push({t: 'ok',
+    x: 'Rentabilidade acima de ' + pct(FAROL_VERDE) + numero +
+       ' — <b>pedido aprovado</b>.'});
   if(adm && c.cmvBoni > 0){
     const r = c.liq ? c.cmvBoni / c.liq : 0;
     ins.push({t: r > 0.05 ? 'warn' : 'info', x: 'A bonificação custa <b>' +
@@ -2854,8 +2970,12 @@ window.renderCalcResumo = function(){
   if(fm && fm.value === 'auto') ins.push({t: 'info', x:
     'Frete pelo médio real de <b>' + c.uf + '</b> (' + pct(c.frPct) +
     '). Para cotação específica, use o modo manual.'});
-  if(!ins.some(o => o.t === 'alert' || o.t === 'warn')) ins.push({t: 'ok',
-    x: 'Pedido equilibrado — nada pressionando a margem de forma preocupante.'});
+  // Só quando NAO ha nada mais a dizer. Antes ele entrava sempre que faltava
+  // alerta, e num pedido verde virava um segundo "esta tudo bem" redundante -
+  // e num amarelo/vermelho ja nao entrava, mas por acidente, nao por regra.
+  if(ins.length === 1 && ins[0].t === 'ok') ins.push({t: 'info',
+    x: 'Nada pressionando a margem: desconto, bonificação e brindes estão ' +
+       'dentro do que o pedido suporta.'});
 
   // Mesmo markup do original: nao existe classe .ins no CSS, e estilo inline
   // com mapa de cor e icone. Usar class="ins" deixaria os avisos sem formato.
