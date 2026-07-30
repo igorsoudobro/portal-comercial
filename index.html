@@ -179,8 +179,14 @@ table.mapa-tbl tbody tr:hover td{background:#F0F3FA}
   border-top: 1px solid #D8DEE8;
 }
 
-/* AJUSTE 3: os nomes das categorias estavam saindo brancos (meu CSS anterior
-   trocou o fundo do <th> e o texto ficou invisivel). Agora a cor e explicita. */
+/* TERCEIRA vez que este mesmo erro aparece: troco o fundo do <th> para claro e
+   esqueco a cor, que a regra base do Portal deixa em #fff. Consertei o nome da
+   categoria, depois Carteira/Ranking/CNPJ, e ainda faltava a PRIMEIRA linha do
+   Mix - Cliente, CNPJ, Vendedor, Ticket medio - que o Igor circulou de vermelho.
+   Em vez de caçar seletor por seletor, a cor agora e declarada para TODO <th> do
+   cabecalho do Mix, inclusive as <div> dentro dele. */
+#mixCnpjOut table thead th,
+#mixCnpjOut table thead th div{ color: var(--navy) !important; }
 #mixCnpjOut .mix-cat-nome{ color: var(--navy) !important; }
 #mixCnpjOut th.mix-pen{
   font-size: 12px; font-weight: 800; color: var(--navy);
@@ -190,6 +196,28 @@ table.mapa-tbl tbody tr:hover td{background:#F0F3FA}
 #mixCnpjOut tr.mix-h2 th.mix-fix{
   font-size: 10px; font-weight: 700; color: var(--navy);
   text-transform: uppercase; letter-spacing: .03em;
+}
+
+/* ---------- Mix: categoria clicavel, abre em SKU (estilo "Agrupar") -------- */
+#mixCnpjOut th.mix-cat[data-cat]{ cursor: pointer; user-select: none; }
+#mixCnpjOut th.mix-cat[data-cat]:hover{ background: #E2E8F2 !important; }
+#mixCnpjOut th.mix-cat[data-cat] .mix-caret{
+  font-size: 9px; color: var(--muted); margin-left: 3px;
+}
+#mixCnpjOut th.mix-cat.aberta{ background: #DCE4F0 !important; }
+/* Coluna de SKU: mais estreita e mais clara, para a categoria continuar sendo a
+   leitura principal e o detalhe parecer detalhe. */
+#mixCnpjOut th.mix-sku{
+  background: #EDF1F7 !important; font-size: 9px; font-weight: 600;
+  padding: 4px 5px; max-width: 78px; line-height: 1.2;
+  border-left: 1px dotted #C9D4E4;
+}
+#mixCnpjOut th.mix-sku-pen{
+  background: #E4EAF4 !important; font-size: 9px; font-weight: 700;
+  text-align: center; border-left: 1px dotted #C9D4E4;
+}
+#mixCnpjOut td.mix-cell-sku{
+  font-size: 10px; border-left: 1px dotted #E2E8F2; background: #FBFCFE;
 }
 
 /* ---------- primeira coluna (Cliente) colada na esquerda -------------------
@@ -1846,15 +1874,18 @@ window.multiOK = multiOK;
 /* Pedido do Igor (30/07/2026): "o user do Fellipe tem que conseguir ter acesso
    aos filtros e dados, porem apenas dos users RCAs e o dele".
 
-   Duas coisas mudam:
-   1) a lista visivel dele perde 'Cristiane Leão', que o codigo original
-      incluia. Ela nao e RCA e nao esta no pedido.
-   2) ele passa a ter os filtros, que eram exclusivos de admin - mas as opcoes
-      saem apenas dos vendedores que ele pode ver, nao de todos.
+   Ele passa a ter os filtros, que eram exclusivos de admin - mas as opcoes saem
+   apenas dos vendedores que ele pode ver, nao de todos.
+
+   Sobre a Cristiane Leão: o codigo original a incluia, eu tirei em 30/07/2026
+   por nao estar no pedido ("apenas dos users RCAs e o dele"), e o Igor pediu de
+   volta no mesmo dia. Fica explicita numa constante para nao virar folclore.
 
    O recorte de seguranca continua sendo VEND_VIS: o filtro escolhe DENTRO do
    que ele ja podia ver, nunca alarga. Um vendedor comum segue sem filtro. */
 const SUPERVISOR = 'Fellipe Argentati';
+// Nomes que o supervisor ve ALEM de si e dos RCAs.
+const SUPERVISOR_EXTRA = ['Cristiane Leão'];
 
 function ehSupervisor(){ return !SESSION.isAdmin && SESSION.user === SUPERVISOR; }
 function podeFiltrar(){ return SESSION.isAdmin || ehSupervisor(); }
@@ -1865,7 +1896,7 @@ window.vendedoresVisiveis = function(){
   if(SESSION.isAdmin) return null;
   const u = SESSION.user;
   if(u === SUPERVISOR){
-    const set = new Set([u]);
+    const set = new Set([u, ...SUPERVISOR_EXTRA]);
     [...new Set(ROWS.map(r => r.v))].forEach(v => {
       if(v && v.indexOf('RCA - ') === 0) set.add(v);
     });
@@ -2321,6 +2352,8 @@ VIEWS.find(v => v.id === 'ranking').fn = vRankingNovo;
    dentro. Se a ordem invertesse, ela chamaria a si mesma. */
 const vPenetracaoOriginal = VIEWS.find(v => v.id === 'penetracao').fn;
 VIEWS.find(v => v.id === 'penetracao').fn = vPenetracaoNovo;
+const vMixOriginal = VIEWS.find(v => v.id === 'mix').fn;
+VIEWS.find(v => v.id === 'mix').fn = vMixNovo;
 
 /* Carteira: o supervisor tem filtro de vendedor, mas a view usa VEND_VIS direto
    (nao passa por linhas()). Em vez de reescrever a view inteira, estreito
@@ -2905,10 +2938,16 @@ window.renderCalcResumo = function(){
       '<td class="mono">' + brl(it.pf) + '</td>' +
       '<td class="mono">' + brl(it.liq) + '</td>' +
       tdLucro(it.lucroUnit) + tdVazio + '</tr>').join('') +
+    // Bonificacao nao tem preco final: o produto TEM preco de tabela e nao foi
+    // vendido a zero - ele nao foi vendido. "R$ 0,00" lia-se como "vendi de
+    // graca"; o travessao diz "nao se aplica". O subtotal segue 0,00 porque
+    // ali zero e o numero certo: receita zero. Vale nas duas visoes - e
+    // correcao de leitura, nao de permissao.
     c.boni.map(b =>
       '<tr style="opacity:.75"><td class="rowlab">' +
       prodName(b.sk).substring(0, 44) + ' <span class="pill y">bonif</span></td>' +
-      '<td class="mono">' + b.q + '</td><td class="mono">R$ 0,00</td>' +
+      '<td class="mono">' + b.q + '</td>' +
+      '<td class="mono" style="color:var(--muted)">—</td>' +
       '<td class="mono">R$ 0,00</td>' +
       tdLucro(-(CALC.cmv[b.sk] || 0)) +
       tdImpacto((CALC.cmv[b.sk] || 0) * b.q) + '</tr>').join('') +
@@ -2992,6 +3031,179 @@ window.renderCalcResumo = function(){
       '</span><span style="font-size:12.5px;line-height:1.5">' + o.x +
       '</span></div>').join('') + '</div>';
 };
+
+/* ============== Mix por CNPJ: abrir a categoria em SKU =====================
+   Pedido do Igor (30/07/2026): "seria possivel clicar na categoria e abrir por
+   SKU? Semelhante a aquele Agrupar do Excel".
+
+   Clicar no nome da categoria alterna: fechada mostra so a coluna dela; aberta
+   mostra tambem uma coluna por SKU vendido daquela categoria no recorte. A
+   coluna da categoria CONTINUA visivel quando aberta - e o total do grupo, como
+   no agrupar do Excel.
+
+   Só SKUs com venda no recorte entram: listar o catalogo inteiro daria dezenas
+   de colunas vazias.
+
+   Reaproveito a view original e troco so a matriz (#mixCnpjOut), como fiz na
+   Penetracao - assim os KPIs, o score de positivacao e a tabela por categoria
+   continuam sendo os mesmos do Portal. */
+/* vMixOriginal e capturado junto da troca do VIEWS.fn, la em cima - capturar
+   aqui pegaria a propria vMixNovo e a view entraria em recursao. Foi o mesmo
+   tropeco da Penetracao, no mesmo dia. */
+const MIX_ABERTAS = new Set();
+
+function vMixNovo(){
+  vMixOriginal();
+  const out = el2('mixCnpjOut');
+  if(!out) return;                        // caiu no "sem vendas"
+
+  const L = linhas().filter(r => r.venda);
+  if(!L.length) return;
+
+  const cats = CATS_ATIVAS.filter(c => c !== 'Outros');
+
+  // CNPJ -> categorias, SKUs e faturamento
+  const byCnpj = {};
+  L.forEach(r => {
+    if(!r.cn) return;
+    const o = byCnpj[r.cn] = byCnpj[r.cn] ||
+              {cats: {}, skus: new Set(), fat: 0, meses: new Set(), vend: {}};
+    o.cats[r.cat] = (o.cats[r.cat] || 0) + r.fat;
+    o.skus.add(r.sk);
+    o.fat += r.fat;
+    o.meses.add(r.m);
+    o.vend[r.v] = (o.vend[r.v] || 0) + r.fat;
+  });
+  const cnpjList = Object.keys(byCnpj);
+
+  // SKUs vendidos por categoria, do maior faturamento para o menor
+  const fatSku = {}, catDoSku = {};
+  L.forEach(r => { fatSku[r.sk] = (fatSku[r.sk] || 0) + r.fat;
+                   catDoSku[r.sk] = r.cat; });
+  const skusDaCat = {};
+  cats.forEach(c => {
+    skusDaCat[c] = Object.keys(fatSku)
+      .filter(sk => catDoSku[sk] === c)
+      .sort((a, b) => fatSku[b] - fatSku[a]);
+  });
+
+  const penetCat = {}, penetSku = {};
+  cats.forEach(c => {
+    penetCat[c] = cnpjList.length
+      ? cnpjList.filter(cn => byCnpj[cn].cats[c]).length / cnpjList.length : 0;
+    skusDaCat[c].forEach(sk => {
+      penetSku[sk] = cnpjList.length
+        ? cnpjList.filter(cn => byCnpj[cn].skus.has(sk)).length / cnpjList.length
+        : 0;
+    });
+  });
+
+  function render(){
+    const inp = el2('mixBusca'), sel = el2('mixOrd');
+    const bruto = inp ? (inp.value || '') : '';
+    const q = bruto.replace(/\D/g, '');
+    const qtext = bruto.trim().toLowerCase();
+    const ord = sel ? sel.value : 'score';
+
+    let rows = cnpjList.map(cn => {
+      const o = byCnpj[cn];
+      const catset = new Set(Object.keys(o.cats));
+      const ped = o.meses.size;
+      return {cn, cats: catset, skus: o.skus, sc: scorePositivacao(catset),
+              fat: o.fat, ticket: ped ? o.fat / ped : 0,
+              vend: Object.entries(o.vend).sort((a, b) => b[1] - a[1])[0]?.[0] || '—'};
+    }).filter(r => !qtext || r.cn.includes(q) ||
+                   cliName(r.cn).toLowerCase().includes(qtext));
+    rows.sort((a, b) => ord === 'fat' ? b.fat - a.fat
+                      : ord === 'ticket' ? b.ticket - a.ticket
+                      : (a.sc - b.sc || b.fat - a.fat));
+    rows = rows.slice(0, 80);
+
+    const curto = (sk) => {
+      const n = prodName(sk).replace(/^Dobro\s+/i, '');
+      return n.length > 20 ? n.slice(0, 19) + '…' : n;
+    };
+
+    let headCat = '', headPen = '';
+    cats.forEach(c => {
+      const aberta = MIX_ABERTAS.has(c);
+      const n = skusDaCat[c].length;
+      headCat += '<th class="mix-cat' + (aberta ? ' aberta' : '') +
+        '" data-cat="' + encodeURIComponent(c) + '" title="' +
+        (aberta ? 'fechar' : 'abrir') + ' os ' + n + ' SKU(s) de ' + c + '">' +
+        '<div class="mix-cat-nome">' + c +
+        '<span class="mix-caret">' + (aberta ? '▾' : '▸') + n + '</span>' +
+        '</div></th>';
+      headPen += '<th class="mix-pen" title="% de clientes do filtro que já ' +
+        'compram ' + c + '">' + pct(penetCat[c]) + '</th>';
+      if(aberta) skusDaCat[c].forEach(sk => {
+        headCat += '<th class="mix-sku" title="' + prodName(sk) + '">' +
+                   curto(sk) + '</th>';
+        headPen += '<th class="mix-sku-pen" title="% de clientes que compram ' +
+                   prodName(sk) + '">' + pct(penetSku[sk]) + '</th>';
+      });
+    });
+
+    const corpo = rows.map(r => {
+      let cells = '';
+      cats.forEach(c => {
+        const tem = r.cats.has(c);
+        cells += '<td class="mix-cell ' + (tem ? 'mix-yes' : 'mix-no') + '">' +
+                 (tem ? '✓' : '—') + '</td>';
+        if(MIX_ABERTAS.has(c)) skusDaCat[c].forEach(sk => {
+          const t = r.skus.has(sk);
+          cells += '<td class="mix-cell mix-cell-sku ' +
+                   (t ? 'mix-yes' : 'mix-no') + '" title="' + prodName(sk) +
+                   '">' + (t ? '✓' : '—') + '</td>';
+        });
+      });
+      return '<tr><td class="rowlab mix-cli" title="' + r.cn + '">' +
+        cliName(r.cn).substring(0, 32) + '</td>' +
+        '<td class="mono mix-fix2">' + r.cn + '</td>' +
+        '<td class="mix-fix2" style="color:var(--muted)">' + r.vend + '</td>' +
+        '<td class="mono mix-fix2" style="text-align:right;color:var(--pos);' +
+        'font-weight:700">' + brl(r.ticket) + '</td>' + cells + '</tr>';
+    }).join('');
+
+    out.innerHTML =
+      '<table class="mix-tbl"><thead>' +
+      '<tr class="mix-h1"><th class="mix-fix">Cliente</th>' +
+      '<th class="mix-fix">CNPJ</th><th class="mix-fix">Vendedor</th>' +
+      '<th class="mix-fix" style="text-align:right">Ticket médio</th>' +
+      headCat + '</tr>' +
+      '<tr class="mix-h2"><th class="mix-fix">% com ✓</th>' +
+      '<th class="mix-fix"></th><th class="mix-fix"></th>' +
+      '<th class="mix-fix"></th>' + headPen + '</tr></thead>' +
+      '<tbody>' + corpo + '</tbody></table>' +
+      '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">' +
+      '✓ = já compra · — = ainda não compra. O % abaixo de cada coluna é a ' +
+      'penetração. <b>Clique no nome da categoria</b> para abrir os SKUs dela ' +
+      '(o número ao lado é quantos SKUs ela tem no recorte). Mostrando até 80 ' +
+      'clientes.</div>';
+
+    out.querySelectorAll('th.mix-cat[data-cat]').forEach(th => {
+      th.onclick = () => {
+        const c = decodeURIComponent(th.dataset.cat);
+        if(MIX_ABERTAS.has(c)) MIX_ABERTAS.delete(c); else MIX_ABERTAS.add(c);
+        render();
+        if(typeof ajustarTopoMix === 'function') setTimeout(ajustarTopoMix, 30);
+      };
+    });
+    if(typeof ajustarTopoMix === 'function') setTimeout(ajustarTopoMix, 30);
+  }
+
+  // Clonar busca e ordenacao: os listeners que a view original pendurou
+  // chamariam o renderMatriz DELA, que nao conhece as colunas de SKU e
+  // sobrescreveria a matriz.
+  ['mixBusca', 'mixOrd'].forEach(id => {
+    const e = el2(id);
+    if(!e || !e.parentNode) return;
+    const novo = e.cloneNode(true);
+    e.parentNode.replaceChild(novo, e);
+    novo.addEventListener(id === 'mixBusca' ? 'input' : 'change', render);
+  });
+  render();
+}
 
 /* ---------------------------------------------------- 5) engatar no refresh */
 const refreshOriginal = window.refresh;
