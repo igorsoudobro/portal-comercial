@@ -2663,11 +2663,14 @@ window.renderCalcBoni = function(){
                 'resultado do pedido.</div>');
 };
 
-/* (c) brindes: sem custo cadastrado, fora da lista */
+/* (c) brindes: sem custo cadastrado, fora da lista.
+   O CMV do brinde APARECE para todos - o Igor decidiu isso em 30/07/2026, depois
+   de eu ter estendido o "sem CMV" da bonificacao tambem aos brindes por conta
+   propria. Era decisao dele, nao minha. Bonificacao segue sem CMV. */
 window.renderCalcBrindes = function(){
   const cont = el2('calcBrindes');
   if(!cont) return;
-  const adm = calcEhAdmin();
+  const adm = true;                 // custo de brinde e visivel para todos
   const todos = brindeSkus();
   // Custo 0,00 quase sempre e cadastro faltando, nao brinde de graca. Deixar
   // lancavel fazia o pedido parecer mais rentavel do que e.
@@ -2718,6 +2721,15 @@ window.renderCalcResumo = function(){
   const dg = el2('calcDescGeral');
   const descGeral = (dg ? (+dg.value || 0) : 0) / 100;
 
+  /* KPI do impacto total, so para vendedor: e a resposta direta a "quanto isso
+     me custa de margem". O admin ja tem o CMV total e a margem bruta. */
+  const impTot = c.cmvBoni + c.cmvBrinde;
+  const kpiImpacto = (adm || impTot <= 0) ? '' :
+    '<div class="kpi"><div class="lab">Impacto bonif. + brindes</div>' +
+    '<div class="val" style="font-size:20px">−' +
+    pct(c.liq ? impTot / c.liq : 0) + '</div>' +
+    '<div class="sub">pontos que saem da margem deste pedido</div></div>';
+
   const kpiRent = '<div class="kpi ' +
     (c.rent >= 0.15 ? 'pos' : c.rent < 0 ? 'sens' : '') + '">' +
     '<div class="lab">Rentabilidade</div><div class="val">' +
@@ -2740,9 +2752,28 @@ window.renderCalcResumo = function(){
     '<div class="sub">imp ' + brl(c.imp) + ' · frete ' + brl(c.fr) +
     (c.comissaoVal ? ' · com ' + brl(c.comissaoVal) : '') + '</div></div>';
 
-  const colLucro = adm ? '<th>Lucro unit. ' + SENS + '</th>' : '';
+  /* Impacto de bonificacao e brinde, para o VENDEDOR, em PONTOS DE MARGEM.
+     Em 30/07/2026 o Igor viu "R$ 0,00 / R$ 0,00" na linha de bonificacao e
+     concluiu que o impacto estava zerado. Nao estava: medi e a bonificacao
+     tirava 3,01 pontos e o brinde 1,60 da rentabilidade do pedido. O que
+     faltava era a tela dizer isso - eu tinha escondido a coluna de custo do
+     vendedor e nao pus nada no lugar.
+
+     Por que ponto de margem e nao reais: e a unidade da decisao dele ("isso me
+     custa 3 pontos") e nao imprime o CMV. Nao e cofre - com o valor liquido na
+     tela da para voltar ao real - mas o pedido era ver o impacto, e o Igor ja
+     sabe que esconder custo aqui e tela, nao sigilo. */
+  const impPP = (v) => (c.liq ? v / c.liq : 0);
+  const colLucro = adm ? '<th>Lucro unit. ' + SENS + '</th>'
+                       : '<th>Impacto na margem</th>';
   const tdLucro = (v) => adm
     ? '<td class="mono ' + (v < 0 ? 'neg' : '') + '">' + brl(v) + '</td>' : '';
+  // custoLinha = custo TOTAL da linha (unitario x qtd), nao o unitario
+  const tdImpacto = (custoLinha) => adm ? '' :
+    '<td class="mono ' + (custoLinha > 0 ? 'neg' : '') + '" title="quanto esta ' +
+    'linha tira da rentabilidade do pedido">' +
+    (custoLinha > 0 ? '−' + pct(impPP(custoLinha)) : '—') + '</td>';
+  const tdVazio = adm ? '' : '<td class="mono" style="color:var(--muted)">—</td>';
 
   resumo.innerHTML =
     '<div class="kpirow" style="margin-bottom:14px">' +
@@ -2750,7 +2781,7 @@ window.renderCalcResumo = function(){
     '<div class="val">' + brl(c.liq) + '</div>' +
     '<div class="sub">bruto ' + brl(c.bruto) +
     (descGeral ? ' · desc. geral ' + pct(descGeral) : '') + '</div></div>' +
-    kpisAdm + kpiRent + '</div>' +
+    kpisAdm + kpiImpacto + kpiRent + '</div>' +
     '<h4 style="color:var(--navy);margin:6px 0 8px">Itens do pedido (qtd &gt; 0)</h4>' +
     '<table><thead><tr><th>Produto</th><th>Qtd</th><th>Preço final</th>' +
     '<th>Subtotal</th>' + colLucro + '</tr></thead><tbody>' +
@@ -2759,20 +2790,26 @@ window.renderCalcResumo = function(){
       '<td class="mono">' + it.q + '</td>' +
       '<td class="mono">' + brl(it.pf) + '</td>' +
       '<td class="mono">' + brl(it.liq) + '</td>' +
-      tdLucro(it.lucroUnit) + '</tr>').join('') +
+      tdLucro(it.lucroUnit) + tdVazio + '</tr>').join('') +
     c.boni.map(b =>
       '<tr style="opacity:.75"><td class="rowlab">' +
       prodName(b.sk).substring(0, 44) + ' <span class="pill y">bonif</span></td>' +
       '<td class="mono">' + b.q + '</td><td class="mono">R$ 0,00</td>' +
       '<td class="mono">R$ 0,00</td>' +
-      tdLucro(-(CALC.cmv[b.sk] || 0)) + '</tr>').join('') +
+      tdLucro(-(CALC.cmv[b.sk] || 0)) +
+      tdImpacto((CALC.cmv[b.sk] || 0) * b.q) + '</tr>').join('') +
     c.brindes.map(b =>
       '<tr style="opacity:.75"><td class="rowlab">' +
       prodName(b.sk).substring(0, 44) + ' <span class="pill">brinde</span></td>' +
       '<td class="mono">' + b.q + '</td><td class="mono">R$ 0,00</td>' +
       '<td class="mono">R$ 0,00</td>' +
-      tdLucro(-(CALC.cmv[b.sk] || 0)) + '</tr>').join('') +
-    '</tbody></table>';
+      tdLucro(-(CALC.cmv[b.sk] || 0)) +
+      tdImpacto((CALC.cmv[b.sk] || 0) * b.q) + '</tr>').join('') +
+    '</tbody></table>' +
+    (adm ? '' : '<div style="padding:8px 0 0;font-size:11px;color:var(--muted)">' +
+     'Bonificação e brindes saem com receita zero, mas <b>custam</b>: a coluna ' +
+     '<b>Impacto na margem</b> mostra quantos pontos cada linha tira da ' +
+     'rentabilidade do pedido.</div>');
 
   if(!insights) return;
   const ins = [];
