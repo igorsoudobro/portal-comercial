@@ -2156,58 +2156,96 @@ const vResumoOriginal = VIEWS.find(v => v.id === 'resumo').fn;
    e depois (d.fatLiq). Ter os dois lado a lado deixa o peso da devolucao visivel
    sem precisar abrir o DRE.
    As dicas descrevem a CONTA e nunca o valor, como o Igor pediu. */
+/* A linha de KPIs do Resumo e RECONSTRUIDA inteira, na ordem que o Igor definiu
+   em 31/07/2026:
+
+     bruto -> devolucoes -> liquido -> margem bruta -> frete -> comissao ->
+     bonif+amostra -> rentabilidade -> lucro final -> ticket -> ativos -> novos
+
+   Reconstruir sai mais previsivel que reordenar nos do DOM: a ordem fica
+   declarada numa lista, e ninguem precisa adivinhar em que posicao um KPI novo
+   deve entrar.
+
+   Sobre visibilidade: frete, comissao e lucro final seguem veSensivel(), igual
+   ao lucro final do original - sao custo. Margem e rentabilidade viram farol
+   para quem nao ve numero. O Igor descreveu a ordem pela visao dele (admin); se
+   quiser frete e comissao visiveis para o vendedor tambem, e tirar o `sens:true`
+   da lista abaixo. */
 function ajustarKpisResumo(){
   const row = document.querySelector('#v-resumo .kpirow');
   if(!row) return;
-  const d = dre(linhas());
+  const L = linhas();
+  const d = dre(L);
+  const verNum = verNumeroRent();
+  const sens = veSensivel();
 
-  const acha = (rotulo) => [...row.querySelectorAll('.kpi')].find(k => {
-    const lab = k.querySelector('.lab');
-    return lab && lab.textContent.trim().toLowerCase().indexOf(rotulo) === 0;
-  });
+  // clientes ativos e novos: mesma conta do vResumo original
+  const ativos = new Set(L.filter(r => r.venda && r.cn).map(r => r.cn));
+  const primeira = {};
+  ROWS.forEach(r => { if(r.venda && r.cn){
+    const mi = MESES_ORD.indexOf(r.m);
+    if(primeira[r.cn] === undefined || mi < primeira[r.cn]) primeira[r.cn] = mi;
+  }});
+  const ms = new Set(mesesAtivos());
+  const minSel = Math.min(...[...ms].map(m => MESES_ORD.indexOf(m)));
+  const novos = [...ativos].filter(cn =>
+    primeira[cn] >= minSel && ms.has(MESES_ORD[primeira[cn]])).length;
 
-  const liq = acha('faturamento líquido');
-  if(liq && !row.querySelector('#kpiFatBruto')){
-    const dev = d.fat ? Math.abs(d.dev) / d.fat : 0;
-    const box = document.createElement('div');
-    box.className = 'kpi';
-    box.id = 'kpiFatBruto';
-    box.innerHTML = '<div class="lab">Faturamento bruto</div>' +
-      '<div class="val">' + brl(d.fat) + '</div>' +
-      '<div class="sub">antes das devoluções' +
-      (d.fat ? ' (' + pct(dev) + ')' : '') + '</div>';
-    box.dataset.dica = 'Tudo o que foi faturado no período, sem descontar ' +
-      'devolução. O KPI ao lado é o mesmo número já líquido de devoluções.';
-    row.insertBefore(box, liq);          // bruto vem ANTES do liquido
-  }
+  const pctDev = d.fat ? Math.abs(d.dev) / d.fat : 0;
+  const itens = [
+    {lab: 'Faturamento bruto', val: brl(d.fat), cls: '',
+     sub: 'antes das devoluções',
+     dica: 'Tudo o que foi faturado no período, sem descontar devolução.'},
+    {lab: 'Devoluções', val: brl(d.dev), cls: d.dev ? 'sens' : '',
+     sub: d.fat ? pct(pctDev) + ' do bruto' : '—',
+     dica: 'Notas de devolução do período. Entra negativo: é o que sai do ' +
+           'faturamento bruto para chegar no líquido.'},
+    {lab: 'Faturamento líquido', val: brl(d.fatLiq), cls: 'accent',
+     sub: mesesAtivos().length + ' mês(es)',
+     dica: 'Faturamento bruto menos devoluções. É a base de todas as margens.'},
+    {lab: 'Margem bruta', val: verNum ? pct(d.margem) : farol(d.margem, false),
+     cls: '', sub: verNum ? brl(d.lucroBruto) : 'antes das despesas',
+     dica: 'Margem bruta = (faturamento líquido − CMV) ÷ faturamento líquido. ' +
+           'Só o custo da mercadoria entra aqui: imposto, frete, comissão e ' +
+           'bonificação ficam de fora.'},
+    {lab: 'Frete', val: brl(d.fr), cls: '', sens: true,
+     sub: d.fatLiq ? pct(d.fr / d.fatLiq) + ' do líquido' : '—',
+     dica: 'Frete das notas de venda e devolução do período.'},
+    {lab: 'Comissão', val: brl(d.com), cls: '', sens: true,
+     sub: d.fatLiq ? pct(d.com / d.fatLiq) + ' do líquido' : '—',
+     dica: 'Comissão calculada pelo percentual do vendedor, com as exceções ' +
+           'por CNPJ de Parametros!U:V.'},
+    {lab: 'Bonif. + Amostra', val: brl(d.boni), cls: '',
+     sub: d.fatLiq > 0 ? pct(d.boni / d.fatLiq) + ' do líquido' : '—',
+     dica: 'Bonificação e amostra pelo VALOR DE TABELA do produto, somadas. ' +
+           'Saem com receita zero e entram como custo antes do lucro final.'},
+    {lab: 'Rentabilidade', val: verNum ? pct(d.rent) : farol(d.rent, false),
+     cls: farolFaixa(d.rent) === 'verde' ? 'pos' :
+          farolFaixa(d.rent) === 'vermelho' ? 'sens' : '',
+     sub: verNum ? farolRotulo(d.rent) : 'do período',
+     dica: 'Rentabilidade = lucro final ÷ faturamento líquido. Régua: verde ' +
+           'acima de ' + pct(FAROL_VERDE) + ', amarelo acima de ' +
+           pct(FAROL_AMARELO) + ' (precisa de aprovação), vermelho abaixo ' +
+           '(negado).'},
+    {lab: 'Lucro final ' + SENS, val: brl(d.lucro), cls: 'sens', sens: true,
+     sub: 'Rentab. ' + pct(d.rent), bruto: true,
+     dica: 'O que sobra depois de CMV, imposto, frete, comissão e bonificação.'},
+    {lab: 'Ticket médio', val: brl(d.ticket), cls: '',
+     sub: n0(d.nfs) + ' pedidos',
+     dica: 'Faturamento líquido ÷ pedidos (pedido = CNPJ + mês).'},
+    {lab: 'Clientes ativos', val: n0(ativos.size), cls: '',
+     sub: 'CNPJs com venda no período'},
+    {lab: 'Novos clientes', val: n0(novos), cls: '',
+     sub: '1ª compra no período'},
+  ];
 
-  const marg = acha('margem bruta');
-  if(marg) marg.dataset.dica =
-    'Margem bruta = (faturamento líquido − CMV) ÷ faturamento líquido. ' +
-    'Faturamento líquido é venda menos devolução. Só o custo da mercadoria ' +
-    'entra aqui: imposto, frete, comissão e bonificação ficam de fora.';
-
-  const rent = acha('rentabilidade');
-  if(rent) rent.dataset.dica =
-    'Rentabilidade = lucro final ÷ faturamento líquido. O lucro final parte da ' +
-    'margem bruta e ainda desconta imposto, frete, comissão e bonificação. ' +
-    'É a margem que sobra de verdade. Régua do farol: verde acima de ' +
-    pct(FAROL_VERDE) + ', amarelo acima de ' + pct(FAROL_AMARELO) +
-    ' (precisa de aprovação), vermelho abaixo (negado).';
-
-  /* Lucro final para o SUPERVISOR tambem. No original este KPI e montado dentro
-     do vResumo com `SESSION.isAdmin ? ... : ''`, entao para o Fellipe ele nao
-     vinha - e o Igor pediu que ele tenha a visao sensivel completa. Insiro aqui
-     em vez de reescrever a view inteira. */
-  if(veSensivel() && !SESSION.isAdmin && !row.querySelector('#kpiLucroSup')){
-    const box = document.createElement('div');
-    box.className = 'kpi sens';
-    box.id = 'kpiLucroSup';
-    box.innerHTML = '<div class="lab">Lucro final ' + SENS + '</div>' +
-      '<div class="val">' + brl(d.lucro) + '</div>' +
-      '<div class="sub">Rentab. ' + pct(d.rent) + '</div>';
-    row.appendChild(box);
-  }
+  row.innerHTML = itens.filter(i => !i.sens || sens).map(i => {
+    const dica = i.dica ? ' data-dica="' + i.dica.replace(/"/g, '&quot;') + '"' : '';
+    return '<div class="kpi ' + (i.cls || '') + '"' + dica + '>' +
+      '<div class="lab">' + i.lab + '</div>' +
+      '<div class="val">' + i.val + '</div>' +
+      '<div class="sub">' + (i.sub || '') + '</div></div>';
+  }).join('');
 }
 
 function vResumoNovo(){
@@ -2286,15 +2324,27 @@ function vResumoNovo(){
   });
   Object.keys(novoPorVend).forEach(v => { if(porVend[v]) porVend[v].novos = novoPorVend[v].size; });
 
-  const arr = Object.entries(porVend).map(([v,o]) => ({
-    v, cart:o.cart, ativos:o.ativos, inativos:o.inativos, novos:o.novos,
-    fat:o.fat, ticket: o.pedidos.size ? o.fat / o.pedidos.size : 0
-  })).sort((a,b) => b.fat - a.fat);
+  /* Devolucao, bonificacao e rentabilidade por vendedor (pedido do Igor em
+     31/07/2026). Em vez de somar campo a campo, agrupo as linhas e chamo dre()
+     - a mesma funcao do DRE e dos KPIs. Assim a rentabilidade daqui nao pode
+     divergir da de la por eu ter esquecido de descontar algo. */
+  const linsPorVend = {};
+  L.forEach(r => { (linsPorVend[r.v] = linsPorVend[r.v] || []).push(r); });
+
+  const arr = Object.entries(porVend).map(([v,o]) => {
+    const dv = dre(linsPorVend[v] || []);
+    return {
+      v, cart:o.cart, ativos:o.ativos, inativos:o.inativos, novos:o.novos,
+      fat:o.fat, ticket: o.pedidos.size ? o.fat / o.pedidos.size : 0,
+      dev: dv.dev, boni: dv.boni, rent: dv.rent, fatLiq: dv.fatLiq
+    };
+  }).sort((a,b) => b.fat - a.fat);
 
   const tot = arr.reduce((a,r) => ({
     cart:a.cart+r.cart, ativos:a.ativos+r.ativos, inativos:a.inativos+r.inativos,
-    novos:a.novos+r.novos, fat:a.fat+r.fat
-  }), {cart:0,ativos:0,inativos:0,novos:0,fat:0});
+    novos:a.novos+r.novos, fat:a.fat+r.fat, dev:a.dev+r.dev, boni:a.boni+r.boni
+  }), {cart:0,ativos:0,inativos:0,novos:0,fat:0,dev:0,boni:0});
+  const totDre = dre(L);
 
   const tabela =
     '<div class="card" id="cardVendResumo"><div class="card-h">' +
@@ -2302,13 +2352,28 @@ function vResumoNovo(){
     DIAS_INATIVO + ' dias</span></div>' +
     '<div class="scroll"><table class="tbl-vend"><thead><tr>' +
     '<th>Vendedor</th><th style="text-align:right">Faturamento</th>' +
-    '<th style="text-align:right">Ticket médio</th><th style="text-align:right">Novos clientes</th>' +
+    '<th style="text-align:right">Ticket médio</th>' +
+    '<th style="text-align:right">Devoluções</th>' +
+    '<th style="text-align:right">Bonif.+Amostra</th>' +
+    '<th style="text-align:right">Rentab.</th>' +
+    '<th style="text-align:right">Novos clientes</th>' +
     '<th style="text-align:right">Ativos</th><th style="text-align:right">Inativos</th>' +
     '<th style="text-align:right">Carteira</th></tr></thead><tbody>' +
     arr.map(r =>
       '<tr><td class="rowlab">' + r.v + '</td>' +
       '<td class="mono" style="text-align:right">' + brl(r.fat) + '</td>' +
       '<td class="mono" style="text-align:right">' + brl(r.ticket) + '</td>' +
+      '<td class="mono" style="text-align:right' +
+        (r.dev ? ';color:#C0392B' : ';color:var(--muted)') + '">' +
+        (r.dev ? brl(r.dev) : '—') + '</td>' +
+      '<td class="mono" style="text-align:right">' +
+        (r.boni ? brl(r.boni) : '—') + '</td>' +
+      '<td style="text-align:right">' + (r.fatLiq
+        ? (verNumeroRent()
+            ? '<span class="mono" style="color:' + farolCor(r.rent) +
+              ';font-weight:700">' + pct(r.rent) + '</span>'
+            : farol(r.rent, false))
+        : '<span class="mono" style="color:var(--muted)">—</span>') + '</td>' +
       '<td class="mono" style="text-align:right">' + n0(r.novos) + '</td>' +
       '<td class="mono" style="text-align:right;color:#1BA466">' + n0(r.ativos) + '</td>' +
       '<td class="mono" style="text-align:right;color:#C0392B">' + n0(r.inativos) + '</td>' +
@@ -2316,6 +2381,12 @@ function vResumoNovo(){
     '<tr class="tot"><td class="tot">Total</td>' +
     '<td class="mono tot" style="text-align:right">' + brl(tot.fat) + '</td>' +
     '<td class="tot"></td>' +
+    '<td class="mono tot" style="text-align:right">' + brl(tot.dev) + '</td>' +
+    '<td class="mono tot" style="text-align:right">' + brl(tot.boni) + '</td>' +
+    // A rentabilidade do TOTAL nao e a soma nem a media das linhas: e o dre() do
+    // recorte inteiro. Somar percentuais daria numero sem significado.
+    '<td class="mono tot" style="text-align:right">' +
+      (verNumeroRent() ? pct(totDre.rent) : '') + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.novos) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.ativos) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.inativos) + '</td>' +
@@ -2329,6 +2400,12 @@ function vResumoNovo(){
     if(primeiraRow) primeiraRow.insertAdjacentHTML('afterend', kpiHtml);
     else view.insertAdjacentHTML('afterbegin', kpiHtml);
     view.insertAdjacentHTML('beforeend', tabela);
+    // Match do frete depois da tabela por vendedor: e indicador de QUALIDADE do
+    // dado, nao de resultado comercial - fica no fim de proposito.
+    try{
+      const mf = montarMatchFrete();
+      if(mf) view.insertAdjacentHTML('beforeend', mf);
+    }catch(e){ console.error('match do frete:', e); }
 
     /* "Novos clientes" clicavel: acha o KPI pelo rotulo e vira botao */
     view.querySelectorAll('.kpi').forEach(k => {
@@ -3203,6 +3280,80 @@ function vMixNovo(){
     novo.addEventListener(id === 'mixBusca' ? 'input' : 'change', render);
   });
   render();
+}
+
+/* ============== MATCH DO FRETE (visao admin) ==============================
+   Pedido do Igor (31/07/2026): "quantas nfs fizeram match com as notas da base
+   de fretes".
+
+   O dado ja existia e nao aparecia: a macro marca cada linha em FreteOrigem -
+   'Real' quando a NF casou com uma nota da base de fretes do OMIE, 'Estimado'
+   quando nao casou e ela usou o percentual por estado.
+
+   A tela mostra DOIS cortes de proposito, porque eles discordam: por NF o match
+   e 72%, mas por FATURAMENTO o estimado pesa 32% do valor - as notas grandes
+   ficam mais no estimado. Olhar so o primeiro numero da a impressao errada.
+
+   E o mes CORRENTE sempre parece pior (Julho em 52% contra 70-78% dos fechados)
+   porque o CT-e do transportador chega DEPOIS da venda. Sem a ressalva, 52%
+   parece quebra - e nao e. */
+function montarMatchFrete(){
+  if(!veSensivel()) return '';
+  const M = (typeof _Z === 'object' && _Z && _Z.FRETE_MATCH) ? _Z.FRETE_MATCH : null;
+  if(!M) return '';
+  const meses = MESES_ORD.filter(m => M[m]);
+  if(!meses.length) return '';
+
+  const t = {nfReal:0, nfEst:0, fatReal:0, fatEst:0, freteReal:0, freteEst:0};
+  meses.forEach(m => Object.keys(t).forEach(k => { t[k] += M[m][k] || 0; }));
+  const p = (a, b) => (a + b) ? a / (a + b) : 0;
+  const ultimo = meses[meses.length - 1];
+
+  const linha = (m) => {
+    const d = M[m];
+    const pnf = p(d.nfReal, d.nfEst), pf = p(d.fatReal, d.fatEst);
+    const atual = (m === ultimo);
+    return '<tr' + (atual ? ' style="opacity:.75"' : '') + '>' +
+      '<td class="rowlab">' + m + (atual ? ' <span class="pill">em curso</span>' : '') + '</td>' +
+      '<td class="mono" style="text-align:right">' + n0(d.nfReal) + '</td>' +
+      '<td class="mono" style="text-align:right;color:var(--muted)">' + n0(d.nfEst) + '</td>' +
+      '<td class="mono" style="text-align:right;color:' + farolCor(pnf) +
+        ';font-weight:700">' + pct(pnf) + '</td>' +
+      '<td class="mono" style="text-align:right">' + pct(pf) + '</td>' +
+      '<td class="mono" style="text-align:right">' + brl(d.freteReal) + '</td>' +
+      '<td class="mono" style="text-align:right;color:var(--muted)">' +
+        brl(d.freteEst) + '</td></tr>';
+  };
+
+  return '<div class="card" id="cardMatchFrete"><div class="card-h">' +
+    '<h3>Match do frete ' + SENS + '</h3>' +
+    '<span class="hint">quantas notas acharam a nota de frete de verdade</span>' +
+    '</div>' +
+    '<div class="kpirow" style="margin:0;padding:12px 20px 0">' +
+    '<div class="kpi"><div class="lab">Match por nota</div><div class="val">' +
+      pct(p(t.nfReal, t.nfEst)) + '</div><div class="sub">' + n0(t.nfReal) +
+      ' de ' + n0(t.nfReal + t.nfEst) + ' NFs</div></div>' +
+    '<div class="kpi"><div class="lab">Match por faturamento</div>' +
+      '<div class="val">' + pct(p(t.fatReal, t.fatEst)) + '</div>' +
+      '<div class="sub">nota grande cai mais no estimado</div></div>' +
+    '<div class="kpi sens"><div class="lab">Frete estimado ' + SENS + '</div>' +
+      '<div class="val">' + brl(t.freteEst) + '</div>' +
+      '<div class="sub">' + pct(p(t.freteEst, t.freteReal)) +
+      ' do frete total</div></div>' +
+    '</div>' +
+    '<div class="scroll"><table><thead><tr><th>Mês</th>' +
+    '<th style="text-align:right">NFs com frete real</th>' +
+    '<th style="text-align:right">NFs estimadas</th>' +
+    '<th style="text-align:right">% por nota</th>' +
+    '<th style="text-align:right">% por faturamento</th>' +
+    '<th style="text-align:right">Frete real</th>' +
+    '<th style="text-align:right">Frete estimado</th></tr></thead><tbody>' +
+    meses.map(linha).join('') + '</tbody></table></div>' +
+    '<div class="note"><b>O mês em curso sempre parece pior</b> — a nota do ' +
+    'transportador (CT-e) chega depois da venda, então o frete do mês ainda não ' +
+    'foi todo faturado. Compare com os meses fechados, não com 100%. ' +
+    '<b>Estimado</b> = a macro não achou a nota e usou o percentual do estado ' +
+    '(<i>Parametros!A:B</i>).</div></div>';
 }
 
 /* ---------------------------------------------------- 5) engatar no refresh */
