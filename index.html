@@ -2331,12 +2331,35 @@ function vResumoNovo(){
   const linsPorVend = {};
   L.forEach(r => { (linsPorVend[r.v] = linsPorVend[r.v] || []).push(r); });
 
+  /* Quando nao ha denominador, um '-' seco deixaria o Igor sem saber o tamanho
+     do estrago - e o estrago existe: o Regio perdeu R$ 5.550 em Julho. Entao no
+     lugar do percentual impossivel o admin ve O LUCRO EM REAIS, que e o numero
+     que significa algo ali. Quem ve so farol continua sem numero, com o motivo
+     no title. */
+  const celulaRent = (r) => {
+    if(!semBase(r.rent)){
+      return verNumeroRent()
+        ? '<span class="mono" style="color:' + farolCor(r.rent) +
+          ';font-weight:700">' + pct(r.rent) + '</span>'
+        : farol(r.rent, false);
+    }
+    const motivo = 'devolução (' + brl(Math.abs(r.dev)) + ') maior que a venda ('
+      + brl(r.fat) + ') no período: sem base para calcular %';
+    if(!verNumeroRent())
+      return '<span title="' + motivo +
+        '" style="color:var(--muted);font-weight:700">—</span>';
+    return '<span class="mono" title="' + motivo + '" style="color:' +
+      (r.lucro < 0 ? '#C0392B' : 'var(--muted)') + ';font-weight:700">' +
+      brl(r.lucro) + '</span>';
+  };
+
   const arr = Object.entries(porVend).map(([v,o]) => {
     const dv = dre(linsPorVend[v] || []);
     return {
       v, cart:o.cart, ativos:o.ativos, inativos:o.inativos, novos:o.novos,
       fat:o.fat, ticket: o.pedidos.size ? o.fat / o.pedidos.size : 0,
-      dev: dv.dev, boni: dv.boni, rent: dv.rent, fatLiq: dv.fatLiq
+      dev: dv.dev, boni: dv.boni, rent: dv.rent, fatLiq: dv.fatLiq,
+      lucro: dv.lucro
     };
   }).sort((a,b) => b.fat - a.fat);
 
@@ -2349,7 +2372,8 @@ function vResumoNovo(){
   const tabela =
     '<div class="card" id="cardVendResumo"><div class="card-h">' +
     '<h3>Por vendedor</h3><span class="hint">ticket médio no período · carteira pela régua de ' +
-    DIAS_INATIVO + ' dias</span></div>' +
+    DIAS_INATIVO + ' dias · quando a devolução passa a venda, a rentabilidade sai em R$' +
+    '</span></div>' +
     '<div class="scroll"><table class="tbl-vend"><thead><tr>' +
     '<th>Vendedor</th><th style="text-align:right">Faturamento</th>' +
     '<th style="text-align:right">Ticket médio</th>' +
@@ -2368,12 +2392,7 @@ function vResumoNovo(){
         (r.dev ? brl(r.dev) : '—') + '</td>' +
       '<td class="mono" style="text-align:right">' +
         (r.boni ? brl(r.boni) : '—') + '</td>' +
-      '<td style="text-align:right">' + (r.fatLiq
-        ? (verNumeroRent()
-            ? '<span class="mono" style="color:' + farolCor(r.rent) +
-              ';font-weight:700">' + pct(r.rent) + '</span>'
-            : farol(r.rent, false))
-        : '<span class="mono" style="color:var(--muted)">—</span>') + '</td>' +
+      '<td style="text-align:right">' + celulaRent(r) + '</td>' +
       '<td class="mono" style="text-align:right">' + n0(r.novos) + '</td>' +
       '<td class="mono" style="text-align:right;color:#1BA466">' + n0(r.ativos) + '</td>' +
       '<td class="mono" style="text-align:right;color:#C0392B">' + n0(r.inativos) + '</td>' +
@@ -2731,7 +2750,49 @@ function vPenetracaoNovo(){
 const FAROL_VERDE = 0.30;
 const FAROL_AMARELO = 0.20;
 
+/* ===== PERCENTUAL SEM DENOMINADOR (corrigido em 01/08/2026) ================
+   O Igor viu na tabela por vendedor, em Julho:
+
+     vendedor                venda   devolucao   fat LIQUIDO     lucro    mostrava
+     RCA - Ana Paula M.      5.920      -5.923            -2    -3.284  132.965,0%
+     RCA - Regio            11.537     -16.430        -4.892    -5.550      113,4%
+     RCA - Jarbas              429     -19.126       -18.697    -4.824       25,8%
+
+   Rentabilidade e lucro / faturamento LIQUIDO. Quando a devolucao do mes passa
+   a venda, o denominador fica negativo ou quase zero, e ai:
+
+     - quase zero  -> a divisao explode (132.965%);
+     - negativo    -> negativo / negativo = POSITIVO. O Regio perdeu R$ 5.550 e
+                      a tela pintava 113,4% em VERDE. Este e o grave: o farol
+                      premiava quem deu prejuizo.
+
+   A conta do DRE esta certa. O erro era a GUARDA: eu escrevi `r.fatLiq ? ...`,
+   que so barra o zero exato - e -4.892 e truthy. O Portal-base ja tinha a
+   guarda correta na aba Carteira (`if(dd.fatLiq>0) rent=dd.rent`, senao null e
+   a celula mostra '-'). Eu tinha o padrao certo no arquivo e usei um mais fraco.
+
+   Conserto na RAIZ, nao na minha tabela: a mesma falha alcanca a rentabilidade
+   por CNPJ, as margens por canal e o ranking - qualquer recorte pequeno onde a
+   devolucao supere a venda. `rent` e `margem` passam a ser NULL quando nao ha
+   base, e os formatadores abaixo sabem o que fazer com null.
+
+   E nao e erro de dado: sao devolucoes de vendas de meses ANTERIORES caindo em
+   Julho. O mes do Jarbas realmente teve R$ 429 de venda e R$ 19 mil de
+   devolucao velha. A tela passa a dizer isso em vez de inventar um numero. */
+const dreOriginal = dre;          // capturar ANTES da troca (regra da casa)
+window.dre = function(rows){
+  const d = dreOriginal(rows);
+  if(!(d.fatLiq > 0)){ d.rent = null; d.margem = null; }
+  return d;
+};
+
+/* Sem denominador nao existe faixa: nem verde, nem vermelha. Uma quarta faixa,
+   'indefinido', em vez de deixar o null cair no `return 'vermelho'` - porque
+   vermelho aqui seria um julgamento que o dado nao sustenta. */
+function semBase(p){ return p === null || p === undefined || !isFinite(p); }
+
 function farolFaixa(p){
+  if(semBase(p)) return 'indefinido';
   if(p >= FAROL_VERDE) return 'verde';
   if(p >= FAROL_AMARELO) return 'amarelo';
   return 'vermelho';
@@ -2739,8 +2800,11 @@ function farolFaixa(p){
 function farolRotulo(p){
   const f = farolFaixa(p);
   return f === 'verde' ? 'aprovado'
-       : f === 'amarelo' ? 'precisa de aprovação' : 'negado';
+       : f === 'amarelo' ? 'precisa de aprovação'
+       : f === 'vermelho' ? 'negado'
+       : 'devolução maior que a venda no período';
 }
+window.semBase = semBase;
 window.farolFaixa = farolFaixa;
 window.farolRotulo = farolRotulo;
 window.FAROL_VERDE = FAROL_VERDE;
@@ -2748,14 +2812,26 @@ window.FAROL_AMARELO = FAROL_AMARELO;
 
 window.farolCor = function(p){
   const f = farolFaixa(p);
-  return f === 'verde' ? '#1BA466' : f === 'amarelo' ? '#E0A800' : '#D64550';
+  return f === 'verde' ? '#1BA466' : f === 'amarelo' ? '#E0A800'
+       : f === 'vermelho' ? '#D64550' : 'var(--muted)';
 };
+
+/* pct(null) dava "0,0%" - uma mentira mansa, mas mentira: 0% e um numero, e
+   aqui nao ha numero. Passa a ser o mesmo '-' que a aba Carteira ja usava. */
+const pctOriginal = pct;
+window.pct = function(v){ return semBase(v) ? '—' : pctOriginal(v); };
 
 /* O title da bolinha mostrava SEMPRE o percentual - inclusive para quem nao
    pode ver numero. Quem nao ve numero passa a ver o rotulo da regra. */
 window.farol = function(p, mostrarNum){
-  const cor = farolCor(p);
   const rot = farolRotulo(p);
+  /* Sem base de calculo nao acende bolinha nenhuma: uma bolinha cinza ainda
+     parece um veredito. Fica o mesmo '-' das outras celulas, com o motivo no
+     title - senao o leitor fica sem saber se o dado faltou ou se a conta
+     nao existe. */
+  if(semBase(p)) return '<span title="' + rot +
+    '" style="color:var(--muted);font-weight:700">—</span>';
+  const cor = farolCor(p);
   const dica = mostrarNum ? pct(p) + ' · ' + rot : rot;
   const dot = '<span title="' + dica + '" style="display:inline-block;' +
     'width:14px;height:14px;border-radius:50%;background:' + cor +
