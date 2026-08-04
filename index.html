@@ -524,8 +524,8 @@ async function _loadData(){
   MESES=MESES_ORD.filter(m=>D.Mes.includes(m));
   DATA_READY=true;
 }
-const USERS={"Ana Paula Santana":"ana2026","Cristiane Leão":"cristiane2026","Fellipe Argentati":"fellipe2026","Jonas de Paula":"jonas2026","João Vitor Pavanelli":"joao2026","Júlia Barros":"julia2026","RCA - Alberto":"alberto2026","RCA - Alex Lima":"alex2026","RCA - Ana Paula Martins":"ana2026","RCA - Bruno Lucas Zanona":"bruno2026","RCA - Cainã":"caina2026","RCA - Diego Cintra":"diego2026","RCA - Jarbas":"jarbas2026","RCA - Josias":"josias2026","RCA - Luisa Helena":"luisa2026","RCA - Luiz Netto":"luiz2026","RCA - Marcelo Oliveira":"marcelo2026","RCA - Marco Marini":"marco2026","RCA - Marcos Lima":"marcos2026","RCA - Pedro Henrique":"pedro2026","RCA - Régio":"regio2026","Thais Bizari":"thais2026","Thiago Frade":"thiago2026"};
-const ADMINS={"Igor Supino":"igor2026","Enzo Siqueira":"enzo2026","Pedro Chuluck":"pedro2026"};
+let USERS={};   /* vem de Parametros!AM:AO via JSON */
+let ADMINS={};  /* vem de Parametros!AM:AO via JSON */
 
 
 const MESES_ORD=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -1725,6 +1725,7 @@ async function msCarregar(){
     msStatus('Baixando os dados…');
     await _loadData();
     if(!DATA_READY) return;            // navegou para o login
+    if(typeof aplicarLoginDoJson === 'function'){ await aplicarLoginDoJson(); }
     var i = window.__DADOS_INFO || {};
     msStatus('Dados de <b>' + (i.nome || '?') + '</b> · ' +
              ((i.bytes/1024)|0) + ' KB · atualizado ' +
@@ -2353,15 +2354,73 @@ function vResumoNovo(){
       brl(r.lucro) + '</span>';
   };
 
+  /* ---- DESCONTO MEDIO APLICADO (pedido do Igor em 04/08/2026) -------------
+     O modelo da Dobro: Parametros!AG guarda o preco de CONSUMIDOR FINAL, e o
+     vendedor desconta em cima dele para vender ao lojista. Exemplo dele: BTG
+     Gel a R$ 84,99 no consumidor, lojista paga R$ 45,04 -> 47% de desconto.
+
+     Eu quase errei aqui. Medi 52-55% em todo SKU e 45-65% em todos os 22
+     vendedores e concluí que o preco de tabela estava errado - era o modelo de
+     negocio, nao um erro de cadastro. Fica registrado para o proximo que
+     estranhar o numero: 55% de desconto e o normal, nao um alarme.
+
+     PONDERADO POR RECEITA, nao media de percentuais:
+
+         desconto = 1 - (receita real / receita a preco de tabela)
+
+     Media simples de percentuais daria o mesmo peso a um SKU de R$ 200 mil e a
+     um de R$ 200. Esta forma responde "de tudo que ele podia ter faturado a
+     tabela, quanto entrou".
+
+     COBERTURA: 48 SKUs tem preco cadastrado = 92,5% do faturamento. Os 7,5% sem
+     preco ficam FORA da conta (nao entram como desconto zero, que puxaria a
+     media para baixo e mentiria). O title de cada celula diz a cobertura
+     daquele vendedor, porque ela varia muito - a Julia Barros tinha 36% em
+     Julho, e um numero sobre um terco da carteira nao vale o mesmo que um sobre
+     100%. */
+  const PRECO_TAB = (typeof CALC === 'object' && CALC && CALC.precos) || {};
+  const descPorVend = {};
+  L.forEach(r => {
+    if(!r.venda || !r.q) return;
+    const d = descPorVend[r.v] = descPorVend[r.v] ||
+              {real:0, tab:0, fatTot:0};
+    d.fatTot += r.fat;
+    const p = PRECO_TAB[r.sk];
+    if(p > 0){ d.real += r.fat; d.tab += r.q * p; }
+  });
+
   const arr = Object.entries(porVend).map(([v,o]) => {
     const dv = dre(linsPorVend[v] || []);
+    const d = descPorVend[v];
     return {
       v, cart:o.cart, ativos:o.ativos, inativos:o.inativos, novos:o.novos,
       fat:o.fat, ticket: o.pedidos.size ? o.fat / o.pedidos.size : 0,
       dev: dv.dev, boni: dv.boni, rent: dv.rent, fatLiq: dv.fatLiq,
-      lucro: dv.lucro
+      lucro: dv.lucro,
+      desc: (d && d.tab > 0) ? 1 - d.real / d.tab : null,
+      descCob: (d && d.fatTot > 0) ? d.real / d.fatTot : 0
     };
   }).sort((a,b) => b.fat - a.fat);
+
+  /* Farol proprio: aqui MAIS e pior, ao contrario da rentabilidade. As faixas
+     saem da mediana medida em Julho/2026 (~55%), nao de um numero redondo
+     escolhido a esmo - abaixo de 50% e desconto contido, acima de 60% e o
+     vendedor entregando bem mais que a media da casa. */
+  const corDesconto = (p) => p >= 0.60 ? '#D64550'
+                           : p >= 0.50 ? '#E0A800' : '#1BA466';
+  const celulaDesc = (r) => {
+    if(semBase(r.desc))
+      return '<span title="nenhum SKU deste vendedor tem preço de tabela em ' +
+             'Parametros!AE:AG" style="color:var(--muted)">—</span>';
+    const cob = Math.round(100 * r.descCob);
+    const dica = 'desconto sobre o preço de consumidor (Parametros!AG), ' +
+                 'ponderado por receita · ' + cob + '% do faturamento dele ' +
+                 'tem preço de tabela cadastrado' +
+                 (cob < 70 ? ' — cobertura baixa, leia com reserva' : '');
+    return '<span class="mono" title="' + dica + '" style="color:' +
+           corDesconto(r.desc) + ';font-weight:700' +
+           (cob < 70 ? ';opacity:.55' : '') + '">' + pct(r.desc) + '</span>';
+  };
 
   const tot = arr.reduce((a,r) => ({
     cart:a.cart+r.cart, ativos:a.ativos+r.ativos, inativos:a.inativos+r.inativos,
@@ -2372,7 +2431,7 @@ function vResumoNovo(){
   const tabela =
     '<div class="card" id="cardVendResumo"><div class="card-h">' +
     '<h3>Por vendedor</h3><span class="hint">ticket médio no período · carteira pela régua de ' +
-    DIAS_INATIVO + ' dias · quando a devolução passa a venda, a rentabilidade sai em R$' +
+    DIAS_INATIVO + ' dias · desconto sobre o preço de consumidor, ponderado por receita' +
     '</span></div>' +
     '<div class="scroll"><table class="tbl-vend"><thead><tr>' +
     '<th>Vendedor</th><th style="text-align:right">Faturamento</th>' +
@@ -2380,6 +2439,7 @@ function vResumoNovo(){
     '<th style="text-align:right">Devoluções</th>' +
     '<th style="text-align:right">Bonif.+Amostra</th>' +
     '<th style="text-align:right">Rentab.</th>' +
+    '<th style="text-align:right">Desc. médio</th>' +
     '<th style="text-align:right">Novos clientes</th>' +
     '<th style="text-align:right">Ativos</th><th style="text-align:right">Inativos</th>' +
     '<th style="text-align:right">Carteira</th></tr></thead><tbody>' +
@@ -2393,6 +2453,7 @@ function vResumoNovo(){
       '<td class="mono" style="text-align:right">' +
         (r.boni ? brl(r.boni) : '—') + '</td>' +
       '<td style="text-align:right">' + celulaRent(r) + '</td>' +
+      '<td style="text-align:right">' + celulaDesc(r) + '</td>' +
       '<td class="mono" style="text-align:right">' + n0(r.novos) + '</td>' +
       '<td class="mono" style="text-align:right;color:#1BA466">' + n0(r.ativos) + '</td>' +
       '<td class="mono" style="text-align:right;color:#C0392B">' + n0(r.inativos) + '</td>' +
@@ -2406,6 +2467,14 @@ function vResumoNovo(){
     // recorte inteiro. Somar percentuais daria numero sem significado.
     '<td class="mono tot" style="text-align:right">' +
       (verNumeroRent() ? pct(totDre.rent) : '') + '</td>' +
+    // Desconto do TOTAL: soma as receitas antes de dividir, nao media das
+    // linhas. Media de percentuais daria peso igual a quem faturou R$ 563 mil e
+    // a quem faturou R$ 5 mil.
+    '<td class="mono tot" style="text-align:right">' + (() => {
+      let real = 0, tab = 0;
+      Object.values(descPorVend).forEach(d => { real += d.real; tab += d.tab; });
+      return tab > 0 ? pct(1 - real / tab) : '—';
+    })() + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.novos) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.ativos) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.inativos) + '</td>' +
@@ -3456,6 +3525,64 @@ document.addEventListener('change', e => {
 }, true);
 
 })();
+
+/* ===================== LOGIN VINDO DO EXCEL (04/08/2026) ==================
+   Pedido do Igor: "na aba parametros do excel, termos os usuarios e as senhas
+   tambem? Pra que, se eu mudar la, mude tambem no portal online?"
+
+   Fonte agora: Parametros!AM:AO -> blob LOGIN do dados_dashboard.json.
+
+   POR QUE ISSO MELHORA: as 26 senhas estavam em texto puro no index.html, que
+   esta publicado no GitHub Pages. O login da Microsoft nao protegia nada disso -
+   e JavaScript da propria pagina, e quem abre a URL e le o codigo-fonte ve tudo
+   sem executar uma linha. Vindo do JSON, ficam no SharePoint atras do login da
+   Microsoft.
+
+   O QUE NAO RESOLVE: o JSON inteiro chega ao navegador de quem loga. Qualquer
+   pessoa da Dobro com DevTools le todas as senhas, inclusive as de admin. E
+   reducao de exposicao - de "internet inteira" para "quem tem conta @soudobro" -,
+   nao sigilo. O Igor foi avisado e escolheu senha em vez de e-mail.
+
+   AS TRES RECUSAS ABAIXO SAO DE PROPOSITO. Em cada uma o Portal fica com os
+   usuarios embutidos no HTML em vez de aplicar o que veio: uma migracao que
+   tranca todo mundo fora e pior do que a exposicao que ela conserta. */
+/* Se nem o JSON nem o HTML tiverem usuario, o combo fica vazio e a tela nao
+   explica nada - o pior tipo de falha, porque parece que o Portal quebrou. Este
+   aviso diz o que fazer. Vale so depois que as senhas sairam do HTML (as duas
+   listas embutidas viraram {}), o que e o caso desde 04/08/2026. */
+function avisarSemUsuarios(){
+  if(Object.keys(USERS).length || Object.keys(ADMINS).length) return;
+  const e = document.getElementById('loginErr');
+  if(e) e.innerHTML = 'A tabela de usuários não veio no JSON. ' +
+    'Confira <b>Parametros!AM:AO</b> no V8 e rode <b>python rodar_json.py</b>.';
+  const b = document.getElementById('loginBtn');
+  if(b) b.disabled = true;
+}
+
+window.aplicarLoginDoJson = async function(){
+  let ok = false;
+  try{
+    /* As tres recusas abaixo caem na reserva de proposito. */
+    if(typeof _Z === 'object' && _Z && _Z.LOGIN){
+      const L = await _unz(_Z.LOGIN);
+      if(!L || !L.users || !L.admins){                    // 2: blob torto
+        console.warn('Blob LOGIN sem users/admins.');
+      }else if(!Object.keys(L.admins).length){            // 3: nenhum admin
+        console.warn('LOGIN do JSON sem nenhum admin.');
+      }else{
+        USERS = L.users; ADMINS = L.admins;
+        buildLogin();      // o <select> foi montado no load, com a lista velha
+        console.info('Login do Excel: ' + Object.keys(ADMINS).length +
+                     ' admin(s) + ' + Object.keys(USERS).length + ' vendedor(es).');
+        ok = true;
+      }
+    }                                                    // 1: sem tabela AM:AO
+  }catch(e){
+    console.error('LOGIN do JSON falhou.', e);
+  }
+  if(!ok) avisarSemUsuarios();
+  return ok;
+};
 
 </script>
 </body>
