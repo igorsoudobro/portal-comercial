@@ -1083,7 +1083,7 @@ function analisarCNPJ(){
   const mesesCN=MESES.filter(m=>L.some(r=>r.m===m));
   let dreHtml;
   if(mesesCN.length<=1){
-    let body=DRE_ROWS_FULL.map(([lab,key,f,flag])=>{
+    let body=dreRowsFor().map(([lab,key,f,flag])=>{
       const bold=flag==='b',sens=flag==='s';
       let cls=(key==='rent'||key==='margem')?(d[key]>=0?'pos':'neg'):'';
       return `<tr class="${bold?'tot':''}"><td class="rowlab ${bold?'tot':''}">${lab}${sens?SENS:''}</td><td class="mono ${cls} ${bold?'tot':''}">${fmtCell(d[key],f,key)}</td></tr>`;
@@ -1092,7 +1092,7 @@ function analisarCNPJ(){
   } else {
     const dMes=mesesCN.map(m=>dre(L.filter(r=>r.m===m)));
     const head=`<tr><th>Linha</th>${mesesCN.map(m=>`<th style="text-align:right">${m.substring(0,3)}</th>`).join('')}<th style="text-align:right;border-left:2px solid var(--line)">YTD</th></tr>`;
-    const body=DRE_ROWS_FULL.map(([lab,key,f,flag])=>{
+    const body=dreRowsFor().map(([lab,key,f,flag])=>{
       const sens=flag==='s',bold=flag==='b';
       const cell=(dd)=>{ let cls=(key==='rent'||key==='margem')?(dd[key]>=0?'pos':'neg'):(key==='dev'&&dd[key]<0?'neg':''); return `<td class="mono ${cls} ${bold?'tot':''}">${fmtCell(dd[key],f,key)}</td>`; };
       return `<tr class="${bold?'tot':''}"><td class="rowlab ${bold?'tot':''}">${lab}${sens?SENS:''}</td>${dMes.map(cell).join('')}<td class="mono ${bold?'tot':''}" style="border-left:2px solid var(--line);font-weight:700">${fmtCell(d[key],f,key)}</td></tr>`;
@@ -3622,10 +3622,16 @@ window.aplicarLoginDoJson = async function(){
    nem no Parametros. Desenhar uma reta chamada "objetivo" a partir de nada seria
    inventar numero; preferi omitir e dizer isso aqui. */
 function vendaDiaria(L){
+  /* Guarda o CNPJ e a NF de cada dia, nao so o valor: o Igor pediu para o
+     tooltip dizer "para quantos CNPJs diferentes foi". Set e nao contador porque
+     o FATO e agrupado por (dia, cnpj, sku, ...) - o mesmo cliente aparece em
+     varias linhas do mesmo dia, uma por SKU, e somar daria numero inflado. */
   const porDia = {};
   L.forEach(r => {
     if(!r.venda || !r.d) return;
-    porDia[r.d] = (porDia[r.d] || 0) + r.fat;
+    const d = porDia[r.d] || (porDia[r.d] = {v: 0, cn: new Set()});
+    d.v += r.fat;
+    if(r.cn) d.cn.add(r.cn);
   });
   const dias = Object.keys(porDia).sort();
   if(!dias.length) return null;
@@ -3639,9 +3645,10 @@ function vendaDiaria(L){
   let acum = 0;
   for(let t = new Date(ini); t <= fim; t.setDate(t.getDate()+1)){
     const iso = t.toISOString().slice(0,10);
-    const v = porDia[iso] || 0;
+    const d = porDia[iso];
+    const v = d ? d.v : 0;
     acum += v;
-    serie.push({iso: iso, v: v, acum: acum,
+    serie.push({iso: iso, v: v, acum: acum, cn: d ? d.cn.size : 0,
                 dia: t.getDate(), dow: t.getDay()});
   }
   return serie;
@@ -3680,10 +3687,24 @@ function svgVendaDiaria(serie){
   serie.forEach((s, i) => {
     const h = s.v > 0 ? Math.max(1, ih - (yV(s.v) - MT)) : 0;
     if(h > 0){
+      /* Area de hover MAIOR que a barra: numa barra de 2 px de largura, ou num
+         dia de valor baixo, acertar o retangulo com o mouse e sorte. O rect
+         invisivel cobre a coluna inteira do dia e carrega o mesmo title. */
+      /* NAO ha contagem de notas aqui, de proposito. O campo `nfs` do FATO e
+         "NFs distintas NAQUELE grupo", e grupo e por SKU - somar conta a mesma
+         nota uma vez por item. Na primeira versao isso deu "40 notas" para 4
+         CNPJs num dia de R$ 9 mil. O FATO nao guarda o NUMERO da NF, so a
+         contagem por grupo, entao notas distintas por dia e incalculavel com o
+         dado que chega ao Portal. Numero errado e pior que numero ausente. */
+      const dica = s.iso.split('-').reverse().join('/') + ': ' + brl(s.v) +
+                   '  ·  ' + s.cn + (s.cn === 1 ? ' CNPJ' : ' CNPJs') +
+                   '  ·  acumulado ' + brl(s.acum);
+      g += '<rect x="' + (x(i)-iw/n/2) + '" y="' + MT + '" width="' + (iw/n) +
+           '" height="' + ih + '" fill="transparent"><title>' + dica +
+           '</title></rect>';
       g += '<rect x="' + (x(i)-bw/2) + '" y="' + yV(s.v) + '" width="' + bw +
-           '" height="' + h + '" rx="2" fill="#2A3E7E"><title>' +
-           s.iso.split('-').reverse().join('/') + ': ' + brl(s.v) +
-           '  ·  acumulado ' + brl(s.acum) + '</title></rect>';
+           '" height="' + h + '" rx="2" fill="#2A3E7E" pointer-events="none">' +
+           '</rect>';
     }
   });
   // acumulado
@@ -3743,6 +3764,222 @@ function montarVendaDiaria(){
       '</div></div>' +
     '</div><div style="padding:6px 10px 12px">' + svgVendaDiaria(serie) +
     '</div></div>');
+}
+
+/* ============ Clientes ativos, devoluções e extrair carteira (11/08/2026) ====
+   Pedidos do Igor, no mesmo lote:
+     - clicar em "Clientes ativos" e ver quem sao, como ja acontece com "Novos"
+     - clicar em "Devoluções" e ver as informacoes
+     - botao "Extrair carteira" na aba Carteira, para o vendedor baixar
+
+   ATENCAO ao escopo: este bloco fica FORA das IIFEs do melhorias.js, entao nao
+   enxerga `el2` nem `abrirModal`, que sao locais a elas. Uso
+   document.getElementById e uma copia propria do modal. Duplicar 12 linhas de
+   modal e o preco de nao reestruturar o arquivo inteiro num pedido de tela -
+   e foi exatamente esse escopo que fez o grafico diario nao aparecer na
+   primeira versao. */
+var DIAS_INATIVO_TXT = '120';
+
+function _modal(titulo, corpo){
+  let m = document.getElementById('modalGen2');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'modalGen2';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(15,20,30,.55);' +
+      'display:flex;align-items:center;justify-content:center;z-index:9999;padding:24px';
+    m.addEventListener('click', e => { if(e.target === m) m.style.display='none'; });
+    document.body.appendChild(m);
+  }
+  m.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:980px;' +
+    'width:100%;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;' +
+    'box-shadow:0 18px 50px rgba(0,0,0,.28)">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;' +
+    'padding:14px 18px;border-bottom:1px solid #e6e8ec">' +
+    '<b style="color:var(--navy);font-size:15px">' + titulo + '</b>' +
+    '<span id="modalGen2X" style="cursor:pointer;font-size:20px;color:#888;' +
+    'line-height:1">&times;</span></div>' +
+    '<div style="overflow:auto">' + corpo + '</div></div>';
+  m.style.display = 'flex';
+  const x = document.getElementById('modalGen2X');
+  if(x) x.addEventListener('click', () => { m.style.display='none'; });
+}
+
+/* Tabela simples, para os tres usos abaixo nao repetirem HTML. */
+function _tabela(cols, dados, resumo){
+  const dir = c => c.dir === 'r' ? 'right' : 'left';
+  return '<div style="padding:12px 18px;font-size:12.5px;color:#666">' + resumo +
+    '</div><table style="width:100%;border-collapse:collapse;font-size:12.5px">' +
+    '<thead><tr>' + cols.map(c =>
+      '<th style="position:sticky;top:0;background:#f6f7f9;padding:8px 10px;' +
+      'text-align:' + dir(c) + ';border-bottom:1px solid #e6e8ec;' +
+      'white-space:nowrap;color:var(--navy)">' + c.lab + '</th>').join('') +
+    '</tr></thead><tbody>' +
+    (dados.length ? dados.map(r => '<tr>' + cols.map(c =>
+        '<td style="padding:7px 10px;border-bottom:1px solid #f0f1f3;text-align:' +
+        dir(c) + (c.mono ? ';font-family:ui-monospace,monospace' : '') +
+        (c.cor ? ';color:' + c.cor : '') + '">' + r[c.k] + '</td>').join('') +
+      '</tr>').join('')
+      : '<tr><td colspan="' + cols.length + '" style="padding:20px;text-align:' +
+        'center;color:#888">Nada no período filtrado.</td></tr>') +
+    '</tbody></table>';
+}
+
+/* ---- CLIENTES ATIVOS ---- */
+window.verClientesAtivos = function(){
+  const L = linhas();
+  const info = {};
+  L.forEach(r => {
+    if(!r.venda || !r.cn) return;
+    const o = info[r.cn] = info[r.cn] || {fat:0, vend:{}, uf:r.uf, ca:r.ca, mo:r.mo};
+    o.fat += r.fat;
+    o.vend[r.v] = (o.vend[r.v] || 0) + r.fat;
+  });
+  /* "Ativo" AQUI = comprou no periodo filtrado, a mesma definicao do KPI do
+     Resumo. NAO e a regua de 120 dias da aba Carteira, onde "Ativo" e status de
+     carteira. Sao dois conceitos com o mesmo nome, e o subtitulo diz qual e -
+     senao o numero desta lista discorda da coluna Status e ninguem entende. */
+  const arr = Object.keys(info).map(cn => {
+    const o = info[cn];
+    const v = Object.entries(o.vend).sort((a,b) => b[1]-a[1])[0];
+    return {cn: cn, nome: (typeof cliName === 'function' ? cliName(cn) : '') || cn,
+            vend: v ? v[0] : '—', mo: o.mo || '—', uf: o.uf || '—',
+            ca: o.ca || '—', fatN: o.fat, fat: brl(o.fat)};
+  }).sort((a,b) => b.fatN - a.fatN);
+  const tot = arr.reduce((a,r) => a + r.fatN, 0);
+  _modal('Clientes ativos · compraram no período',
+    _tabela([{k:'nome',lab:'Cliente'},{k:'cn',lab:'CNPJ',mono:1},
+             {k:'vend',lab:'Vendedor'},{k:'mo',lab:'Modelo'},
+             {k:'uf',lab:'UF'},{k:'ca',lab:'Canal'},
+             {k:'fat',lab:'Faturamento',dir:'r',mono:1}], arr,
+      arr.length + ' cliente(s) com compra no período · faturamento somado ' +
+      brl(tot) + ' · aqui "ativo" = comprou no período filtrado, e não a régua ' +
+      'de ' + DIAS_INATIVO_TXT + ' dias da aba Carteira'));
+};
+
+/* ---- DEVOLUCOES ---- */
+window.verDevolucoes = function(){
+  const L = linhas();
+  const info = {};
+  L.forEach(r => {
+    if(!r.cn) return;
+    const o = info[r.cn] = info[r.cn] || {dev:0, fat:0, vend:{}, uf:r.uf, ca:r.ca};
+    if(r.tipo === 0) o.dev += r.fat;          // devolucao vem negativa
+    if(r.venda) o.fat += r.fat;
+    if(r.venda || r.tipo === 0) o.vend[r.v] = (o.vend[r.v] || 0) + Math.abs(r.fat);
+  });
+  const arr = Object.keys(info).filter(cn => info[cn].dev < 0).map(cn => {
+    const o = info[cn];
+    const v = Object.entries(o.vend).sort((a,b) => b[1]-a[1])[0];
+    /* peso = devolucao sobre a venda DO MESMO cliente no periodo. Sem venda no
+       periodo o percentual nao existe (a devolucao e de venda de outro mes) -
+       mostra "—" em vez de dividir por zero, a mesma regra do farol sem base. */
+    const peso = o.fat > 0 ? Math.abs(o.dev) / o.fat : null;
+    return {cn: cn, nome: (typeof cliName === 'function' ? cliName(cn) : '') || cn,
+            vend: v ? v[0] : '—', uf: o.uf || '—', ca: o.ca || '—',
+            devN: o.dev, dev: brl(o.dev), venda: brl(o.fat),
+            peso: peso === null ? '—' : pct(peso)};
+  }).sort((a,b) => a.devN - b.devN);
+  const tot = arr.reduce((a,r) => a + r.devN, 0);
+  const semVenda = arr.filter(r => r.peso === '—').length;
+  _modal('Devoluções no período',
+    _tabela([{k:'nome',lab:'Cliente'},{k:'cn',lab:'CNPJ',mono:1},
+             {k:'vend',lab:'Vendedor'},{k:'uf',lab:'UF'},{k:'ca',lab:'Canal'},
+             {k:'venda',lab:'Venda no período',dir:'r',mono:1},
+             {k:'dev',lab:'Devolução',dir:'r',mono:1,cor:'#C0392B'},
+             {k:'peso',lab:'% da venda',dir:'r',mono:1}], arr,
+      arr.length + ' cliente(s) com devolução · total ' + brl(tot) +
+      (semVenda ? ' · ' + semVenda + ' sem venda no período (devolução de mês ' +
+       'anterior, por isso o % fica "—")' : '')));
+};
+
+/* ---- EXTRAIR CARTEIRA ----
+   CSV e nao .xlsx de proposito: xlsx exigiria uma biblioteca, e a CSP do Portal
+   bloqueia script de CDN - nao ha como carregar uma. CSV com BOM e separador ';'
+   abre no Excel em portugues com as colunas separadas e o acento certo. O nome
+   do arquivo termina em .csv para ninguem esperar formatacao. */
+window.extrairCarteira = function(){
+  if(typeof CARTEIRA === 'undefined' || !CARTEIRA) return;
+  const L = linhas();
+  const porCn = {};
+  L.forEach(r => {
+    if(!r.cn) return;
+    const o = porCn[r.cn] = porCn[r.cn] || {fat:0, dev:0, uf:r.uf, ca:r.ca};
+    if(r.venda) o.fat += r.fat;
+    if(r.tipo === 0) o.dev += r.fat;
+  });
+  /* So a carteira que a pessoa PODE ver: vendedor leva a dele, admin leva tudo.
+     Sem este filtro o botao viraria vazamento de carteira com um clique. */
+  const visiveis = CARTEIRA.filter(c =>
+      SESSION.isAdmin || (typeof VEND_VIS !== 'undefined' && VEND_VIS && VEND_VIS.has(c.v)));
+  const cols = ['Cliente','CNPJ','Vendedor','Modelo','UF','Canal',
+                'Faturamento no periodo','Devolucao no periodo','Status'];
+  const dados = visiveis.map(c => {
+    const o = porCn[c.cn] || {fat:0, dev:0};
+    const st = (typeof statusCarteira === 'function') ? statusCarteira(c.cn) : '';
+    return [c.rz || '', c.cn || '', c.v || '', c.mo || '', o.uf || '', o.ca || '',
+            (o.fat || 0).toFixed(2).replace('.', ','),
+            (o.dev || 0).toFixed(2).replace('.', ','), st];
+  });
+  const esc = v => {
+    const s = String(v == null ? '' : v);
+    return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const csv = '﻿' + [cols].concat(dados)
+                .map(l => l.map(esc).join(';')).join('\r\n');
+  const nome = 'carteira_' + String(SESSION.user || 'dobro')
+                 .replace(/[^A-Za-z0-9]+/g, '_') + '_' +
+               (mesesAtivos().join('-') || 'periodo') + '.csv';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+  a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return {linhas: dados.length, nome: nome};
+};
+
+/* Liga os KPIs clicaveis do Resumo e o botao da Carteira. Chamado depois de cada
+   render; idempotente pelo dataset. */
+function ligarCliquesExtras(){
+  const view = document.getElementById('v-resumo');
+  if(view){
+    const mapa = [[/clientes ativos/i, verClientesAtivos],
+                  [/devolu/i,          verDevolucoes]];
+    view.querySelectorAll('.kpi').forEach(k => {
+      const lab = k.querySelector('.lab');
+      if(!lab || k.dataset.clicavel2) return;
+      const achou = mapa.find(par => par[0].test(lab.textContent));
+      if(!achou) return;
+      k.dataset.clicavel2 = '1';
+      k.style.cursor = 'pointer';
+      k.title = 'Clique para ver os detalhes';
+      k.addEventListener('click', achou[1]);
+      const v = k.querySelector('.val');
+      if(v) v.insertAdjacentHTML('beforeend',
+        ' <span style="font-size:11px;color:#0f6cbd;vertical-align:super">ver</span>');
+    });
+  }
+  const cart = document.getElementById('v-carteira');
+  if(cart && !document.getElementById('btnExtrairCarteira')){
+    const h = cart.querySelector('.card-h');
+    if(h){
+      h.insertAdjacentHTML('beforeend',
+        '<button id="btnExtrairCarteira" class="btn-y" style="margin-left:auto;' +
+        'font-size:12px;padding:6px 12px">Extrair carteira</button>');
+      const b = document.getElementById('btnExtrairCarteira');
+      if(b) b.addEventListener('click', extrairCarteira);
+    }
+  }
+}
+
+/* Roda depois de QUALQUER troca de view: os KPIs e a aba Carteira sao
+   reconstruidos a cada render, entao ligar uma vez no load nao bastaria. */
+if(typeof showView === 'function'){
+  const _showViewOrig = showView;      // captura ANTES da troca, regra da casa
+  window.showView = function(){
+    const r = _showViewOrig.apply(this, arguments);
+    try{ ligarCliquesExtras(); }catch(e){ console.error('cliques extras:', e); }
+    return r;
+  };
 }
 
 </script>
