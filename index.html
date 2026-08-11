@@ -514,11 +514,27 @@ async function _loadData(){
     [_Z.FATO,_Z.CALC,_Z.BR_SVG,_Z.CARTEIRA,_Z.CART_MET,_Z.CART_DATAS].map(_unz)
   );
   D=FATO.dims;
+  /* Indices vindos de FATO.cols, e nao fixos no codigo.
+
+     Em 10/08/2026 o gerador passou a mandar a coluna "d" (dia) como 11o item da
+     CHAVE, o que empurra fat/cmv/imp/fr/com/q/nfs uma casa para a direita. Com
+     as posicoes fixas, um HTML novo lendo um JSON velho - ou o contrario, na
+     janela entre publicar o JSON e subir o HTML - leria MEDIDA como DIMENSAO: o
+     painel viraria numero aleatorio sem erro nenhum na tela, que e o pior tipo
+     de falha. Derivando de cols, os dois formatos funcionam.
+
+     O dia so existe se o JSON trouxer "d" e a dimensao "Dia"; senao fica "" e o
+     grafico diario simplesmente nao aparece. */
+  const CI={}; FATO.cols.forEach((c,i)=>{CI[c]=i;});
+  const _temDia = (CI.d!==undefined && Array.isArray(D.Dia));
   ROWS=FATO.rows.map(r=>({
-    v:D.Vendedor[r[0]], mo:D.Modelo[r[1]], m:D.Mes[r[2]], venda:r[3]===1, tipo:r[3],
-    bonif:r[3]===2, amostra:r[3]===3,
-    ca:D.CanalSeg[r[4]], cat:D.Categoria[r[5]], reg:D.Regiao[r[6]], uf:D.Estado[r[7]], cn:D.CNPJ[r[8]],
-    sk:D.SKU[r[9]], fat:r[10], cmv:r[11], imp:r[12], fr:r[13], com:r[14], q:r[15], nfs:r[16]
+    v:D.Vendedor[r[CI.v]], mo:D.Modelo[r[CI.mo]], m:D.Mes[r[CI.m]],
+    venda:r[CI.t]===1, tipo:r[CI.t], bonif:r[CI.t]===2, amostra:r[CI.t]===3,
+    ca:D.CanalSeg[r[CI.ca]], cat:D.Categoria[r[CI.cat]], reg:D.Regiao[r[CI.r]],
+    uf:D.Estado[r[CI.uf]], cn:D.CNPJ[r[CI.cn]], sk:D.SKU[r[CI.sk]],
+    d:_temDia ? (D.Dia[r[CI.d]]||'') : '',
+    fat:r[CI.fat], cmv:r[CI.cmv], imp:r[CI.imp], fr:r[CI.fr], com:r[CI.com],
+    q:r[CI.q], nfs:r[CI.nfs]
   }));
   CNPJ_CLI={}; if(FATO.cnpjCli){ D.CNPJ.forEach((cn,i)=>{const ci=FATO.cnpjCli[i]; if(ci>=0)CNPJ_CLI[cn]=D.Cliente[ci];}); }
   MESES=MESES_ORD.filter(m=>D.Mes.includes(m));
@@ -2487,6 +2503,10 @@ function vResumoNovo(){
     const primeiraRow = view.querySelector('.kpirow');
     if(primeiraRow) primeiraRow.insertAdjacentHTML('afterend', kpiHtml);
     else view.insertAdjacentHTML('afterbegin', kpiHtml);
+    // Venda diaria ANTES da tabela por vendedor: e leitura de ritmo do mes, o
+    // que se olha primeiro depois dos KPIs. Em try/catch porque um erro aqui nao
+    // pode levar embora a tabela por vendedor, que e o que sempre existiu.
+    try{ montarVendaDiaria(); }catch(e){ console.error('venda diaria:', e); }
     view.insertAdjacentHTML('beforeend', tabela);
     // Match do frete depois da tabela por vendedor: e indicador de QUALIDADE do
     // dado, nao de resultado comercial - fica no fim de proposito.
@@ -3583,6 +3603,147 @@ window.aplicarLoginDoJson = async function(){
   if(!ok) avisarSemUsuarios();
   return ok;
 };
+
+/* ===================== GRAFICO DE VENDA DIARIA (10/08/2026) ================
+   Pedido do Igor: "seria possivel termos um grafico diario do periodo
+   selecionado? Pq eu preciso ver as vendas diarias tbm".
+
+   O DIA nao existia no JSON - a BaseTrabalho tem so a coluna `Mes`. Ele passou a
+   vir como dimensao do FATO, com a data pescada do indice do Consolidado pela NF
+   (ver ler_data_por_nf no gerador). Medido antes de fazer: o FATO ja e quase
+   linha-a-linha (0,98 grupo por linha), entao acrescentar o dia NAO cria grupo
+   novo e custou +1% no tamanho comprimido.
+
+   Como o dia e dimensao, o grafico usa linhas() e herda TODOS os filtros de
+   graca: mes, vendedor, modelo, regiao, UF e canal. Nenhum caso especial.
+
+   O QUE ELE NAO TEM, e por que: o print do OMIE mostra uma linha de OBJETIVO e
+   uma de PREVISAO. Nao ha meta em lugar nenhum do nosso dado - nem na carteira,
+   nem no Parametros. Desenhar uma reta chamada "objetivo" a partir de nada seria
+   inventar numero; preferi omitir e dizer isso aqui. */
+function vendaDiaria(L){
+  const porDia = {};
+  L.forEach(r => {
+    if(!r.venda || !r.d) return;
+    porDia[r.d] = (porDia[r.d] || 0) + r.fat;
+  });
+  const dias = Object.keys(porDia).sort();
+  if(!dias.length) return null;
+  /* Eixo COMPLETO, com os dias sem venda incluidos: mostrar so os dias que
+     tiveram nota comprime o grafico e esconde justamente a informacao que
+     interessa - o buraco. Um mes com 8 dias de venda tem de parecer um mes com
+     8 dias de venda, nao uma sequencia cheia. */
+  const ini = new Date(dias[0] + 'T00:00:00');
+  const fim = new Date(dias[dias.length-1] + 'T00:00:00');
+  const serie = [];
+  let acum = 0;
+  for(let t = new Date(ini); t <= fim; t.setDate(t.getDate()+1)){
+    const iso = t.toISOString().slice(0,10);
+    const v = porDia[iso] || 0;
+    acum += v;
+    serie.push({iso: iso, v: v, acum: acum,
+                dia: t.getDate(), dow: t.getDay()});
+  }
+  return serie;
+}
+
+function svgVendaDiaria(serie){
+  const W = 1000, H = 260, ML = 62, MR = 54, MT = 14, MB = 30;
+  const iw = W - ML - MR, ih = H - MT - MB;
+  const maxV = Math.max(...serie.map(s => s.v), 1);
+  const maxA = Math.max(...serie.map(s => s.acum), 1);
+  const n = serie.length;
+  const bw = Math.max(2, Math.min(26, iw / n * 0.62));
+  const x = i => ML + (iw / n) * (i + 0.5);
+  const yV = v => MT + ih - (v / maxV) * ih;
+  const yA = v => MT + ih - (v / maxA) * ih;
+
+  let g = '';
+  // grade horizontal + escala da esquerda (barras) e da direita (acumulado)
+  for(let k = 0; k <= 4; k++){
+    const yy = MT + ih - (ih * k / 4);
+    g += '<line x1="' + ML + '" y1="' + yy + '" x2="' + (W-MR) + '" y2="' + yy +
+         '" stroke="#E6E8EC" stroke-width="1"/>';
+    g += '<text x="' + (ML-8) + '" y="' + (yy+4) + '" text-anchor="end" ' +
+         'font-size="10" fill="var(--muted)">' + n0(maxV*k/4) + '</text>';
+    g += '<text x="' + (W-MR+8) + '" y="' + (yy+4) + '" font-size="10" ' +
+         'fill="#7A5AF8">' + n0(maxA*k/4) + '</text>';
+  }
+  // fim de semana com fundo, para o buraco ter explicacao visual
+  serie.forEach((s, i) => {
+    if(s.dow === 0 || s.dow === 6){
+      g += '<rect x="' + (x(i)-iw/n/2) + '" y="' + MT + '" width="' + (iw/n) +
+           '" height="' + ih + '" fill="#F6F7F9"/>';
+    }
+  });
+  // barras
+  serie.forEach((s, i) => {
+    const h = s.v > 0 ? Math.max(1, ih - (yV(s.v) - MT)) : 0;
+    if(h > 0){
+      g += '<rect x="' + (x(i)-bw/2) + '" y="' + yV(s.v) + '" width="' + bw +
+           '" height="' + h + '" rx="2" fill="#2A3E7E"><title>' +
+           s.iso.split('-').reverse().join('/') + ': ' + brl(s.v) +
+           '  ·  acumulado ' + brl(s.acum) + '</title></rect>';
+    }
+  });
+  // acumulado
+  g += '<path d="' + serie.map((s,i) => (i?'L':'M') + x(i) + ' ' + yA(s.acum))
+        .join(' ') + '" fill="none" stroke="#7A5AF8" stroke-width="2"/>';
+  // eixo X: so alguns rotulos, senao viram borrao
+  const passo = Math.ceil(n / 16);
+  serie.forEach((s, i) => {
+    if(i % passo) return;
+    g += '<text x="' + x(i) + '" y="' + (H-10) + '" text-anchor="middle" ' +
+         'font-size="10" fill="var(--muted)">' + s.dia + '</text>';
+  });
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto" ' +
+         'preserveAspectRatio="none">' + g + '</svg>';
+}
+
+/* ATENCAO ao escopo: este bloco fica DEPOIS das IIFEs do melhorias.js, entao
+   roda no escopo GLOBAL - e o helper `el2` e local a IIFE. Usar el2 aqui da
+   "el2 is not defined" em tempo de execucao, engolido pelo try/catch de quem
+   chama, e o card simplesmente nao aparece sem erro visivel. Foi o que
+   aconteceu na primeira versao. Aqui se usa document.getElementById direto.
+   As demais (brl, n0, linhas, dre) sao globais do index.html e podem ser usadas. */
+function montarVendaDiaria(){
+  const view = document.getElementById('v-resumo');
+  if(!view || document.getElementById('cardVendaDiaria')) return;
+  const serie = vendaDiaria(linhas());
+  if(!serie){
+    /* Sem dia no JSON: aviso curto em vez de card vazio. Se o HTML for novo e o
+       JSON ainda for o antigo, e isto que aparece - e diz o que fazer. */
+    view.insertAdjacentHTML('beforeend',
+      '<div class="card" id="cardVendaDiaria"><div class="card-h">' +
+      '<h3>Venda diária</h3><span class="hint">indisponível</span></div>' +
+      '<div style="padding:14px;color:var(--muted);font-size:13px">' +
+      'O JSON deste Portal não traz a data das notas. Rode ' +
+      '<b>python rodar_json.py</b> para gerar a versão com o dia.</div></div>');
+    return;
+  }
+  const comVenda = serie.filter(s => s.v > 0).length;
+  const total = serie[serie.length-1].acum;
+  const media = comVenda ? total / comVenda : 0;
+  const pico = serie.reduce((a,b) => b.v > a.v ? b : a, serie[0]);
+  view.insertAdjacentHTML('beforeend',
+    '<div class="card" id="cardVendaDiaria"><div class="card-h">' +
+    '<h3>Venda diária</h3><span class="hint">' +
+    'barra = faturamento do dia · linha = acumulado · fundo cinza = fim de semana' +
+    '</span></div>' +
+    '<div style="display:flex;gap:26px;padding:10px 14px 0;flex-wrap:wrap">' +
+      '<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">' +
+      'dias com venda</div><div class="mono" style="font-weight:700">' +
+      comVenda + ' de ' + serie.length + '</div></div>' +
+      '<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">' +
+      'média por dia com venda</div><div class="mono" style="font-weight:700">' +
+      brl(media) + '</div></div>' +
+      '<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">' +
+      'maior dia</div><div class="mono" style="font-weight:700">' +
+      pico.iso.split('-').reverse().slice(0,2).join('/') + ' · ' + brl(pico.v) +
+      '</div></div>' +
+    '</div><div style="padding:6px 10px 12px">' + svgVendaDiaria(serie) +
+    '</div></div>');
+}
 
 </script>
 </body>
