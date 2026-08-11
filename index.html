@@ -3898,53 +3898,108 @@ window.verDevolucoes = function(){
    abre no Excel em portugues com as colunas separadas e o acento certo. O nome
    do arquivo termina em .csv para ninguem esperar formatacao. */
 window.extrairCarteira = function(){
-  if(typeof CARTEIRA === 'undefined' || !CARTEIRA) return;
-  const L = linhas();
-  const porCn = {};
-  L.forEach(r => {
-    if(!r.cn) return;
-    const o = porCn[r.cn] = porCn[r.cn] || {fat:0, dev:0, uf:r.uf, ca:r.ca};
-    if(r.venda) o.fat += r.fat;
-    if(r.tipo === 0) o.dev += r.fat;
-  });
-  /* So a carteira que a pessoa PODE ver: vendedor leva a dele, admin leva tudo.
-     Sem este filtro o botao viraria vazamento de carteira com um clique. */
-  const visiveis = CARTEIRA.filter(c =>
-      SESSION.isAdmin || (typeof VEND_VIS !== 'undefined' && VEND_VIS && VEND_VIS.has(c.v)));
-  const cols = ['Cliente','CNPJ','Vendedor','Modelo','UF','Canal',
-                'Faturamento no periodo','Devolucao no periodo','Status'];
-  const dados = visiveis.map(c => {
-    const o = porCn[c.cn] || {fat:0, dev:0};
-    const st = (typeof statusCarteira === 'function') ? statusCarteira(c.cn) : '';
-    return [c.rz || '', c.cn || '', c.v || '', c.mo || '', o.uf || '', o.ca || '',
-            (o.fat || 0).toFixed(2).replace('.', ','),
-            (o.dev || 0).toFixed(2).replace('.', ','), st];
-  });
+  /* Le a PROPRIA TABELA da tela, pagina por pagina, em vez de recalcular.
+     Pedido do Igor em 11/08/2026: "preciso que as informacoes que extrai no
+     excel sejam no exato mesmo formato: pedido mes a mes, a rentabilidade por
+     cliente, etc, as mesmas informacoes do html".
+
+     Por que raspar e nao recalcular: a versao anterior montava 9 colunas por
+     conta propria e ja divergia da tela - faltavam Vendas liq. YTD, Rentab.,
+     Ticket medio, Recorrencia, Oportunidade e as colunas de MES. Duas
+     implementacoes da mesma informacao divergem sempre, e a que ninguem olha e
+     a que apodrece. Raspando, o CSV nasce identico e continua identico se
+     alguem mexer nas colunas da tabela.
+
+     De graca vem tambem: ordenacao atual, filtro de busca, filtro de vendedor,
+     permissao (o vendedor exporta farol onde nao ve numero) e a linha 'Todos'.
+
+     A tabela e PAGINADA (250 por pagina), entao percorro as paginas. CART_POR_PAG
+     e const - nao da para aumentar; navegar e o caminho. */
+  const cont = document.getElementById('v-carteira');
+  if(!cont) return;
+  const tab = cont.querySelector('table');
+  if(!tab){ return; }
+
+  /* Celula -> texto. Onde a tela mostra so um FAROL (bolinha), innerText vem
+     vazio; nesse caso uso o title, que carrega o rotulo da regra ('aprovado',
+     'negado'...). Assim o vendedor exporta exatamente o que ele ve - nao o
+     numero que ele nao pode ver. */
+  const txtCel = td => {
+    const t = (td.innerText || '').replace(/\s+/g, ' ').trim();
+    if(t) return t;
+    const comTitulo = td.querySelector('[title]');
+    if(comTitulo){ return (comTitulo.getAttribute('title') || '').trim(); }
+    const img = td.querySelector('svg,span');
+    return img ? '' : '';
+  };
+
+  const cabec = [...tab.querySelectorAll('thead th')]
+                  .map(th => (th.innerText || '').replace(/[▲▼]/g,'')
+                               .replace(/\s+/g,' ').trim());
+
+  const pagAtual = (typeof CART_PAGE === 'number') ? CART_PAGE : 0;
+  const lerTotalPag = () => {
+    const m = /Página\s+\d+\s*\/\s*(\d+)/.exec(cont.innerText || '');
+    return m ? parseInt(m[1], 10) : 1;
+  };
+  const total = lerTotalPag();
+
+  const vistos = new Set();     // chave da linha, contra duplicata
+  const dados = [];
+  for(let p = 0; p < total; p++){
+    CART_PAGE = p;
+    vCarteira();                              // re-renderiza a pagina p
+    const t2 = cont.querySelector('table');
+    if(!t2) break;
+    t2.querySelectorAll('tbody tr').forEach(tr => {
+      const cels = [...tr.querySelectorAll('td')].map(txtCel);
+      if(!cels.length) return;
+      const chave = cels.join('');
+      if(vistos.has(chave)) return;           // a linha 'Todos' repete em toda pagina
+      vistos.add(chave);
+      dados.push(cels);
+    });
+  }
+  CART_PAGE = pagAtual;
+  vCarteira();
+  try{ ligarCliquesExtras(); }catch(e){}      // vCarteira refaz o card-h e leva o botao
+
   const esc = v => {
     const s = String(v == null ? '' : v);
     return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
-  const csv = '﻿' + [cols].concat(dados)
+  /* BOM + ';' + CRLF: e o que faz o Excel em portugues abrir com as colunas
+     separadas e o acento certo. Sem o BOM, "Razão" vira "RazÃ£o". */
+  const csv = '﻿' + [cabec].concat(dados)
                 .map(l => l.map(esc).join(';')).join('\r\n');
-  const nome = 'carteira_' + String(SESSION.user || 'dobro')
-                 .replace(/[^A-Za-z0-9]+/g, '_') + '_' +
-               (mesesAtivos().join('-') || 'periodo') + '.csv';
+  const quem = String((typeof SESSION === 'object' && SESSION && SESSION.user)
+                      || 'dobro').replace(/[^A-Za-z0-9]+/g, '_');
+  const per = (typeof mesesAtivos === 'function' ? mesesAtivos().join('-') : '')
+              || 'periodo';
+  const nome = 'carteira_' + quem + '_' + per + '.csv';
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
   a.download = nome;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-  return {linhas: dados.length, nome: nome};
+  return {linhas: dados.length, colunas: cabec.length, paginas: total, nome: nome,
+          cabecalho: cabec};
 };
 
 /* Liga os KPIs clicaveis do Resumo e o botao da Carteira. Chamado depois de cada
    render; idempotente pelo dataset. */
 function ligarCliquesExtras(){
   const view = document.getElementById('v-resumo');
-  if(view){
+  /* SO a primeira .kpirow, nao a view inteira. O Resumo tem outro cartao com os
+     rotulos 'Compraram no período', 'Não compraram no período', 'Clientes
+     ativos' e 'Clientes inativos' - aqueles sao da regua de 120 dias da
+     carteira, medida DIFERENTE do KPI de cima. Ligar a view toda punha o 'ver'
+     em dois lugares e o clique abria a lista errada num deles. */
+  const row = view && view.querySelector('.kpirow');
+  if(row){
     const mapa = [[/clientes ativos/i, verClientesAtivos],
                   [/devolu/i,          verDevolucoes]];
-    view.querySelectorAll('.kpi').forEach(k => {
+    row.querySelectorAll('.kpi').forEach(k => {
       const lab = k.querySelector('.lab');
       if(!lab || k.dataset.clicavel2) return;
       const achou = mapa.find(par => par[0].test(lab.textContent));
