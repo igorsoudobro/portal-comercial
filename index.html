@@ -1681,10 +1681,13 @@ function doLogin(){
   // perfil de visão: admin e Fellipe (supervisor) veem números reais;
   // demais vendedores veem farol. RCA (modelo RCA, exceto Fellipe) não vê lucro final.
   const modeloUser=(CARTEIRA.find(c=>c.v===user)||{}).mo || (admin?'Admin':'');
-  const ehSupervisor=(user==='Fellipe Argentati');
+  const ehSupervisor=(typeof ehSupervisorDe==='function')
+                      ? ehSupervisorDe(user) : (user==='Fellipe Argentati');
+  // ve NUMERO sensivel: subconjunto dos supervisores, declarado a parte
+  const veNum=(typeof veNumerosDe==='function') ? veNumerosDe(user) : ehSupervisor;
   SESSION.isRCA = (!admin && modeloUser==='RCA' && !ehSupervisor);
-  SESSION.verNumeros = admin || ehSupervisor;   // quem vê rentab/margem/lucro em número
-  SESSION.veLucroFinal = admin || ehSupervisor || (!admin && !SESSION.isRCA); // RCA não vê lucro final
+  SESSION.verNumeros = admin || veNum;          // quem vê rentab/margem/lucro em número
+  SESSION.veLucroFinal = admin || veNum || (!admin && !SESSION.isRCA); // RCA não vê lucro final
   VEND_VIS=vendedoresVisiveis()||new Set();
   el('loginScreen').style.display='none';
   el('app').style.display='block';
@@ -1900,26 +1903,67 @@ window.multiOK = multiOK;
 
    O recorte de seguranca continua sendo VEND_VIS: o filtro escolhe DENTRO do
    que ele ja podia ver, nunca alarga. Um vendedor comum segue sem filtro. */
-const SUPERVISOR = 'Fellipe Argentati';
-// Nomes que o supervisor ve ALEM de si e dos RCAs.
-const SUPERVISOR_EXTRA = ['Cristiane Leão'];
+/* EQUIPES (11/08/2026). Antes havia UM supervisor fixo no codigo; agora sao dois,
+   com times declarados:
 
-function ehSupervisor(){ return !SESSION.isAdmin && SESSION.user === SUPERVISOR; }
+     Jonas de Paula ...... ele + 6 RCAs nomeados
+     Fellipe Argentati ... ele + os RCAs RESTANTES
+
+   Fellipe fica com o RESTO, e nao com uma lista: assim um RCA novo cai
+   automaticamente com ele, sem ninguem lembrar de atualizar duas listas. Duas
+   listas que somam um universo divergem no primeiro RCA contratado.
+
+   'RCA - Marcos Lima': o Igor escreveu "RCA - Marco Lima". Existem tres nomes com
+   'Marco' na base (Marco Antonio, Marco Marini, Marcos Lima) e so um com 'Lima',
+   entao o alvo e inequivoco pelo sobrenome.
+
+   A Cristiane Leão SAIU da visao do Fellipe. Historico, para nao virar folclore:
+   o codigo original a incluia; eu tirei em 30/07/2026 por nao estar no pedido; o
+   Igor pediu de volta no mesmo dia; e em 11/08/2026 pediu para tirar. Ela e
+   'Time interno', nao RCA, entao agora sai pela propria regra - nao precisa de
+   excecao nenhuma. */
+const EQUIPES = {
+  'Jonas de Paula': ['RCA - Marcos Lima', 'RCA - Jarbas', 'RCA - Alberto',
+                     'RCA - Marcelo Oliveira', 'RCA - Josias', 'RCA - Cainã'],
+  'Fellipe Argentati': null            // null = os RCAs que sobraram
+};
+
+/* Ver a EQUIPE e ver os CUSTOS sao coisas diferentes, e ficam declaradas
+   separadas. O Igor autorizou numero sensivel (CMV, margem, lucro) para o
+   Fellipe em 30/07/2026, com essas palavras: "pode ter as mesmas visoes de
+   margens, cmvs, etc, como se fosse uma visao de admin". Para o Jonas ele pediu
+   apenas "pode visualizar" a equipe - entao o Jonas NAO entra aqui. Dar custo de
+   carona seria eu decidindo exposicao no lugar dele. */
+const SUPERVISOR_VE_NUMERO = ['Fellipe Argentati'];
+
+function equipeDe(u){
+  if(!(u in EQUIPES)) return null;
+  const set = new Set([u]);
+  const nomeados = EQUIPES[u];
+  if(nomeados){ nomeados.forEach(v => set.add(v)); return set; }
+  /* time do RESTO: todos os 'RCA - ' menos os que ja tem dono */
+  const comDono = new Set();
+  Object.keys(EQUIPES).forEach(k => {
+    if(EQUIPES[k]) EQUIPES[k].forEach(v => comDono.add(v));
+  });
+  [...new Set(ROWS.map(r => r.v))].forEach(v => {
+    if(v && v.indexOf('RCA - ') === 0 && !comDono.has(v)) set.add(v);
+  });
+  return set;
+}
+
+function ehSupervisor(){ return !SESSION.isAdmin && (SESSION.user in EQUIPES); }
 function podeFiltrar(){ return SESSION.isAdmin || ehSupervisor(); }
 window.ehSupervisor = ehSupervisor;
 window.podeFiltrar = podeFiltrar;
+/* Usadas pelo doLogin do Portal-base, via transformacao do montar_portal_graph. */
+window.ehSupervisorDe = function(u){ return u in EQUIPES; };
+window.veNumerosDe = function(u){ return SUPERVISOR_VE_NUMERO.indexOf(u) >= 0; };
 
 window.vendedoresVisiveis = function(){
   if(SESSION.isAdmin) return null;
-  const u = SESSION.user;
-  if(u === SUPERVISOR){
-    const set = new Set([u, ...SUPERVISOR_EXTRA]);
-    [...new Set(ROWS.map(r => r.v))].forEach(v => {
-      if(v && v.indexOf('RCA - ') === 0) set.add(v);
-    });
-    return set;
-  }
-  return new Set([u]);
+  const eq = equipeDe(SESSION.user);
+  return eq || new Set([SESSION.user]);
 };
 
 /* Preenche os <select> da barra de filtros para o supervisor e mostra os grupos.
@@ -2265,6 +2309,38 @@ function ajustarKpisResumo(){
   }).join('');
 }
 
+/* Universo da carteira conforme o filtro de vendedor/modelo.
+
+   Extraida de dentro do vResumoNovo em 12/08/2026 para o modal de "Não
+   compraram no período" usar EXATAMENTE a mesma regra do KPI. Se eu repetisse o
+   filtro no modal, o dia em que alguem mexer num dos dois a lista vai discordar
+   do numero em cima dela - foi o erro que o CSV da carteira cometeu antes de
+   passar a raspar a tela.
+
+   O supervisor tem filtro proprio; sem o VEND_VIS os KPIs de carteira
+   ignorariam o que ele escolheu e a tela se contradiria com a barra de filtros. */
+function carteiraDoFiltro(){
+  return (typeof CARTEIRA !== 'undefined' && CARTEIRA || []).filter(c => {
+    if(!SESSION.isAdmin && !VEND_VIS.has(c.v)) return false;
+    if(!podeFiltrar()) return true;
+    return multiOK(FILTER.vend, c.v) && multiOK(FILTER.mod, c.mo);
+  });
+}
+window.carteiraDoFiltro = carteiraDoFiltro;
+
+/* Ultimo mes com compra ATE o mes de referencia, como indice de MESES_ORD.
+   Reaproveita o indice que o statusNoMes ja monta - nao ha segunda contagem. */
+function ultimoMesCompra(cn){
+  indexarCompras();
+  const s = MESES_COMPRA[cn];
+  if(!s) return -1;
+  const mRef = mesReferencia();
+  let ult = -1;
+  s.forEach(i => { if(i <= mRef && i > ult) ult = i; });
+  return ult;
+}
+window.ultimoMesCompra = ultimoMesCompra;
+
 function vResumoNovo(){
   vResumoOriginal();          // monta tudo o que ja existia
   indexarCarteira();
@@ -2274,15 +2350,7 @@ function vResumoNovo(){
   const L = linhas();
   const compraram = new Set(L.filter(r => r.venda && r.cn).map(r => r.cn));
 
-  /* --- universo da carteira conforme o filtro de vendedor/modelo --- */
-  const carteiraFiltrada = (typeof CARTEIRA !== 'undefined' && CARTEIRA || [])
-    .filter(c => {
-      // O supervisor tem filtro; sem isto os KPIs de carteira ignorariam o que
-      // ele escolheu e a tela se contradiria com a barra de filtros.
-      if(!SESSION.isAdmin && !VEND_VIS.has(c.v)) return false;
-      if(!podeFiltrar()) return true;
-      return multiOK(FILTER.vend, c.v) && multiOK(FILTER.mod, c.mo);
-    });
+  const carteiraFiltrada = carteiraDoFiltro();
   const naoCompraram = carteiraFiltrada.filter(c => !compraram.has(c.cn)).length;
 
   let ativos120 = 0, inativos120 = 0, semHist = 0;
@@ -2949,7 +3017,13 @@ function farolComRotulo(p, mostrarNum){
      veSensivel()  -> PODE ver custo, margem, CMV, lucro   (admin + Fellipe)
      VEND_VIS      -> QUAIS dados                          (recorte, ja existia)
    O recorte continua valendo: dar visao sensivel nao alarga o que ele ve. */
-function veSensivel(){ return SESSION.isAdmin || ehSupervisor(); }
+/* Custo (CMV, margem, frete, comissao, lucro) segue SUPERVISOR_VE_NUMERO, nao
+   ehSupervisor(). Ate 11/08/2026 eram a mesma coisa porque havia um supervisor
+   so. Com o Jonas entrando, ligar os dois daria a ele o custo de carona - o Igor
+   pediu que ele "visualize" a equipe, nao os custos dela. */
+function veSensivel(){
+  return SESSION.isAdmin || veNumerosDe(SESSION.user);
+}
 window.veSensivel = veSensivel;
 
 /* DRE completo para o supervisor tambem (linhas de CMV, margem, lucro). */
@@ -3604,6 +3678,45 @@ window.aplicarLoginDoJson = async function(){
   return ok;
 };
 
+/* ============== ABRIR NO MES VIGENTE (12/08/2026) =========================
+   Pedido do Igor: "quando qualquer um fizer login, a visão inicial tem que ser
+   do mês vigente".
+
+   O que o index.html fazia: `FILTER.mes = MESES[MESES.length-1]`, ou seja o
+   ULTIMO MES COM DADO. Na maior parte dos dias os dois coincidem e ninguem nota
+   a diferenca. Ela aparece exatamente no pior momento: no dia 1o (ou 2o) de um
+   mes novo, antes da primeira nota entrar, MESES ainda termina no mes passado e
+   o Portal abriria em Julho no dia 1o de Agosto. Tambem apareceria se um dia a
+   extracao trouxesse o mes seguinte por engano - abriria num mes sem venda.
+
+   Aqui a regra fica explicita: se o mes de hoje existe no dado, abre nele; se
+   nao existe, cai no ultimo com dado (nao adianta abrir num mes vazio) e o
+   motivo vai para o console, para nao parecer que o ajuste nao funcionou.
+
+   O gancho e no buildFilters porque e ele que decide o padrao, e o boot chama
+   `buildFilters(); buildNav(); showView();` - o showView vem DEPOIS, entao a
+   tela ja nasce pintada no mes certo, sem refresh extra. Nao mexo em nada alem
+   do mes: periodo continua 'mes' e o intervalo de/ate continua o ano inteiro,
+   que e o que o usuario espera achar ao trocar para "Período". */
+if(typeof buildFilters === 'function'){
+  const _buildFiltersOrig = buildFilters;   // captura ANTES da troca, regra da casa
+  window.buildFilters = function(){
+    const r = _buildFiltersOrig.apply(this, arguments);
+    try{
+      const hoje = MESES_ORD[new Date().getMonth()];
+      if(MESES.indexOf(hoje) >= 0){
+        FILTER.mes = hoje;
+        const s = el('mesSel');
+        if(s) s.value = hoje;
+      }else{
+        console.info('[mês vigente] ' + hoje + ' ainda não tem dado; ' +
+                     'abrindo em ' + FILTER.mes + '.');
+      }
+    }catch(e){ console.error('mês vigente:', e); }
+    return r;
+  };
+}
+
 /* ===================== GRAFICO DE VENDA DIARIA (10/08/2026) ================
    Pedido do Igor: "seria possivel termos um grafico diario do periodo
    selecionado? Pq eu preciso ver as vendas diarias tbm".
@@ -3654,7 +3767,7 @@ function vendaDiaria(L){
   return serie;
 }
 
-function svgVendaDiaria(serie){
+function svgVendaDiaria(serie, clicavel){
   const W = 1000, H = 260, ML = 62, MR = 54, MT = 14, MB = 30;
   const iw = W - ML - MR, ih = H - MT - MB;
   const maxV = Math.max(...serie.map(s => s.v), 1);
@@ -3698,10 +3811,15 @@ function svgVendaDiaria(serie){
          dado que chega ao Portal. Numero errado e pior que numero ausente. */
       const dica = s.iso.split('-').reverse().join('/') + ': ' + brl(s.v) +
                    '  ·  ' + s.cn + (s.cn === 1 ? ' CNPJ' : ' CNPJs') +
-                   '  ·  acumulado ' + brl(s.acum);
+                   '  ·  acumulado ' + brl(s.acum) +
+                   (clicavel ? '\nclique para ver quem comprou' : '');
+      /* data-dia + cursor apenas quando clicavel: o listener e ligado depois, no
+         montarVendaDiaria, com addEventListener - nao com onclick no HTML, que a
+         CSP do Portal derrubaria em silencio. */
       g += '<rect x="' + (x(i)-iw/n/2) + '" y="' + MT + '" width="' + (iw/n) +
-           '" height="' + ih + '" fill="transparent"><title>' + dica +
-           '</title></rect>';
+           '" height="' + ih + '" fill="transparent"' +
+           (clicavel ? ' data-dia="' + s.iso + '" style="cursor:pointer"' : '') +
+           '><title>' + dica + '</title></rect>';
       g += '<rect x="' + (x(i)-bw/2) + '" y="' + yV(s.v) + '" width="' + bw +
            '" height="' + h + '" rx="2" fill="#2A3E7E" pointer-events="none">' +
            '</rect>';
@@ -3746,10 +3864,17 @@ function montarVendaDiaria(){
   const total = serie[serie.length-1].acum;
   const media = comVenda ? total / comVenda : 0;
   const pico = serie.reduce((a,b) => b.v > a.v ? b : a, serie[0]);
+  /* Clique na barra SO no filtro de mes, como o Igor pediu ("em período e ano
+     todo não é necessário"). E tambem o unico recorte em que a lista faz
+     sentido: em "Ano todo" o grafico passa de 200 barras de ~4 px e o clique
+     acerta o dia errado com facilidade. Fora do mensal nem cursor nem
+     data-dia sao emitidos, entao nao ha affordance de algo que nao responde. */
+  const clicavel = (typeof FILTER === 'object' && FILTER && FILTER.period === 'mes');
   view.insertAdjacentHTML('beforeend',
     '<div class="card" id="cardVendaDiaria"><div class="card-h">' +
     '<h3>Venda diária</h3><span class="hint">' +
     'barra = faturamento do dia · linha = acumulado · fundo cinza = fim de semana' +
+    (clicavel ? ' · clique na barra para ver quem comprou' : '') +
     '</span></div>' +
     '<div style="display:flex;gap:26px;padding:10px 14px 0;flex-wrap:wrap">' +
       '<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">' +
@@ -3762,8 +3887,18 @@ function montarVendaDiaria(){
       'maior dia</div><div class="mono" style="font-weight:700">' +
       pico.iso.split('-').reverse().slice(0,2).join('/') + ' · ' + brl(pico.v) +
       '</div></div>' +
-    '</div><div style="padding:6px 10px 12px">' + svgVendaDiaria(serie) +
+    '</div><div style="padding:6px 10px 12px">' + svgVendaDiaria(serie, clicavel) +
     '</div></div>');
+
+  if(clicavel){
+    const card = document.getElementById('cardVendaDiaria');
+    card.querySelectorAll('rect[data-dia]').forEach(rc => {
+      rc.addEventListener('click', () => {
+        try{ verVendasDoDia(rc.getAttribute('data-dia')); }
+        catch(e){ console.error('venda do dia:', e); }
+      });
+    });
+  }
 }
 
 /* ============ Clientes ativos, devoluções e extrair carteira (11/08/2026) ====
@@ -3824,8 +3959,12 @@ function _tabela(cols, dados, resumo){
     '</tbody></table>';
 }
 
-/* ---- CLIENTES ATIVOS ---- */
-window.verClientesAtivos = function(){
+/* ---- CLIENTES ATIVOS ----
+   `titulo` opcional: a MESMA lista atende dois botoes com rotulos diferentes -
+   'Clientes ativos' (1o cartao) e 'Compraram no período' (2o cartao). O numero e
+   identicamente `compraram.size` nos dois, entao apontar para uma lista so e o
+   certo; o que nao pode e o cabecalho do modal contradizer o botao que o abriu. */
+window.verClientesAtivos = function(titulo){
   const L = linhas();
   const info = {};
   L.forEach(r => {
@@ -3846,7 +3985,8 @@ window.verClientesAtivos = function(){
             ca: o.ca || '—', fatN: o.fat, fat: brl(o.fat)};
   }).sort((a,b) => b.fatN - a.fatN);
   const tot = arr.reduce((a,r) => a + r.fatN, 0);
-  _modal('Clientes ativos · compraram no período',
+  _modal(typeof titulo === 'string' && titulo
+           ? titulo : 'Clientes ativos · compraram no período',
     _tabela([{k:'nome',lab:'Cliente'},{k:'cn',lab:'CNPJ',mono:1},
              {k:'vend',lab:'Vendedor'},{k:'mo',lab:'Modelo'},
              {k:'uf',lab:'UF'},{k:'ca',lab:'Canal'},
@@ -3890,6 +4030,90 @@ window.verDevolucoes = function(){
       arr.length + ' cliente(s) com devolução · total ' + brl(tot) +
       (semVenda ? ' · ' + semVenda + ' sem venda no período (devolução de mês ' +
        'anterior, por isso o % fica "—")' : '')));
+};
+
+/* ---- NAO COMPRARAM NO PERIODO (12/08/2026) ----
+   Pedido do Igor: clicar nos botoes "compraram / não compraram no período" e ver
+   quem sao.
+
+   "Compraram" reaproveita o verClientesAtivos: o numero do KPI e literalmente o
+   mesmo `compraram.size`, entao apontar para a mesma lista garante que o titulo
+   e o total nunca discordem.
+
+   Este e o complemento: quem esta na carteira filtrada e NAO faturou no periodo.
+   O universo vem do carteiraDoFiltro(), a mesma funcao que o KPI usa - por isso
+   a contagem da lista fecha com o numero do cartao por construcao, e nao por
+   coincidencia.
+
+   A coluna "Venda no ano" existe porque e ela que separa os dois casos que o
+   vendedor precisa distinguir: cliente que compra sempre e faltou este mes (vale
+   ligar hoje) de cliente que nunca comprou (vale prospectar). Sem ela a lista e
+   so um monte de nomes. */
+window.verNaoCompraram = function(){
+  const compraram = new Set(linhas().filter(r => r.venda && r.cn).map(r => r.cn));
+  /* YTD do ano inteiro, nao do periodo filtrado - de proposito: a pergunta aqui
+     e "quanto esse cliente vale", nao "quanto ele fez no mes em que nao
+     comprou" (que e zero por definicao). Recorte de permissao pelo VEND_VIS
+     porque ROWS e a base crua, sem filtro de sessao. */
+  const ano = {};
+  ROWS.forEach(r => {
+    if(!r.venda || !r.cn) return;
+    if(!SESSION.isAdmin && !VEND_VIS.has(r.v)) return;
+    ano[r.cn] = (ano[r.cn] || 0) + r.fat;
+  });
+  const arr = carteiraDoFiltro().filter(c => !compraram.has(c.cn)).map(c => {
+    const i = ultimoMesCompra(c.cn);
+    const y = ano[c.cn] || 0;
+    return {cn: c.cn, nome: c.rz || c.cn, vend: c.v || '—', mo: c.mo || '—',
+            ult: i >= 0 ? MESES_ORD[i] : 'nunca',
+            status: statusCarteira(c.cn),
+            ytdN: y, ytd: y > 0 ? brl(y) : '—'};
+  }).sort((a,b) => b.ytdN - a.ytdN);
+  const nunca = arr.filter(r => r.ult === 'nunca').length;
+  const tot = arr.reduce((a,r) => a + r.ytdN, 0);
+  _modal('Não compraram no período',
+    _tabela([{k:'nome',lab:'Cliente'},{k:'cn',lab:'CNPJ',mono:1},
+             {k:'vend',lab:'Vendedor'},{k:'mo',lab:'Modelo'},
+             {k:'ult',lab:'Última compra'},{k:'status',lab:'Status'},
+             {k:'ytd',lab:'Venda no ano',dir:'r',mono:1}], arr,
+      arr.length + ' cliente(s) na carteira filtrada sem faturamento no ' +
+      'período · somam ' + brl(tot) + ' no ano' +
+      (nunca ? ' · ' + nunca + ' nunca compraram (prospecção, não retomada)' : '') +
+      ' · "Última compra" e "Status" seguem a régua de ' + DIAS_INATIVO_TXT +
+      ' dias da aba Carteira'));
+};
+
+/* ---- QUEM COMPROU NUM DIA (12/08/2026) ----
+   Chamado pelo clique na barra do grafico diario, so no filtro mensal.
+   Recalculo de linhas() em vez de guardar a lista na serie: o clique acontece
+   com os MESMOS filtros que desenharam o grafico, entao o resultado bate; e
+   guardar um Set de CNPJ por dia na serie inteira custaria memoria em "Ano todo"
+   para uma lista que aquele modo nem abre. */
+window.verVendasDoDia = function(iso){
+  const info = {};
+  linhas().forEach(r => {
+    if(r.d !== iso || !r.venda || !r.cn) return;
+    const o = info[r.cn] = info[r.cn] || {fat:0, vend:{}, uf:r.uf, ca:r.ca, mo:r.mo};
+    o.fat += r.fat;
+    o.vend[r.v] = (o.vend[r.v] || 0) + r.fat;
+  });
+  const arr = Object.keys(info).map(cn => {
+    const o = info[cn];
+    const v = Object.entries(o.vend).sort((a,b) => b[1]-a[1])[0];
+    return {cn: cn, nome: (typeof cliName === 'function' ? cliName(cn) : '') || cn,
+            vend: v ? v[0] : '—', mo: o.mo || '—', uf: o.uf || '—',
+            ca: o.ca || '—', fatN: o.fat, fat: brl(o.fat)};
+  }).sort((a,b) => b.fatN - a.fatN);
+  const tot = arr.reduce((a,r) => a + r.fatN, 0);
+  const dia = iso.split('-').reverse().join('/');
+  _modal('Vendas de ' + dia,
+    _tabela([{k:'nome',lab:'Cliente'},{k:'cn',lab:'CNPJ',mono:1},
+             {k:'vend',lab:'Vendedor'},{k:'mo',lab:'Modelo'},
+             {k:'uf',lab:'UF'},{k:'ca',lab:'Canal'},
+             {k:'fat',lab:'Faturamento',dir:'r',mono:1}], arr,
+      arr.length + ' cliente(s) faturado(s) em ' + dia + ' · total ' + brl(tot) +
+      ' · vale o mesmo recorte de vendedor, modelo, região, UF e canal da barra ' +
+      'de filtros'));
 };
 
 /* ---- EXTRAIR CARTEIRA ----
@@ -3996,10 +4220,22 @@ function ligarCliquesExtras(){
      carteira, medida DIFERENTE do KPI de cima. Ligar a view toda punha o 'ver'
      em dois lugares e o clique abria a lista errada num deles. */
   const row = view && view.querySelector('.kpirow');
-  if(row){
-    const mapa = [[/clientes ativos/i, verClientesAtivos],
-                  [/devolu/i,          verDevolucoes]];
-    row.querySelectorAll('.kpi').forEach(k => {
+
+  /* Ligar em duas etapas, cada cartao com o SEU mapa. Em 12/08 o Igor pediu os
+     botoes "compraram / não compraram no período", que estao no SEGUNDO cartao
+     (#kpiClientes, o da regua de carteira). Nao dava para simplesmente alargar o
+     seletor para a view toda: 'Clientes ativos' existe nos dois cartoes com
+     medidas DIFERENTES, e alargar foi justamente o bug que eu tive de desfazer.
+     Dois mapas separados dizem, por construcao, qual rotulo pertence a qual
+     medida.
+
+     'Clientes ativos'/'Clientes inativos' do segundo cartao seguem SEM clique de
+     proposito: sao a regua de 120 dias e precisariam de uma terceira lista. O
+     Igor nao pediu, e um clique que abrisse a lista do periodo ali estaria
+     mostrando numero que nao e o do cartao. */
+  const ligar = (raiz, mapa) => {
+    if(!raiz) return;
+    raiz.querySelectorAll('.kpi').forEach(k => {
       const lab = k.querySelector('.lab');
       if(!lab || k.dataset.clicavel2) return;
       const achou = mapa.find(par => par[0].test(lab.textContent));
@@ -4012,7 +4248,19 @@ function ligarCliquesExtras(){
       if(v) v.insertAdjacentHTML('beforeend',
         ' <span style="font-size:11px;color:#0f6cbd;vertical-align:super">ver</span>');
     });
-  }
+  };
+
+  ligar(row, [[/clientes ativos/i, verClientesAtivos],
+              [/devolu/i,          verDevolucoes]]);
+
+  /* 'não compraram' ANTES de 'compraram': /compraram/ casa dentro de "Não
+      compraram" tambem, e o find para no primeiro. Invertido, os dois botoes
+      abririam a mesma lista. */
+  /* Arrow e nao a funcao direta: o addEventListener passaria o MouseEvent como
+     1o argumento e o titulo do modal viraria "[object MouseEvent]". */
+  ligar(document.getElementById('kpiClientes'),
+        [[/não compraram|nao compraram/i, () => verNaoCompraram()],
+         [/compraram/i, () => verClientesAtivos('Compraram no período')]]);
   const cart = document.getElementById('v-carteira');
   if(cart && !document.getElementById('btnExtrairCarteira')){
     const h = cart.querySelector('.card-h');
