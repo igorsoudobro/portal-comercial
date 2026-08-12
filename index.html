@@ -3173,6 +3173,40 @@ window.renderCalcBrindes = function(){
 };
 
 /* (d) rentabilidade: semaforo para vendedor, numero para admin */
+/* ===== MARGEM BRUTA DA CALCULADORA = A DO DRE (12/08/2026) ================
+   Pedido do Igor, com a razao dele: "o correto e o pensamento do DRE, a
+   bonificacao e brindes teria de ser uma linha depois da margem bruta na
+   calculadora tambem. Bonificacao e brindes devem atingir apenas a
+   rentabilidade."
+
+   O que estava acontecendo: o `calcCompute` do index.html faz
+   `cmvT = cmvItens + cmvBoni + cmvBrinde` e depois
+   `lucroBruto = liq - cmvT`. Ou seja, a margem bruta da Calculadora ja vinha
+   depois da bonificacao, enquanto a do DRE vem antes (o DRE tem CMV = so os
+   itens e uma linha 'Bonificação + Amostra' mais abaixo). Duas telas, a mesma
+   palavra, contas diferentes: 39,2% aqui contra 42,8% la, no mesmo pedido.
+
+   A CORRECAO NAO MUDA A RENTABILIDADE, e isso e o ponto que me convenceu de que
+   e seguro. A formula original ja era
+       lucro = (liq - cmvItens - cmvBoni - cmvBrinde) - imp - fr - comissao
+   que e exatamente 'bonificacao afeta so a rentabilidade'. O erro estava em
+   CHAMAR o primeiro parenteses de 'lucro bruto'. Entao aqui eu so recalculo o
+   lucroBruto sem a bonificacao e deixo `lucro` e `rent` intactos - a regra de
+   aprovacao do pedido continua idendica ao centavo.
+
+   Envolver em vez de editar o index.html: o calcCompute e funcao global e nao
+   depende de nada local, entao a troca aqui vale para todos os chamadores. */
+if(typeof calcCompute === 'function'){
+  const _calcComputeOrig = calcCompute;      // captura ANTES da troca
+  window.calcCompute = function(){
+    const c = _calcComputeOrig.apply(this, arguments);
+    c.cmvBoniBrinde = (c.cmvBoni || 0) + (c.cmvBrinde || 0);
+    c.lucroBruto = c.liq - c.cmvItens;       // ANTES da bonificacao, como o DRE
+    c.margemBruta = c.liq ? c.lucroBruto / c.liq : null;
+    return c;                                // lucro e rent: nao toco
+  };
+}
+
 window.renderCalcResumo = function(){
   const resumo = el2('calcResumo'), insights = el2('calcInsights');
   if(!resumo) return;
@@ -3207,20 +3241,59 @@ window.renderCalcResumo = function(){
     farolComRotulo(c.rent, adm) + '</div>' +
     '<div class="sub">' + (adm ? brl(c.lucro) : 'do pedido') + '</div></div>';
 
+  /* A ORDEM segue o DRE: CMV -> margem bruta -> bonificacao -> imp/frete/com.
+     O CMV mostra SO OS ITENS (era itens+bonif+brinde, o que fazia a margem
+     bruta divergir da do DRE), e bonificacao+brindes ganham linha propria logo
+     depois da margem bruta, como o Igor pediu.
+
+     A linha nova aparece so quando ha bonificacao ou brinde: um KPI 'R$ 0,00'
+     fixo na tela ensina o vendedor a ignorar a linha, e era justamente esse o
+     problema que o Igor apontou em 30/07 - ele viu 'R$ 0,00' e concluiu que o
+     impacto era zero quando nao era. */
+  const kpiBoni = (!adm || c.cmvBoniBrinde <= 0) ? '' :
+    '<div class="kpi sens"><div class="lab">Bonif. + brindes ' + SENS + '</div>' +
+    '<div class="val" style="font-size:20px">' + brl(c.cmvBoniBrinde) + '</div>' +
+    '<div class="sub">' +
+    (c.cmvBoni ? 'bonif ' + brl(c.cmvBoni) : '') +
+    (c.cmvBoni && c.cmvBrinde ? ' · ' : '') +
+    (c.cmvBrinde ? 'brinde ' + brl(c.cmvBrinde) : '') +
+    ' · −' + pct(c.liq ? c.cmvBoniBrinde / c.liq : 0) +
+    ' de rentab.</div></div>';
+
   const kpisAdm = !adm ? '' :
-    '<div class="kpi sens"><div class="lab">CMV total ' + SENS + '</div>' +
-    '<div class="val" style="font-size:20px">' + brl(c.cmvT) + '</div>' +
-    '<div class="sub">itens ' + brl(c.cmvItens) +
-    (c.cmvBoni ? ' · bonif ' + brl(c.cmvBoni) : '') +
-    (c.cmvBrinde ? ' · brinde ' + brl(c.cmvBrinde) : '') + '</div></div>' +
+    '<div class="kpi sens"><div class="lab">CMV dos itens ' + SENS + '</div>' +
+    '<div class="val" style="font-size:20px">' + brl(c.cmvItens) + '</div>' +
+    '<div class="sub">sem bonificação e brindes</div></div>' +
     '<div class="kpi sens"><div class="lab">Margem bruta ' + SENS + '</div>' +
     '<div class="val" style="font-size:20px">' +
     pct(c.liq ? c.lucroBruto / c.liq : 0) + '</div>' +
-    '<div class="sub">' + brl(c.lucroBruto) + '</div></div>' +
+    '<div class="sub">' + brl(c.lucroBruto) + ' · mesmo critério do DRE</div></div>' +
+    kpiBoni +
     '<div class="kpi"><div class="lab">Imp+Frete+Comissão</div>' +
     '<div class="val" style="font-size:20px">' +
     brl(c.imp + c.fr + c.comissaoVal) + '</div>' +
+    /* O frete diz que e ESTIMATIVA e mostra a taxa (12/08/2026).
+
+       O Igor simulou um pedido de Junho e comparou com o DRE do mesmo CNPJ: a
+       Calculadora deu 17,6% de rentabilidade e o DRE 19,6%. Quase toda a
+       diferenca era o frete - R$ 1.611 aqui contra R$ 1.011 na nota real.
+
+       Nao e erro de nenhum dos dois: um pedido que ainda nao existe nao tem nota
+       de frete, entao a Calculadora usa a media do estado. Medido em 12/08: as
+       taxas de CALC.frete_estado sao exatamente a media realizada por UF nos 27
+       estados (SP 5,12% na tabela, 5,12% no realizado). Ou seja, a estimativa
+       esta certa NA MEDIA - e aquele pedido saiu mais barato que a media.
+
+       O que faltava era a tela dizer isso. Sem o rotulo, quem compara as duas
+       telas conclui que uma delas esta errada. Com 'estim. média UF 5,89%' a
+       divergencia se explica sozinha. Nenhum numero muda aqui.
+
+       No modo manual nao ha estimativa nenhuma: o rotulo troca para 'informado'
+       para ninguem achar que o valor dele foi ajustado por UF. */
     '<div class="sub">imp ' + brl(c.imp) + ' · frete ' + brl(c.fr) +
+    (el2('calcFreteModo') && el2('calcFreteModo').value === 'manual'
+      ? ' (informado)'
+      : ' (estim. média ' + (c.uf || 'UF') + ' ' + pct(c.frPct) + ')') +
     (c.comissaoVal ? ' · com ' + brl(c.comissaoVal) : '') + '</div></div>';
 
   /* Impacto de bonificacao e brinde, para o VENDEDOR, em PONTOS DE MARGEM.
