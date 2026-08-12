@@ -4040,6 +4040,74 @@ window.verDevolucoes = function(){
        'anterior, por isso o % fica "—")' : '')));
 };
 
+/* ---- BONIFICACAO + AMOSTRA (12/08/2026) ----
+   Pedido do Igor: "clicar no bonificação + amostra e ver os clientes, que nem o
+   quadrinho de clientes ativos".
+
+   O VALOR NAO E `fat`, e essa e a unica sutileza que importa aqui. Linha de
+   bonificacao e de amostra sai com RECEITA ZERO - `fat` e 0 nelas. O valor mora
+   em outro lugar, e diferente nos dois casos, exatamente como o dre() faz:
+
+       bonificacao (tipo 2) -> cmv + imp   (valor de tabela + imposto)
+       amostra     (tipo 3) -> cmv         (isenta de imposto)
+
+   Nas linhas de bonificacao a coluna `cmv` guarda o VALOR DE TABELA do produto,
+   nao o custo (quem escreve isso e o v8_bonif_tabela). Por isso este modal nao e
+   informacao sensivel e nao passa pelo veSensivel() - igualzinho ao cartao do
+   Resumo, que tambem nao tem `sens: true`. Se eu somasse `fat` aqui, a lista
+   daria zero para todo mundo e pareceria bug do filtro.
+
+   As duas colunas separadas existem porque as acoes sao diferentes: amostra e
+   prospeccao, bonificacao e desconto disfarcado. Somadas numa coluna so, some a
+   informacao que decide o que fazer. */
+window.verBonificacao = function(){
+  const info = {};
+  linhas().forEach(r => {
+    if(!r.cn) return;
+    const o = info[r.cn] = info[r.cn] || {bon:0, amo:0, fat:0, vend:{},
+                                          uf:r.uf, ca:r.ca, mo:r.mo};
+    if(r.tipo === 2){ o.bon += r.cmv + r.imp; }
+    else if(r.tipo === 3){ o.amo += r.cmv; }
+    else if(r.venda){ o.fat += r.fat; }
+    if(r.tipo === 2 || r.tipo === 3 || r.venda){
+      o.vend[r.v] = (o.vend[r.v] || 0) + Math.abs(r.fat) + r.cmv;
+    }
+  });
+  const arr = Object.keys(info).filter(cn => info[cn].bon || info[cn].amo)
+    .map(cn => {
+      const o = info[cn];
+      const v = Object.entries(o.vend).sort((a,b) => b[1]-a[1])[0];
+      const tot = o.bon + o.amo;
+      /* peso sobre a venda DO MESMO cliente no periodo. Sem venda o percentual
+         nao existe - mostra '—' em vez de dividir por zero, a mesma regra do
+         farol sem base e do modal de devolucao. Cliente que so recebeu amostra
+         e nao comprou e justamente o caso interessante, e ele apareceria como
+         'infinito%'. */
+      const peso = o.fat > 0 ? tot / o.fat : null;
+      return {cn: cn, nome: (typeof cliName === 'function' ? cliName(cn) : '') || cn,
+              vend: v ? v[0] : '—', mo: o.mo || '—', uf: o.uf || '—',
+              ca: o.ca || '—',
+              bon: o.bon ? brl(o.bon) : '—', amo: o.amo ? brl(o.amo) : '—',
+              totN: tot, tot: brl(tot),
+              venda: o.fat > 0 ? brl(o.fat) : '—',
+              peso: peso === null ? '—' : pct(peso)};
+    }).sort((a,b) => b.totN - a.totN);
+  const somaT = arr.reduce((a,r) => a + r.totN, 0);
+  const semVenda = arr.filter(r => r.peso === '—').length;
+  _modal('Bonificação + amostra no período',
+    _tabela([{k:'nome',lab:'Cliente'},{k:'cn',lab:'CNPJ',mono:1},
+             {k:'vend',lab:'Vendedor'},{k:'ca',lab:'Canal'},
+             {k:'bon',lab:'Bonificação',dir:'r',mono:1},
+             {k:'amo',lab:'Amostra',dir:'r',mono:1},
+             {k:'tot',lab:'Total',dir:'r',mono:1},
+             {k:'venda',lab:'Venda no período',dir:'r',mono:1},
+             {k:'peso',lab:'% da venda',dir:'r',mono:1}], arr,
+      arr.length + ' cliente(s) receberam bonificação ou amostra · total ' +
+      brl(somaT) + ' pelo valor de tabela' +
+      (semVenda ? ' · ' + semVenda + ' sem compra no período (por isso o % fica ' +
+       '"—")' : '')));
+};
+
 /* ---- NAO COMPRARAM NO PERIODO (12/08/2026) ----
    Pedido do Igor: clicar nos botoes "compraram / não compraram no período" e ver
    quem sao.
@@ -4259,7 +4327,8 @@ function ligarCliquesExtras(){
   };
 
   ligar(row, [[/clientes ativos/i, verClientesAtivos],
-              [/devolu/i,          verDevolucoes]]);
+              [/devolu/i,          verDevolucoes],
+              [/bonif/i,           verBonificacao]]);
 
   /* 'não compraram' ANTES de 'compraram': /compraram/ casa dentro de "Não
       compraram" tambem, e o find para no primeiro. Invertido, os dois botoes
