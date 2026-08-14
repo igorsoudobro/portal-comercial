@@ -165,6 +165,21 @@ table.mapa-tbl tbody tr:hover td{background:#F0F3FA}
   overflow: auto;
 }
 
+/* ---------- Penetracao por SKU: a tabela deixou de ser Top 30 (14/08/2026) --
+   Medido no JSON de 14/08: 90 SKUs vendidos no ano, 53 no mes. A lista TRIPLICA
+   em relacao ao Top 30, e o catalogo cresce. Rola DENTRO do card, com o
+   cabecalho grudado, senao ao chegar na cauda longa nao se sabe mais qual
+   coluna e qual. O fundo tem de ser opaco: thead th ja e navy, mas sem
+   background explicito no sticky as linhas passariam por baixo. */
+#penSkuOut.scroll{
+  max-height: 72vh;
+  overflow: auto;
+}
+#penSkuOut table thead th{
+  position: sticky; top: 0; z-index: 3;
+  background: var(--navy);
+}
+
 /* ---------- Mix por CNPJ: duas linhas de cabecalho, as duas congeladas ----
    linha 1 = nome da categoria | linha 2 = % de clientes com check.
    O deslocamento da 2a linha vem de --mixH1, medido em JS depois do render
@@ -2860,11 +2875,25 @@ function vPenetracaoNovo(){
   function render(){
     const sel = el2('penSkuSort');
     const sort = sel ? sel.value : 'pen';
+    /* TODOS os SKUs, sem corte (pedido do Igor, 14/08/2026). Antes eram os 30
+       primeiros: o SKU de cauda longa - justamente o que precisa de positivacao
+       - ficava invisivel. Medido em 14/08: 90 SKUs no ano, 53 no mes - o
+       #penSkuOut ganhou max-height + thead sticky no CSS para a lista rolar
+       dentro do card em vez de esticar a pagina. */
     const arr = skuArr.slice().sort((a, b) =>
       sort === 'fat' ? b.fat - a.fat
       : sort === 'ped' ? b.peds - a.peds
-      : (b.pen - a.pen || b.fat - a.fat)).slice(0, 30);
+      : (b.pen - a.pen || b.fat - a.fat));
+    /* A legenda vem ANTES da tabela: depois de tirar o Top 30 ela ficaria a
+       250 linhas de rolagem de distancia, ou seja, invisivel. */
     out.innerHTML =
+      '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">' +
+      'Todos os <b>' + skuArr.length + ' SKUs</b> vendidos no recorte, por ' +
+      (sort === 'fat' ? 'faturamento' : sort === 'ped' ? 'nº de pedidos' : 'penetração') +
+      '. ' +
+      '<b>Preço médio</b> = faturamento ÷ quantidade (o praticado na nota, já ' +
+      'com desconto — não é o preço de tabela). <b>Share do fat.</b> = fatia ' +
+      'do SKU no faturamento do recorte.</div>' +
       '<table><thead><tr><th>#</th><th>Produto</th><th>Categoria</th>' +
       '<th>Pedidos c/ SKU</th><th>Penetração</th><th></th><th>Faturamento</th>' +
       '<th>Preço médio</th><th>Share do fat.</th></tr></thead><tbody>' +
@@ -2880,14 +2909,7 @@ function vPenetracaoNovo(){
         '<td class="mono">' + (r.q ? brl(r.preco) : '—') + '</td>' +
         '<td class="mono" style="color:var(--muted)">' + pct(r.share) +
         '</td></tr>').join('') +
-      '</tbody></table>' +
-      '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">' +
-      'Top 30 SKUs por ' +
-      (sort === 'fat' ? 'faturamento' : sort === 'ped' ? 'nº de pedidos' : 'penetração') +
-      ' — de ' + skuArr.length + ' SKUs vendidos no recorte. ' +
-      '<b>Preço médio</b> = faturamento ÷ quantidade (o praticado na nota, já ' +
-      'com desconto — não é o preço de tabela). <b>Share do fat.</b> = fatia ' +
-      'do SKU no faturamento do recorte.</div>';
+      '</tbody></table>';
   }
 
   // Trocar o <select> por um CLONE: o clone nao carrega o listener que a view
