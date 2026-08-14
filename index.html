@@ -4457,6 +4457,669 @@ if(typeof showView === 'function'){
   };
 }
 
+/* ==========================================================================
+   ABA ORÇAMENTO DE VERBA  (14/08/2026)
+   ==========================================================================
+   COMO O DADO CHEGA AQUI
+   ----------------------
+   orcamento.json, na MESMA pasta do dados_dashboard.json, gerado a cada 10 min
+   por atualizar_orcamento_portal.py. Ele junta duas planilhas: a verba
+   (Dobro_Orcamentos.xlsx) e as respostas do formulário de solicitação.
+
+   A REGRA DO NEGÓCIO
+   ------------------
+   COMERCIAL tem um total por mês DIVIDIDO entre os vendedores: o lançamento
+   desconta da fatia de quem foi indicado. TRADE, SISTEMAS e VIAGEM têm um pote
+   cada, sem divisão por pessoa, e só ADMIN lança neles — ali o nome do vendedor
+   é atribuição para relatório, nunca débito.
+
+   POR QUE O ENVIO PASSA PELO FORMS
+   --------------------------------
+   O Portal é uma página estática e só sabe LER: gravar exigiria uma permissão
+   que, medido em 14/08/2026, o locatário da Dobro não concede sem o TI. Então
+   quem grava é o Microsoft Forms. Esta tela coleta, valida e monta um link com
+   as respostas já preenchidas; a pessoa confirma numa última tela e o Forms
+   registra — inclusive QUEM enviou, que é a única coisa aqui que não dá para
+   forjar.
+
+   O QUE ESTA TELA NÃO CONSEGUE
+   ----------------------------
+   Impedir. A validação daqui é do lado do cliente e o Forms aceita qualquer
+   coisa. Então o desenho é DETECTAR: estouro, prazo abaixo de 10 dias e
+   lançamento que entrou sem passar pelo Portal (sem código) aparecem marcados
+   para o Igor. Prometer bloqueio seria mentira.
+   ====================================================================== */
+/* orcEl em vez de el2: o el2() do bloco de melhorias mora DENTRO de uma IIFE e
+   não é visível aqui - este bloco roda no fim do script, fora dela. Na primeira
+   versão a aba abria em branco com "el2 is not defined" no console, e aba em
+   branco não reclama de nada: quem achou foi o teste automatizado, clicando. */
+function orcEl(id){ return document.getElementById(id); }
+
+const ORC_ARQ = "orcamento.json";
+const ORC_MESES_ABREV = ["jan","fev","mar","abr","mai","jun",
+                         "jul","ago","set","out","nov","dez"];
+const ORC_AREAS = ["Comercial","Trade","Sistemas","Viagem"];
+const ORC_SUB = {
+  "Comercial": ["Acordos comerciais","Vencimentos"],
+  "Trade":     ["Promotoria","Degustação","MPDV e Brindes","Eventos"],
+  "Sistemas":  ["Portais","Sistemas"],
+  "Viagem":    ["Visita em clientes","Passagem","Alimentação","Deslocamento"]
+};
+/* Formulário "Verbas Comerciais". Os ids das perguntas foram lidos da API
+   interna do Forms em 14/08/2026 e confirmados contra o link pré-preenchido que
+   o próprio Forms gera. Se alguém APAGAR e recriar uma pergunta, o id muda e o
+   campo passa a chegar vazio - por isso o código do lançamento existe: linha
+   sem código é linha que não veio daqui. */
+const ORC_FORM_ID = "7Wew_T7WP0ueLpUA1KmZILOo-AMhSolFh-zWXCZqtjNU" +
+                    "RTlEMFQ2R1FIQjVJOVFDNTJXUzI2QzdVUy4u";
+const ORC_Q = {
+  vendedor:     "rba7238a441c8411d94c4f7a00d79093b",
+  grupo:        "r37425af2ccbc49fa83f94a47d57ecb51",
+  subgrupo:     "r625ae7872c0145279760f82a2a79dec5",
+  beneficiario: "rb68e2683c776456c99c93d937bfd0b20",
+  documento:    "r5874bde1dc764334827a4920d81f4361",
+  valor:        "ra4fa3953d7ae4f45930468bbf2a260fc",
+  parcelas:     "rc6cac0b20e8942d08dfc4cb897aaab1c",
+  data:         "rb638daea33ff427bb72b2210bc009026",
+  descricao:    "raa608059152c4745be9608c199793c1c",
+  codigo:       "r29ef786b13b44ce19baf74eee3e4770f"
+};
+const ORC_PRAZO_MIN = 10;              // dias corridos entre lançar e pagar
+
+let ORC = null, ORC_ERRO = null, ORC_MES = null, ORC_QUEM = null;
+
+/* --------------------------------------------------------------- download */
+async function orcBaixar(){
+  const token = await msToken();
+  if(!token) return null;
+  const caminho = (PASTA_DADOS + "/" + ORC_ARQ)
+                    .split("/").map(encodeURIComponent).join("/");
+  const url = GRAPH_BASE + "/sites/" + MS_SITE_ID + "/drive/root:/" + caminho;
+  const res = await fetch(url, { headers: { Authorization: "Bearer " + token } });
+  if(res.status === 404){
+    const e = new Error("O arquivo de orçamento ainda não existe na pasta do " +
+                        "Portal. Ele é gerado a cada 10 minutos.");
+    e.brando = true; throw e;
+  }
+  if(!res.ok) throw new Error("Graph " + res.status + " ao procurar " + ORC_ARQ);
+  const meta = await res.json();
+  /* Mesmo download em dois passos do JSON principal: ir direto no /content faz o
+     Graph responder 302 e o header Authorization viaja no redirect -> 401. */
+  const r2 = await fetch(meta["@microsoft.graph.downloadUrl"]);
+  if(!r2.ok) throw new Error("Download do orçamento: HTTP " + r2.status);
+  return await r2.json();
+}
+
+/* ----------------------------------------------------------------- ajudas */
+function orcMesDe(d){
+  return ORC_MESES_ABREV[d.getMonth()] + "/" +
+         String(d.getFullYear() % 100).padStart(2, "0");
+}
+function orcMesPadrao(){
+  const r = orcMesDe(new Date());
+  const ms = (ORC && ORC.meses) || [];
+  return ms.indexOf(r) >= 0 ? r : (ms[0] || null);
+}
+function orcSomarMeses(d, n){
+  const alvo = new Date(d.getFullYear(), d.getMonth() + n, 1);
+  const ultimo = new Date(alvo.getFullYear(), alvo.getMonth() + 1, 0).getDate();
+  alvo.setDate(Math.min(d.getDate(), ultimo));
+  return alvo;
+}
+function orcISO(d){
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" +
+         String(d.getDate()).padStart(2,"0");
+}
+function orcBR(iso){
+  if(!iso) return "—";
+  const p = String(iso).slice(0,10).split("-");
+  return p.length === 3 ? p[2]+"/"+p[1]+"/"+p[0] : iso;
+}
+/* Data mínima de pagamento: hoje + 10 dias corridos. Caindo em sábado ou
+   domingo, empurro para segunda - data que o financeiro não honra só gera
+   retrabalho, e o vendedor não tem como saber disso sozinho. */
+function orcDataMinima(){
+  const d = new Date();
+  d.setHours(0,0,0,0);
+  d.setDate(d.getDate() + ORC_PRAZO_MIN);
+  if(d.getDay() === 6) d.setDate(d.getDate() + 2);
+  if(d.getDay() === 0) d.setDate(d.getDate() + 1);
+  return d;
+}
+function orcCodigo(){
+  const d = new Date(), s = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let r = ""; for(let i=0;i<4;i++) r += s[Math.floor(Math.random()*s.length)];
+  return "VB-" + d.getFullYear() +
+         String(d.getMonth()+1).padStart(2,"0") +
+         String(d.getDate()).padStart(2,"0") + "-" + r;
+}
+/* Mesmo arredondamento do Python: a sobra vai na PRIMEIRA parcela, para a soma
+   das parcelas ser sempre igual ao valor lançado. 1000/3 em três de 333,33
+   perderia um centavo da verba, e centavo perdido em verba ninguém acha. */
+function orcParcelas(valor, n, dataISO){
+  if(!(valor > 0) || !dataISO) return [];
+  n = Math.max(1, Math.min(parseInt(n,10) || 1, 12));
+  const d0 = new Date(dataISO + "T00:00:00");
+  const base = Math.round(valor / n * 100) / 100;
+  const out = [];
+  for(let i=0;i<n;i++){
+    const d = orcSomarMeses(d0, i);
+    out.push({ i:i+1, de:n, data:d, mes:orcMesDe(d),
+               valor: i === 0 ? Math.round((valor - base*(n-1))*100)/100 : base });
+  }
+  return out;
+}
+function orcQuemPodeVer(){
+  if(SESSION.isAdmin) return Object.keys((ORC && ORC.vendedores) || {}).sort();
+  return [...VEND_VIS].sort();
+}
+function orcLinha(nome, mes, ehArea){
+  const fonte = ehArea ? (ORC.areas || {}) : (ORC.vendedores || {});
+  return ((fonte[nome] || {})[mes]) ||
+         {orcamento:null, comprometido:0, pago:0, usado:0, saldo:null,
+          estourou:false, definido:false};
+}
+function orcCel(x){
+  if(!x.definido) return '<span style="color:var(--muted)">não definido</span>';
+  const cor = x.estourou ? 'var(--neg)' : (x.saldo <= 0 ? 'var(--warn)' : 'var(--pos)');
+  return '<b style="color:' + cor + '">' + brl(x.saldo) + '</b>';
+}
+
+/* ------------------------------------------------------------------ a view */
+function vOrcamento(){
+  const alvo = orcEl('v-orcamento');
+  if(!alvo) return;                       // container ainda não existe
+  if(ORC_ERRO){
+    alvo.innerHTML = '<div class="card"><div style="padding:22px">' +
+      '<h3 style="margin:0 0 8px">Não consegui carregar o orçamento</h3>' +
+      '<div style="color:var(--muted);font-size:13px">' + ORC_ERRO + '</div>' +
+      '<button class="btn-y" style="margin-top:14px" onclick="orcRecarregar()">' +
+      'Tentar de novo</button></div></div>';
+    return;
+  }
+  if(!ORC){
+    alvo.innerHTML = '<div class="card"><div style="padding:22px;color:var(--muted)">' +
+      'Carregando o orçamento…</div></div>';
+    orcRecarregar();
+    return;
+  }
+  if(!ORC_MES) ORC_MES = orcMesPadrao();
+  const meses = ORC.meses || [];
+  const podeVer = orcQuemPodeVer();
+  if(!ORC_QUEM || podeVer.indexOf(ORC_QUEM) < 0) ORC_QUEM = podeVer[0] || null;
+
+  /* atraso do arquivo: sincronização do OneDrive pode travar EM SILÊNCIO, e
+     este projeto já serviu dados de 8 dias atrás sem ninguém notar. */
+  const geradoMin = ORC.gerado_em
+      ? Math.round((Date.now() - new Date(ORC.gerado_em).getTime())/60000) : null;
+  const atraso = geradoMin !== null && geradoMin > 45;
+
+  const selMes = '<select id="orcMes" class="inp" style="padding:6px 10px;font-size:13px">' +
+    meses.map(m => '<option value="'+m+'"'+(m===ORC_MES?' selected':'')+'>'+m+'</option>').join('') +
+    '</select>';
+  const selQuem = podeVer.length > 1
+    ? '<select id="orcQuem" class="inp" style="padding:6px 10px;font-size:13px">' +
+      podeVer.map(v => '<option'+(v===ORC_QUEM?' selected':'')+'>'+v+'</option>').join('') +
+      '</select>'
+    : '<b>' + (ORC_QUEM || '—') + '</b>';
+
+  const x = ORC_QUEM ? orcLinha(ORC_QUEM, ORC_MES, false)
+                     : {definido:false, comprometido:0, pago:0, usado:0, saldo:null};
+  const kpis =
+    '<div class="kpi"><div class="lab">Orçamento do mês</div><div class="val">' +
+      (x.definido ? brl(x.orcamento) : '—') + '</div><div class="sub">' +
+      (x.definido ? 'verba comercial' : 'não definido para ' + ORC_MES) + '</div></div>' +
+    '<div class="kpi"><div class="lab">Comprometido</div><div class="val">' +
+      brl(x.comprometido) + '</div><div class="sub">lançado, ainda não pago</div></div>' +
+    '<div class="kpi"><div class="lab">Pago</div><div class="val">' + brl(x.pago) +
+      '</div><div class="sub">data já venceu</div></div>' +
+    '<div class="kpi"><div class="lab">Saldo</div><div class="val">' + orcCel(x) +
+      '</div><div class="sub">' + (x.definido ? 'orçamento − usado' : '—') +
+      '</div></div>';
+
+  // ---- meses à frente: a visão que o parcelamento exige
+  const linhasMes = meses.map(m => {
+    const y = ORC_QUEM ? orcLinha(ORC_QUEM, m, false) : null;
+    if(!y) return '';
+    const marca = m === ORC_MES ? ' style="background:#F3F6FC"' : '';
+    return '<tr'+marca+'><td class="rowlab">'+m+'</td>' +
+      '<td class="mono">'+(y.definido?brl(y.orcamento):'—')+'</td>' +
+      '<td class="mono">'+brl(y.comprometido)+'</td>' +
+      '<td class="mono">'+brl(y.pago)+'</td>' +
+      '<td class="mono">'+orcCel(y)+'</td></tr>';
+  }).join('');
+
+  // ---- as quatro áreas: só admin
+  let blocoAreas = '';
+  if(SESSION.isAdmin){
+    blocoAreas = '<div class="card"><div class="card-h"><h3>Verba das áreas</h3>' +
+      '<span class="hint">pote único por área, sem divisão por pessoa</span></div>' +
+      '<div class="scroll"><table><thead><tr><th>Área</th><th>Orçamento</th>' +
+      '<th>Comprometido</th><th>Pago</th><th>Saldo</th></tr></thead><tbody>' +
+      ORC_AREAS.map(a => {
+        const y = orcLinha(a, ORC_MES, true);
+        return '<tr><td class="rowlab">'+a+'</td>' +
+          '<td class="mono">'+(y.definido?brl(y.orcamento):'—')+'</td>' +
+          '<td class="mono">'+brl(y.comprometido)+'</td>' +
+          '<td class="mono">'+brl(y.pago)+'</td>' +
+          '<td class="mono">'+orcCel(y)+'</td></tr>';
+      }).join('') + '</tbody></table></div></div>';
+  }
+
+  // ---- lançamentos que eu posso ver
+  const podeSet = new Set(podeVer);
+  const lanc = (ORC.lancamentos || []).filter(l =>
+      SESSION.isAdmin || podeSet.has(l.vendedor));
+  const pend = orcPendentes();
+  const linhasLanc = lanc.slice().reverse().map(l => {
+    const av = (l.avisos || []).length
+      ? '<span class="pill r" title="'+(l.avisos.join(' · '))+'">'+l.avisos.length+' aviso(s)</span>'
+      : '';
+    const meus = l.vendedor && l.quem_lancou &&
+                 l.vendedor !== l.quem_lancou ? ' <span class="pill y">outro lançou</span>' : '';
+    return '<tr><td class="mono" style="font-size:11px">'+(l.codigo||'—')+'</td>' +
+      '<td>'+orcBR(l.enviado_em)+'</td>' +
+      '<td class="rowlab">'+(l.grupo||'—')+' / '+(l.subgrupo||'—')+'</td>' +
+      '<td>'+(l.vendedor||'—')+meus+'</td>' +
+      '<td>'+(l.beneficiario||'—')+'</td>' +
+      '<td class="mono">'+(l.valor==null?'—':brl(l.valor))+'</td>' +
+      '<td class="mono">'+((l.parcelas||[]).length||1)+'x</td>' +
+      '<td style="font-size:12px">'+(l.quem_lancou||'—')+'</td>' +
+      '<td>'+av+'</td></tr>';
+  }).join('');
+
+  alvo.innerHTML =
+    (atraso ? '<div class="note" style="background:#FCEAEA;color:#8E2B1F">' +
+      '<b>Atenção:</b> este quadro foi gerado há ' + geradoMin + ' minutos. ' +
+      'Ele deveria se atualizar a cada 10 — pode ser sincronização travada. ' +
+      'Confira antes de decidir com base nele.</div>' : '') +
+    '<div class="note">A verba é <b>por mês de pagamento</b>: um lançamento em 3x ' +
+      'consome o mês de cada parcela, não tudo no mês em que foi lançado. ' +
+      '<b>Comprometido</b> é o que já foi lançado e ainda não venceu. Mês sem verba ' +
+      'definida aparece como "não definido" e não bloqueia nada. ' +
+      (ORC.gerado_em ? 'Atualizado às ' + String(ORC.gerado_em).slice(11,16) + '.' : '') +
+    '</div>' +
+    '<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:14px">' +
+      '<div>Mês ' + selMes + '</div><div>Verba de ' + selQuem + '</div>' +
+      '<button class="btn-y" id="orcNovo" style="margin-left:auto">Lançar verba</button>' +
+      '<button class="btn-y" id="orcAtualizar" style="background:#eef0f3">Atualizar</button>' +
+    '</div>' +
+    '<div class="kpis">' + kpis + '</div>' +
+    (pend.length ? '<div class="note" style="background:#E8F1FC;color:#1E3A6B">' +
+      '<b>Aguardando confirmação:</b> ' + pend.map(p=>p.codigo).join(', ') +
+      '. Você enviou pelo Portal e ainda não apareceu aqui — o quadro atualiza ' +
+      'a cada 10 minutos. Se não aparecer, talvez a última tela do formulário ' +
+      'não tenha sido enviada.</div>' : '') +
+    '<div class="card"><div class="card-h"><h3>Os próximos meses</h3>' +
+      '<span class="hint">o parcelamento já aparece aqui</span></div>' +
+      '<div class="scroll"><table><thead><tr><th>Mês</th><th>Orçamento</th>' +
+      '<th>Comprometido</th><th>Pago</th><th>Saldo</th></tr></thead><tbody>' +
+      linhasMes + '</tbody></table></div></div>' +
+    blocoAreas +
+    '<div class="card"><div class="card-h"><h3>Lançamentos</h3>' +
+      '<span class="hint">' + lanc.length + ' no total</span></div>' +
+      '<div class="scroll"><table><thead><tr><th>Código</th><th>Enviado</th>' +
+      '<th>Grupo / Subgrupo</th><th>Verba de</th><th>Beneficiário</th>' +
+      '<th>Valor</th><th>Parc.</th><th>Quem lançou</th><th></th></tr></thead><tbody>' +
+      (linhasLanc || '<tr><td colspan="9" style="color:var(--muted)">' +
+       'Nenhum lançamento ainda.</td></tr>') +
+      '</tbody></table></div></div>';
+
+  const sm = orcEl('orcMes');
+  if(sm) sm.addEventListener('change', e => { ORC_MES = e.target.value; vOrcamento(); });
+  const sq = orcEl('orcQuem');
+  if(sq) sq.addEventListener('change', e => { ORC_QUEM = e.target.value; vOrcamento(); });
+  const bn = orcEl('orcNovo');
+  if(bn) bn.addEventListener('click', orcAbrirFormulario);
+  const ba = orcEl('orcAtualizar');
+  if(ba) ba.addEventListener('click', () => { ORC = null; orcRecarregar(); });
+}
+
+function orcRecarregar(){
+  ORC_ERRO = null;
+  orcBaixar().then(d => {
+    if(!d) return;                       // está navegando para o login
+    ORC = d;
+    if(CURRENT === 'orcamento') vOrcamento();
+  }).catch(e => {
+    ORC_ERRO = e.brando ? e.message :
+      (e.message || String(e)) + '. Recarregue com Ctrl+Shift+R.';
+    if(CURRENT === 'orcamento') vOrcamento();
+  });
+}
+
+/* Lançamentos que ESTA pessoa enviou e que ainda não voltaram no JSON. Guardo no
+   navegador porque o quadro só atualiza a cada 10 minutos: sem isso, a pessoa
+   lança, não vê nada e lança de novo. */
+function orcMarcarPendente(cod, valor){
+  try{
+    const k = 'orc_pendentes';
+    const l = JSON.parse(sessionStorage.getItem(k) || '[]');
+    l.push({codigo:cod, valor:valor, em:Date.now()});
+    sessionStorage.setItem(k, JSON.stringify(l.slice(-10)));
+  }catch(e){}
+}
+function orcPendentes(){
+  try{
+    const l = JSON.parse(sessionStorage.getItem('orc_pendentes') || '[]');
+    const vistos = new Set((ORC && ORC.lancamentos || []).map(x => x.codigo));
+    const falta = l.filter(p => !vistos.has(p.codigo) &&
+                                Date.now() - p.em < 6*3600*1000);
+    sessionStorage.setItem('orc_pendentes', JSON.stringify(falta));
+    return falta;
+  }catch(e){ return []; }
+}
+
+/* ------------------------------------------------------------ o formulário */
+function orcAbrirFormulario(){
+  /* Sem ORC nao da para calcular saldo nenhum, e um formulario que nao sabe o
+     saldo e pior que nenhum: ele deixa lancar as cegas. Em uso normal o botao so
+     existe depois do carregamento - mas "em uso normal" nao e garantia, e o
+     estouro aqui era 'Cannot read properties of null'. */
+  if(!ORC){
+    abrirModal('Lançar uso de verba',
+      '<div style="padding:22px;color:var(--muted)">O orçamento ainda não ' +
+      'carregou. Feche, espere um instante e tente de novo.</div>');
+    return;
+  }
+  const ehAdm = !!SESSION.isAdmin;
+  const grupos = ehAdm ? ORC_AREAS : ["Comercial"];
+  const vendedores = orcQuemPodeVer();
+  const minISO = orcISO(orcDataMinima());
+
+  abrirModal('Lançar uso de verba',
+    '<div style="padding:16px 18px 20px">' +
+    '<div class="note" style="margin-bottom:14px">Preencha aqui. Ao enviar, abre ' +
+      'uma última tela da Microsoft <b>já preenchida</b> — é lá que o lançamento ' +
+      'fica registrado, e é ela que grava quem enviou. Confira e clique em ' +
+      '<b>Enviar</b> nessa tela, senão nada é registrado.</div>' +
+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+      '<label>Grupo<br><select id="ofGrupo" class="inp" style="width:100%">' +
+        grupos.map(g=>'<option>'+g+'</option>').join('') + '</select></label>' +
+      '<label>Subgrupo<br><select id="ofSub" class="inp" style="width:100%"></select></label>' +
+      '<label>Verba de qual vendedor<br>' +
+        (ehAdm || vendedores.length > 1
+          ? '<select id="ofVend" class="inp" style="width:100%">' +
+            vendedores.map(v=>'<option>'+v+'</option>').join('') + '</select>'
+          : '<input id="ofVend" class="inp" style="width:100%" value="' +
+            (vendedores[0]||'') + '" readonly>') + '</label>' +
+      '<label>Quem vai receber o pagamento<br>' +
+        '<input id="ofBenef" class="inp" style="width:100%" placeholder="razão social"></label>' +
+      '<label>CNPJ ou CPF de quem recebe<br>' +
+        '<input id="ofDoc" class="inp" style="width:100%"></label>' +
+      '<label>Valor total (R$)<br>' +
+        '<input id="ofValor" class="inp" style="width:100%" inputmode="decimal" ' +
+        'placeholder="3000,00"></label>' +
+      '<label>Em quantas parcelas<br>' +
+        '<input id="ofParc" class="inp" style="width:100%" type="number" min="1" ' +
+        'max="12" value="1"></label>' +
+      '<label>Data do 1º pagamento<br>' +
+        '<input id="ofData" class="inp" style="width:100%" type="date" min="' +
+        minISO + '" value="' + minISO + '"></label>' +
+    '</div>' +
+    '<label style="display:block;margin-top:12px">Descrição do uso da verba<br>' +
+      '<textarea id="ofDesc" class="inp" style="width:100%;min-height:64px" ' +
+      'placeholder="o que foi feito, em qual cliente"></textarea></label>' +
+    '<div style="font-size:11.5px;color:var(--muted);margin-top:6px">' +
+      'O pagamento precisa de no mínimo ' + ORC_PRAZO_MIN + ' dias — a data ' +
+      'mínima já está travada em ' + orcBR(minISO) + '.</div>' +
+    '<div id="ofPrevia" style="margin-top:16px"></div>' +
+    '<div style="display:flex;gap:10px;align-items:center;margin-top:16px">' +
+      '<button class="btn-y" id="ofEnviar">Enviar para confirmação</button>' +
+      '<span id="ofMsg" style="font-size:12px;color:var(--muted)"></span>' +
+    '</div></div>');
+
+  const gr = orcEl('ofGrupo');
+  function encherSub(){
+    const s = orcEl('ofSub');
+    s.innerHTML = (ORC_SUB[gr.value] || []).map(x=>'<option>'+x+'</option>').join('');
+  }
+  gr.addEventListener('change', () => { encherSub(); orcPrevia(); });
+  encherSub();
+  ['ofSub','ofVend','ofValor','ofParc','ofData'].forEach(id => {
+    const e = orcEl(id);
+    if(e){ e.addEventListener('input', orcPrevia); e.addEventListener('change', orcPrevia); }
+  });
+  orcEl('ofEnviar').addEventListener('click', orcEnviar);
+  orcPrevia();
+}
+
+function orcNum(txt){
+  if(txt == null) return null;
+  let s = String(txt).trim().replace(/[^\d,.\-]/g, '');
+  if(!s) return null;
+  if(s.indexOf(',') >= 0 && s.indexOf('.') >= 0){
+    s = s.lastIndexOf(',') > s.lastIndexOf('.')
+        ? s.replace(/\./g,'').replace(',','.') : s.replace(/,/g,'');
+  } else if(s.indexOf(',') >= 0){ s = s.replace(',','.'); }
+  const v = parseFloat(s);
+  return isNaN(v) ? null : v;
+}
+
+/* A prévia é o coração da tela: mostra em QUAIS meses a verba vai ser consumida
+   e como fica o saldo de cada um depois deste lançamento. É onde a pessoa
+   descobre que parcelar joga o problema para a frente. */
+function orcPrevia(){
+  const alvo = orcEl('ofPrevia');
+  if(!alvo || !ORC) return { ok:false };
+  const grupo = (orcEl('ofGrupo')||{}).value;
+  const vend = (orcEl('ofVend')||{}).value;
+  const valor = orcNum((orcEl('ofValor')||{}).value);
+  const n = parseInt((orcEl('ofParc')||{}).value, 10) || 1;
+  const dataISO = (orcEl('ofData')||{}).value;
+  const ps = orcParcelas(valor, n, dataISO);
+
+  if(!ps.length){
+    alvo.innerHTML = '<div style="color:var(--muted);font-size:12.5px">' +
+      'Preencha valor, parcelas e data para ver o impacto na verba.</div>';
+    return { ok:false };
+  }
+  const ehComercial = grupo === 'Comercial';
+  const nome = ehComercial ? vend : grupo;
+  let estourouAlgum = false, foraDoAno = false;
+  const linhas = ps.map(p => {
+    const dentro = (ORC.meses||[]).indexOf(p.mes) >= 0;
+    if(!dentro) foraDoAno = true;
+    const y = dentro ? orcLinha(nome, p.mes, !ehComercial) : null;
+    let sit;
+    if(!dentro){
+      sit = '<span style="color:var(--muted)">fora do período com verba</span>';
+    } else if(!y.definido){
+      sit = '<span style="color:var(--muted)">verba não definida</span>';
+    } else {
+      const depois = Math.round((y.saldo - p.valor)*100)/100;
+      if(depois < -0.005){
+        estourouAlgum = true;
+        sit = '<b style="color:var(--neg)">estoura em ' + brl(Math.abs(depois)) + '</b>';
+      } else {
+        sit = 'sobra ' + brl(depois);
+      }
+    }
+    return '<tr><td class="rowlab">' + p.i + '/' + p.de + '</td>' +
+      '<td>' + p.mes + '</td>' +
+      '<td class="mono">' + orcBR(orcISO(p.data)) + '</td>' +
+      '<td class="mono">' + brl(p.valor) + '</td>' +
+      '<td>' + sit + '</td></tr>';
+  }).join('');
+
+  const somaOk = Math.abs(ps.reduce((a,p)=>a+p.valor,0) - valor) < 0.005;
+  alvo.innerHTML =
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">' +
+      'Impacto na verba de <b>' + nome + '</b>' +
+      (ehComercial ? '' : ' (pote da área — não desconta do vendedor)') + '</div>' +
+    '<table><thead><tr><th>Parcela</th><th>Mês</th><th>Pagamento</th>' +
+    '<th>Valor</th><th>Saldo depois</th></tr></thead><tbody>' + linhas +
+    '</tbody></table>' +
+    (somaOk ? '' : '<div style="color:var(--neg);font-size:12px">as parcelas não ' +
+      'somam o valor total — me avise, é defeito meu</div>');
+
+  const bt = orcEl('ofEnviar');
+  const msg = orcEl('ofMsg');
+  const bloquear = estourouAlgum && !SESSION.isAdmin;
+  if(bt){
+    bt.disabled = bloquear;
+    bt.style.opacity = bloquear ? '.5' : '1';
+    bt.style.cursor = bloquear ? 'not-allowed' : 'pointer';
+  }
+  if(msg){
+    msg.innerHTML = bloquear
+      ? '<b style="color:var(--neg)">Sem saldo para este lançamento.</b> ' +
+        'Reduza o valor, aumente as parcelas ou fale com o Igor.'
+      : (estourouAlgum
+         ? '<b style="color:var(--warn)">Acima do saldo</b> — como você é admin, ' +
+           'dá para enviar, e a linha vai marcada como estouro.'
+         : (foraDoAno ? 'Alguma parcela cai em mês sem verba definida.' : ''));
+  }
+  return { ok:true, parcelas:ps, estourou:estourouAlgum, nome:nome };
+}
+
+function orcEnviar(){
+  const p = orcPrevia();
+  if(!p.ok){ orcEl('ofMsg').textContent = 'Falta preencher valor, parcelas e data.'; return; }
+  const v = {
+    vendedor: (orcEl('ofVend')||{}).value || '',
+    grupo: (orcEl('ofGrupo')||{}).value || '',
+    subgrupo: (orcEl('ofSub')||{}).value || '',
+    beneficiario: (orcEl('ofBenef')||{}).value.trim(),
+    documento: (orcEl('ofDoc')||{}).value.trim(),
+    valor: orcNum((orcEl('ofValor')||{}).value),
+    parcelas: parseInt((orcEl('ofParc')||{}).value,10) || 1,
+    data: (orcEl('ofData')||{}).value,
+    descricao: (orcEl('ofDesc')||{}).value.trim()
+  };
+  const falta = [];
+  if(!v.beneficiario) falta.push('quem vai receber');
+  if(!v.documento) falta.push('CNPJ/CPF');
+  if(!v.descricao) falta.push('descrição');
+  if(falta.length){
+    orcEl('ofMsg').innerHTML = '<b style="color:var(--neg)">Falta preencher: ' +
+      falta.join(', ') + '.</b>';
+    return;
+  }
+  /* A data mínima também é checada aqui, e não só no atributo min do campo:
+     atributo de HTML se burla com dois cliques no devtools, e eu prefiro que o
+     lançamento chegue certo a descobrir depois na planilha. */
+  if(v.data < orcISO(orcDataMinima())){
+    orcEl('ofMsg').innerHTML = '<b style="color:var(--neg)">O pagamento precisa de ' +
+      'no mínimo ' + ORC_PRAZO_MIN + ' dias.</b>';
+    return;
+  }
+
+  const cod = orcCodigo();
+  const val = {
+    vendedor: v.vendedor, grupo: v.grupo, subgrupo: v.subgrupo,
+    beneficiario: v.beneficiario, documento: v.documento,
+    valor: v.valor.toFixed(2).replace('.', ','),
+    parcelas: String(v.parcelas), data: orcBR(v.data),
+    descricao: v.descricao, codigo: cod
+  };
+  let url = 'https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=' + ORC_FORM_ID;
+  Object.keys(ORC_Q).forEach(k => {
+    url += '&' + ORC_Q[k] + '=' + encodeURIComponent(val[k] == null ? '' : val[k]);
+  });
+
+  orcMarcarPendente(cod, v.valor);
+  window.open(url, '_blank', 'noopener');
+  orcEl('ofMsg').innerHTML = '<b style="color:var(--pos)">Abri a tela de ' +
+    'confirmação (' + cod + ').</b> Clique em <b>Enviar</b> lá para registrar.';
+  const bt = orcEl('ofEnviar');
+  if(bt){ bt.disabled = true; bt.style.opacity = '.5'; }
+}
+
+/* Registrar a aba. Entra antes da Calculadora: verba é rotina diária e
+   calculadora é consulta pontual.
+
+   O CONTAINER TEM DE SER CRIADO AQUI. Cada aba do Portal tem um
+   <div class="view" id="v-...">  fixo no HTML, e o showView faz
+   el('v-'+CURRENT).classList.add('on') - sem o div, clicar na aba nova estoura
+   com "classList of null" e a tela fica em branco. Foi exatamente o que
+   aconteceu na primeira versão, e só apareceu porque o teste automatizado
+   clicou na aba em vez de eu conferir o código lendo. */
+if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
+  const iCalc = VIEWS.findIndex(v => v.id === 'calc');
+  const nova = {id:'orcamento', lab:'Orçamento', fn:vOrcamento};
+  if(!VIEWS.some(v => v.id === 'orcamento')){
+    if(iCalc >= 0) VIEWS.splice(iCalc, 0, nova); else VIEWS.push(nova);
+  }
+  if(!document.getElementById('v-orcamento')){
+    const irmao = document.getElementById('v-calc') ||
+                  document.querySelector('.view');
+    if(irmao && irmao.parentNode){
+      const d = document.createElement('div');
+      d.className = 'view';
+      d.id = 'v-orcamento';
+      irmao.parentNode.insertBefore(d, irmao);
+    }
+  }
+  /* A nav é montada no login, que já aconteceu antes deste bloco rodar em alguns
+     caminhos; remontar é inofensivo e garante que a aba apareça. */
+  if(typeof buildNav === 'function' && document.getElementById('nav') &&
+     document.getElementById('nav').children.length){
+    try{ buildNav(); }catch(e){}
+  }
+}
+window.orcRecarregar = orcRecarregar;
+
+/* ---------------- A aba fica EM TESTES, só o Igor entra (14/08/2026) -------
+   Pedido: os outros veem o nome da aba com "(em testes)" ao lado, mas nao
+   conseguem clicar. Mostrar e nao liberar tem um proposito - a equipe ja fica
+   sabendo que vem, e ninguem lanca verba num modulo que ainda nao foi validado.
+
+   Uma lista, e nao um "if user == Igor": liberar a segunda pessoa passa a ser
+   acrescentar um nome aqui, e nao caçar comparacao espalhada pelo codigo. */
+const ORC_LIBERADO = ["Igor Supino"];
+function orcPodeUsar(){
+  return ORC_LIBERADO.indexOf((SESSION && SESSION.user) || "") >= 0;
+}
+
+/* O botao desabilitado nao e barreira de seguranca - dois cliques no devtools o
+   reabilitam. A barreira de verdade esta na propria view, que se recusa a
+   desenhar para quem nao esta na lista. E o dado em si nunca foi segredo: o
+   orcamento.json mora na mesma pasta compartilhada do resto. */
+if(typeof buildNav === 'function'){
+  const _buildNavOrig = buildNav;      // captura ANTES da troca, regra da casa
+  window.buildNav = function(){
+    const r = _buildNavOrig.apply(this, arguments);
+    try{
+      const nav = document.getElementById('nav');
+      const b = nav && nav.querySelector('button[data-v="orcamento"]');
+      if(b && !orcPodeUsar()){
+        b.innerHTML = 'Orçamento <span style="font-size:10px;opacity:.7">' +
+                      '(em testes)</span>';
+        b.disabled = true;
+        b.style.opacity = '.55';
+        b.style.cursor = 'not-allowed';
+        b.title = 'Em testes — disponível em breve.';
+      }
+    }catch(e){ console.error('orcamento em testes:', e); }
+    return r;
+  };
+}
+
+/* Guarda na view: se alguem chegar aqui por fora (devtools, ou CURRENT setado a
+   mao), a tela explica em vez de mostrar numero pela metade. */
+const _vOrcamentoLiberada = vOrcamento;
+vOrcamento = function(){
+  if(!orcPodeUsar()){
+    const alvo = orcEl('v-orcamento');
+    if(alvo){
+      alvo.innerHTML = '<div class="card"><div style="padding:26px">' +
+        '<h3 style="margin:0 0 8px">Orçamento de verba — em testes</h3>' +
+        '<div style="color:var(--muted);font-size:13px;max-width:520px">' +
+        'Este módulo está sendo validado e ainda não está liberado. ' +
+        'Quando estiver, o lançamento de verba passa a ser feito por aqui.' +
+        '</div></div></div>';
+    }
+    return;
+  }
+  return _vOrcamentoLiberada.apply(this, arguments);
+};
+if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
+  const v = VIEWS.find(x => x.id === 'orcamento');
+  if(v) v.fn = vOrcamento;             // a VIEWS guardou a referencia antiga
+}
+
 </script>
 </body>
 </html>
