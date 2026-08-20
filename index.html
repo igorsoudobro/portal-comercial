@@ -5182,9 +5182,31 @@ document.addEventListener('change', e => {
    R$ 40 POR LOJA fica numa constante, não espalhado na conta: no dia em que
    virar 45, é um número num lugar.
    ====================================================================== */
-const PROMOTORIA_POR_LOJA = 40;
+/* Custo de visita PADRÃO. Era constante fixa até 20/08/2026, quando o Igor
+   pediu que a promotoria virasse lojas × custo da visita × frequência: agora é
+   só o valor que já vem preenchido no campo, e quem lança pode mudar. */
+const PROMOTORIA_CUSTO_VISITA = 40;
 let CALC_CONTRATO_PCT = 0;     // percentual sobre o líquido
-let CALC_PROMO_LOJAS = 0;      // nº de lojas
+let CALC_PROMO_MODO = 'calculo';           // 'calculo' | 'manual'
+let CALC_PROMO_LOJAS = 0;
+let CALC_PROMO_CUSTO = PROMOTORIA_CUSTO_VISITA;
+let CALC_PROMO_FREQ = 1;
+let CALC_PROMO_MANUAL = 0;
+
+/* Um lugar só decide o valor da promotoria. A tela, a conta e o arquivo
+   extraído leem daqui - se cada um fizesse a própria multiplicação, um dia dois
+   deles discordariam e o errado seria o que ninguém confere. */
+function calcPromotoria(){
+  if(CALC_PROMO_MODO === 'manual'){
+    return {modo: 'manual', total: CALC_PROMO_MANUAL || 0,
+            lojas: 0, custo: 0, freq: 0};
+  }
+  const lojas = CALC_PROMO_LOJAS || 0;
+  const custo = CALC_PROMO_CUSTO || 0;
+  const freq = CALC_PROMO_FREQ || 0;
+  return {modo: 'calculo', total: lojas * custo * freq,
+          lojas: lojas, custo: custo, freq: freq};
+}
 
 /* Quem vê: admin ou a Júlia Barros. Comparo sem acento e sem caixa porque no
    cadastro ela é 'Júlia Barros' e o Igor escreveu 'Julia Barros' - e existem
@@ -5224,29 +5246,73 @@ function calcInjetarCustosExtra(){
   if(!linha) return;
   const bloco = document.createElement('div');
   bloco.style.display = 'contents';
+  /* O seletor de modo copia o padrão que o Frete já usa neste mesmo bloco:
+     select + um grupo de campos que aparece ou desaparece. Quem já lançou um
+     pedido reconhece sem ler instrução. */
   bloco.innerHTML =
     '<div><label class="calc-lab">Contrato %</label><br>' +
     '<input id="calcContrato" class="inp" type="number" min="0" max="100" ' +
     'step="0.1" value="' + (CALC_CONTRATO_PCT || 0) + '" style="width:120px"></div>' +
-    '<div><label class="calc-lab">Promotoria — nº de lojas</label><br>' +
-    '<input id="calcPromoLojas" class="inp" type="number" min="0" ' +
-    'value="' + (CALC_PROMO_LOJAS || 0) + '" style="width:150px">' +
-    '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">' +
-    'R$ ' + PROMOTORIA_POR_LOJA + ' por loja</div></div>';
+
+    '<div><label class="calc-lab">Promotoria</label><br>' +
+    '<select id="calcPromoModo" class="inp">' +
+    '<option value="calculo">Cálculo (lojas × visita × frequência)</option>' +
+    '<option value="manual">Valor total manual</option>' +
+    '</select></div>' +
+
+    '<div id="calcPromoCalcWrap" style="display:flex;gap:10px;align-items:end">' +
+      '<div><label class="calc-lab">Nº de lojas</label><br>' +
+      '<input id="calcPromoLojas" class="inp" type="number" min="0" ' +
+      'value="' + (CALC_PROMO_LOJAS || 0) + '" style="width:100px"></div>' +
+      '<div><label class="calc-lab">Custo da visita (R$)</label><br>' +
+      '<input id="calcPromoCusto" class="inp" type="number" min="0" step="0.01" ' +
+      'value="' + (CALC_PROMO_CUSTO || 0) + '" style="width:130px"></div>' +
+      '<div><label class="calc-lab">Frequência</label><br>' +
+      '<input id="calcPromoFreq" class="inp" type="number" min="0" ' +
+      'value="' + (CALC_PROMO_FREQ || 0) + '" style="width:100px"></div>' +
+      /* readonly e não disabled: campo desabilitado fica cinza e parece
+         quebrado; readonly mostra o número, deixa copiar e não deixa editar. */
+      '<div><label class="calc-lab">Promotoria (R$)</label><br>' +
+      '<input id="calcPromoTotal" class="inp" readonly tabindex="-1" ' +
+      'style="width:130px;background:#F1F3F6;font-weight:700" value=""></div>' +
+    '</div>' +
+
+    '<div id="calcPromoManualWrap" style="display:none">' +
+      '<label class="calc-lab">Promotoria — valor total (R$)</label><br>' +
+      '<input id="calcPromoManual" class="inp" type="number" min="0" step="0.01" ' +
+      'value="' + (CALC_PROMO_MANUAL || 0) + '" style="width:150px"></div>';
   linha.appendChild(bloco);
+
+  function pintarPromotoria(){
+    const calc = document.getElementById('calcPromoCalcWrap');
+    const man = document.getElementById('calcPromoManualWrap');
+    const ehManual = CALC_PROMO_MODO === 'manual';
+    if(calc) calc.style.display = ehManual ? 'none' : 'flex';
+    if(man) man.style.display = ehManual ? '' : 'none';
+    const tot = document.getElementById('calcPromoTotal');
+    if(tot) tot.value = brl(calcPromotoria().total);
+  }
 
   const liga = (id, setter) => {
     const e = document.getElementById(id);
     if(!e) return;
     const acao = () => {
-      setter(+e.value || 0);
+      setter(e.tagName === 'SELECT' ? e.value : (+e.value || 0));
+      pintarPromotoria();
       try{ renderCalcResumo(); }catch(err){ console.error(err); }
     };
     e.addEventListener('input', acao);
     e.addEventListener('change', acao);
   };
   liga('calcContrato', v => CALC_CONTRATO_PCT = v);
+  liga('calcPromoModo', v => CALC_PROMO_MODO = v);
   liga('calcPromoLojas', v => CALC_PROMO_LOJAS = v);
+  liga('calcPromoCusto', v => CALC_PROMO_CUSTO = v);
+  liga('calcPromoFreq', v => CALC_PROMO_FREQ = v);
+  liga('calcPromoManual', v => CALC_PROMO_MANUAL = v);
+  const sel = document.getElementById('calcPromoModo');
+  if(sel) sel.value = CALC_PROMO_MODO;
+  pintarPromotoria();
 }
 
 /* --- a conta ------------------------------------------------------------- */
@@ -5259,8 +5325,10 @@ if(typeof calcCompute === 'function'){
        vendedor veria a rentabilidade cair sem nada na tela explicando. */
     c.contratoPct = ve ? (CALC_CONTRATO_PCT || 0) / 100 : 0;
     c.contratoVal = c.liq * c.contratoPct;
-    c.promoLojas = ve ? (CALC_PROMO_LOJAS || 0) : 0;
-    c.promoVal = c.promoLojas * PROMOTORIA_POR_LOJA;
+    const p = calcPromotoria();
+    c.promo = ve ? p : {modo: p.modo, total: 0, lojas: 0, custo: 0, freq: 0};
+    c.promoVal = c.promo.total;
+    c.promoLojas = c.promo.lojas;          // mantido: o export já lia daqui
     c.extrasVal = c.contratoVal + c.promoVal;
     /* Depois da margem bruta: lucroBruto NÃO muda, lucro e rent mudam. */
     c.lucro = c.lucro - c.extrasVal;
@@ -5285,8 +5353,11 @@ function calcMostrarExtras(){
     '<b>Contrato + Promotoria:</b> ' + brl(c.extrasVal) +
     (c.contratoVal ? ' · contrato ' + brl(c.contratoVal) +
                      ' (' + pct(c.contratoPct) + ')' : '') +
-    (c.promoVal ? ' · promotoria ' + brl(c.promoVal) + ' (' + c.promoLojas +
-                  ' loja(s) × R$ ' + PROMOTORIA_POR_LOJA + ')' : '') +
+    (c.promoVal ? ' · promotoria ' + brl(c.promoVal) +
+                  (c.promo && c.promo.modo === 'calculo'
+                     ? ' (' + c.promo.lojas + ' loja(s) × ' + brl(c.promo.custo) +
+                       ' × ' + c.promo.freq + ')'
+                     : ' (valor manual)') : '') +
     ' — sai depois da margem bruta, então baixa a rentabilidade e não a margem.';
   resumo.appendChild(d);
 }
@@ -5331,7 +5402,16 @@ function calcExtrairPedido(){
   if(calcVeCustosExtra()){
     push('Contrato %', num((c.contratoPct * 100).toFixed(2)));
     push('Contrato (R$)', num(c.contratoVal.toFixed(2)));
-    push('Promotoria — lojas', c.promoLojas);
+    /* O arquivo registra COMO a promotoria foi calculada, não só o total: em
+       dezembro ninguém lembra se aquele R$ 480 era 4 lojas × 40 × 3 ou um valor
+       digitado à mão, e é justamente isso que alguém vai querer conferir. */
+    push('Promotoria — modo',
+         c.promo && c.promo.modo === 'manual' ? 'valor manual' : 'cálculo');
+    if(c.promo && c.promo.modo === 'calculo'){
+      push('Promotoria — nº de lojas', c.promo.lojas);
+      push('Promotoria — custo da visita', num(c.promo.custo.toFixed(2)));
+      push('Promotoria — frequência', c.promo.freq);
+    }
     push('Promotoria (R$)', num(c.promoVal.toFixed(2)));
   }
   push('');
