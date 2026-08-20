@@ -5059,6 +5059,396 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
     try{ buildNav(); }catch(e){}
   }
 }
+/* ==========================================================================
+   A DIGITAÇÃO QUE "SAÍA" DA CALCULADORA  (20/08/2026)
+   ==========================================================================
+   Sintoma relatado pelo Igor: digitar quantidade em pedido, bonificação ou
+   brinde e a digitação sair sozinha.
+
+   A causa está no próprio HTML gerado:
+
+       oninput="CALC_QTD['SKU']=+this.value||0;
+                renderCalcItens();      <- reconstrói a tabela INTEIRA
+                renderCalcResumo(); updateBadges()"
+
+   `renderCalcItens` troca o innerHTML do container. A cada tecla o <input> em
+   que a pessoa está digitando é DESTRUÍDO e um novo nasce no lugar: o foco vai
+   embora e a tecla seguinte cai fora do campo. Digitar "12" virava "1".
+
+   Por que a correção é este envelope, e não editar as três funções: elas são
+   três — uma no corpo do arquivo e duas reescritas mais acima neste mesmo bloco,
+   com a lógica de coluna por perfil. Reescrever de novo duplicaria essa lógica e
+   criaria uma quarta cópia para desencontrar. Aqui eu só INTERROMPO a
+   reconstrução enquanto existe foco dentro da tabela.
+
+   O que a reconstrução fazia por linha, e que eu refaço na mão: a classe
+   `filled`, o "Preço final" e o "Subtotal" (ou o "Custo total"). É isso. Nada
+   mais dependia dela.
+
+   Ao SAIR do campo a tabela é reconstruída de verdade, então qualquer coisa que
+   eu não tenha previsto se normaliza sozinha um blur depois.
+   ====================================================================== */
+const CALC_CONTAINER = {
+  renderCalcItens:   'calcItens',
+  renderCalcBoni:    'calcBoni',
+  renderCalcBrindes: 'calcBrindes'
+};
+
+/* O SKU sai do próprio atributo oninput, que é gerado por essas funções e traz
+   CALC_QTD['DBR-...']. Se um dia o formato mudar, o regex não casa, e aí eu
+   deixo a reconstrução acontecer - volta o comportamento antigo em vez de
+   quebrar calado. */
+function calcSkuDoCampo(inp){
+  const attr = (inp && inp.getAttribute && inp.getAttribute('oninput')) || '';
+  const m = attr.match(/CALC_(QTD|BONI|BRINDE|DESCL)\['([^']+)'\]/);
+  return m ? { mapa: m[1], sk: m[2] } : null;
+}
+
+function calcAtualizarLinha(inp){
+  const alvo = calcSkuDoCampo(inp);
+  const tr = inp.closest && inp.closest('tr');
+  if(!alvo || !tr) return false;
+  const sk = alvo.sk;
+  const tds = tr.querySelectorAll('td');
+  const mono = [...tds].filter(td => td.classList.contains('mono'));
+
+  if(alvo.mapa === 'QTD' || alvo.mapa === 'DESCL'){
+    const preco = (CALC.precos && CALC.precos[sk]) || 0;
+    const d = (typeof descLinha === 'function') ? descLinha(sk) : 0;
+    const pf = preco * (1 - d);
+    const q = CALC_QTD[sk] || 0;
+    // mono[0] = preço tabela | mono[1] = preço final | mono[2] = subtotal
+    if(mono[1]) mono[1].textContent = brl(pf);
+    if(mono[2]) mono[2].textContent = q > 0 ? brl(pf * q) : '—';
+    tr.classList.toggle('filled', q > 0);
+  } else {
+    const cmv = (CALC.cmv && CALC.cmv[sk]) || 0;
+    const q = (alvo.mapa === 'BONI' ? CALC_BONI[sk] : CALC_BRINDE[sk]) || 0;
+    // a coluna de custo só existe para quem vê CMV; se não existir, nada a fazer
+    const ultimo = mono[mono.length - 1];
+    if(ultimo && mono.length > 1){
+      ultimo.textContent = q > 0 ? brl(cmv * q) : '—';
+      ultimo.classList.toggle('neg', q > 0);
+    }
+    tr.classList.toggle('filled', q > 0);
+  }
+  return true;
+}
+
+Object.keys(CALC_CONTAINER).forEach(nome => {
+  if(typeof window[nome] !== 'function') return;
+  const original = window[nome];          // captura ANTES da troca, regra da casa
+  window[nome] = function(){
+    const cont = document.getElementById(CALC_CONTAINER[nome]);
+    const foco = document.activeElement;
+    if(cont && foco && foco.tagName === 'INPUT' && cont.contains(foco)){
+      if(calcAtualizarLinha(foco)) return;    // digitando: NÃO destruir
+    }
+    return original.apply(this, arguments);
+  };
+});
+
+/* Ao sair do campo, reconstrói de verdade. É o que garante que a tela volte a
+   ser exatamente o que as funções originais desenham - eu não quero que a
+   atualização manual acima se torne uma segunda verdade permanente. */
+document.addEventListener('change', e => {
+  const t = e.target;
+  if(!t || !t.classList || !t.classList.contains('calc-in')) return;
+  for(const nome in CALC_CONTAINER){
+    const cont = document.getElementById(CALC_CONTAINER[nome]);
+    if(cont && cont.contains(t) && typeof window[nome] === 'function'){
+      try{ window[nome](); }catch(err){ console.error(nome, err); }
+      break;
+    }
+  }
+}, true);
+
+/* ==========================================================================
+   CONTRATO E PROMOTORIA + EXTRAIR PEDIDO  (20/08/2026)
+   ==========================================================================
+   Pedido do Igor: no bloco 1, só para admin e para a Júlia Barros, dois custos
+   novos — "Contrato" (percentual) e "Promotoria" (nº de lojas × R$ 40). E, no
+   fim, um botão para extrair o pedido inteiro.
+
+   ONDE OS DOIS CUSTOS ENTRAM NA CONTA, e por quê
+   ----------------------------------------------
+   Depois da margem bruta, junto de bonificação, brindes, imposto, frete e
+   comissão. Ou seja: mexem na RENTABILIDADE e não na margem bruta. É a mesma
+   regra que o Igor fixou em 12/08 para bonificação e brindes ("o correto é o
+   pensamento do DRE"), e contrato e promotoria são da mesma natureza — despesa
+   comercial do pedido, não custo da mercadoria. Se a intenção for outra, o que
+   muda é uma linha aqui.
+
+   R$ 40 POR LOJA fica numa constante, não espalhado na conta: no dia em que
+   virar 45, é um número num lugar.
+   ====================================================================== */
+const PROMOTORIA_POR_LOJA = 40;
+let CALC_CONTRATO_PCT = 0;     // percentual sobre o líquido
+let CALC_PROMO_LOJAS = 0;      // nº de lojas
+
+/* Quem vê: admin ou a Júlia Barros. Comparo sem acento e sem caixa porque no
+   cadastro ela é 'Júlia Barros' e o Igor escreveu 'Julia Barros' - e existem
+   ainda 'Julia Urban' e 'Julia Gumes', então comparar só o primeiro nome
+   liberaria para quem não devia. */
+function calcSemAcento(s){
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+         .trim().toLowerCase();
+}
+const CALC_CUSTOS_EXTRA_LIBERADOS = ['julia barros'];
+
+/* veSensivel e NAO calcEhAdmin: o calcEhAdmin vive dentro da IIFE do bloco de
+   melhorias e não é visível daqui - este bloco roda no fim do script, fora
+   dela. Na primeira versão eu usei calcEhAdmin com um `typeof === 'function'`
+   na frente, e o resultado foi pior que um erro: a função caía calada no "não
+   é admin" e o Igor não via os campos. O veSensivel está no window (linha
+   ~3057), é o mesmo critério, e é o que a Calculadora inteira já usa. */
+function calcVeCusto(){
+  if(typeof window.veSensivel === 'function') return !!window.veSensivel();
+  return !!(SESSION && SESSION.isAdmin);
+}
+function calcVeCustosExtra(){
+  if(calcVeCusto()) return true;
+  return CALC_CUSTOS_EXTRA_LIBERADOS
+           .indexOf(calcSemAcento(SESSION && SESSION.user)) >= 0;
+}
+
+/* --- os dois campos no bloco 1 -------------------------------------------
+   Injetados depois do vCalc em vez de dentro dele: o bloco 1 é um template de
+   string no corpo do arquivo, e editá-lo lá me obrigaria a repetir a regra de
+   quem vê em dois lugares. */
+function calcInjetarCustosExtra(){
+  if(!calcVeCustosExtra()) return;
+  const uf = document.getElementById('calcUF');
+  if(!uf || document.getElementById('calcContrato')) return;
+  const linha = uf.parentElement && uf.parentElement.parentElement;
+  if(!linha) return;
+  const bloco = document.createElement('div');
+  bloco.style.display = 'contents';
+  bloco.innerHTML =
+    '<div><label class="calc-lab">Contrato %</label><br>' +
+    '<input id="calcContrato" class="inp" type="number" min="0" max="100" ' +
+    'step="0.1" value="' + (CALC_CONTRATO_PCT || 0) + '" style="width:120px"></div>' +
+    '<div><label class="calc-lab">Promotoria — nº de lojas</label><br>' +
+    '<input id="calcPromoLojas" class="inp" type="number" min="0" ' +
+    'value="' + (CALC_PROMO_LOJAS || 0) + '" style="width:150px">' +
+    '<div style="font-size:10.5px;color:var(--muted);margin-top:3px">' +
+    'R$ ' + PROMOTORIA_POR_LOJA + ' por loja</div></div>';
+  linha.appendChild(bloco);
+
+  const liga = (id, setter) => {
+    const e = document.getElementById(id);
+    if(!e) return;
+    const acao = () => {
+      setter(+e.value || 0);
+      try{ renderCalcResumo(); }catch(err){ console.error(err); }
+    };
+    e.addEventListener('input', acao);
+    e.addEventListener('change', acao);
+  };
+  liga('calcContrato', v => CALC_CONTRATO_PCT = v);
+  liga('calcPromoLojas', v => CALC_PROMO_LOJAS = v);
+}
+
+/* --- a conta ------------------------------------------------------------- */
+if(typeof calcCompute === 'function'){
+  const _computeAntes = calcCompute;     // captura ANTES da troca, regra da casa
+  window.calcCompute = function(){
+    const c = _computeAntes.apply(this, arguments);
+    const ve = calcVeCustosExtra();
+    /* Quem não vê os campos não pode ter a conta mexida por eles: senão o
+       vendedor veria a rentabilidade cair sem nada na tela explicando. */
+    c.contratoPct = ve ? (CALC_CONTRATO_PCT || 0) / 100 : 0;
+    c.contratoVal = c.liq * c.contratoPct;
+    c.promoLojas = ve ? (CALC_PROMO_LOJAS || 0) : 0;
+    c.promoVal = c.promoLojas * PROMOTORIA_POR_LOJA;
+    c.extrasVal = c.contratoVal + c.promoVal;
+    /* Depois da margem bruta: lucroBruto NÃO muda, lucro e rent mudam. */
+    c.lucro = c.lucro - c.extrasVal;
+    c.rent = c.liq ? c.lucro / c.liq : 0;
+    return c;
+  };
+}
+
+/* --- a linha na tela, para o número não mudar sem explicação -------------- */
+function calcMostrarExtras(){
+  const resumo = document.getElementById('calcResumo');
+  if(!resumo) return;
+  const antigo = document.getElementById('calcExtrasNota');
+  if(antigo) antigo.remove();
+  if(!calcVeCustosExtra()) return;
+  const c = calcCompute();
+  if(c.extrasVal <= 0) return;
+  const d = document.createElement('div');
+  d.id = 'calcExtrasNota';
+  d.style.cssText = 'padding:8px 14px;font-size:12px;color:var(--muted)';
+  d.innerHTML =
+    '<b>Contrato + Promotoria:</b> ' + brl(c.extrasVal) +
+    (c.contratoVal ? ' · contrato ' + brl(c.contratoVal) +
+                     ' (' + pct(c.contratoPct) + ')' : '') +
+    (c.promoVal ? ' · promotoria ' + brl(c.promoVal) + ' (' + c.promoLojas +
+                  ' loja(s) × R$ ' + PROMOTORIA_POR_LOJA + ')' : '') +
+    ' — sai depois da margem bruta, então baixa a rentabilidade e não a margem.';
+  resumo.appendChild(d);
+}
+
+/* ==========================================================================
+   EXTRAIR PEDIDO
+   ==========================================================================
+   CSV com BOM, ';' e CRLF - exatamente o que o 'Extrair carteira' já usa e que
+   faz o Excel em português abrir com colunas separadas e acento certo. Não é
+   .xlsx de verdade: gerar xlsx no navegador exigiria uma biblioteca externa, e o
+   Portal não carrega biblioteca de fora (a CSP derruba em silêncio). O arquivo
+   abre no Excel com dois cliques, que é o que o pedido precisa.
+
+   AS COLUNAS DE CUSTO SÓ SAEM PARA QUEM PODE VER CUSTO. O Portal esconde CMV do
+   vendedor na tela; um export que levasse o CMV embora tornaria a tela um
+   teatro.
+   ====================================================================== */
+function calcExtrairPedido(){
+  const c = calcCompute();
+  if(!c.itens.length && !c.boni.length && !c.brindes.length){
+    alert('Lance ao menos um item, bonificação ou brinde antes de extrair.');
+    return null;
+  }
+  const adm = calcVeCusto();      // mesmo critério da tela: nunca vaza CMV
+  const num = v => String(v == null ? '' : v).replace('.', ',');
+  const linhas = [];
+  const push = (...cols) => linhas.push(cols);
+
+  const fm = document.getElementById('calcFreteModo');
+  const modo = fm ? fm.value : 'auto';
+
+  push('CONDIÇÕES DO PEDIDO');
+  push('Extraído em', new Date().toLocaleString('pt-BR'));
+  push('Usuário', (SESSION && SESSION.user) || '');
+  push('Estado (UF)', c.uf);
+  const dg = document.getElementById('calcDescGeral');
+  push('Desconto geral %', num(dg ? dg.value : 0));
+  const cm = document.getElementById('calcComissao');
+  push('Comissão RCA %', num(cm ? cm.value : 0));
+  push('Frete', modo === 'manual' ? 'manual' : 'médio real do estado');
+  push('Frete (R$)', num(c.fr.toFixed(2)));
+  if(calcVeCustosExtra()){
+    push('Contrato %', num((c.contratoPct * 100).toFixed(2)));
+    push('Contrato (R$)', num(c.contratoVal.toFixed(2)));
+    push('Promotoria — lojas', c.promoLojas);
+    push('Promotoria (R$)', num(c.promoVal.toFixed(2)));
+  }
+  push('');
+
+  push('PEDIDO');
+  push(...['Produto', 'Preço tabela', 'Desc. linha %', 'Preço final', 'Qtd',
+           'Subtotal'].concat(adm ? ['CMV unit.', 'CMV total'] : []));
+  c.itens.forEach(i => {
+    const cmvU = (CALC.cmv[i.sk] || 0);
+    push(...[prodName(i.sk), num(i.preco.toFixed(2)),
+             num((i.d * 100).toFixed(2)), num(i.pf.toFixed(2)), i.q,
+             num(i.liq.toFixed(2))]
+            .concat(adm ? [num(cmvU.toFixed(2)), num(i.cmv.toFixed(2))] : []));
+  });
+  push('');
+
+  push('BONIFICAÇÃO');
+  push(...['Produto', 'Qtd'].concat(adm ? ['CMV unit.', 'Custo total'] : []));
+  c.boni.forEach(b => {
+    const cmvU = (CALC.cmv[b.sk] || 0);
+    push(...[prodName(b.sk), b.q]
+            .concat(adm ? [num(cmvU.toFixed(2)), num(b.cmv.toFixed(2))] : []));
+  });
+  if(!c.boni.length) push('(nenhuma)');
+  push('');
+
+  push('BRINDES E MATERIAIS');
+  push(...['Item', 'Qtd'].concat(adm ? ['Custo unit.', 'Custo total'] : []));
+  c.brindes.forEach(b => {
+    const cmvU = (CALC.cmv[b.sk] || 0);
+    push(...[prodName(b.sk), b.q]
+            .concat(adm ? [num(cmvU.toFixed(2)), num(b.cmv.toFixed(2))] : []));
+  });
+  if(!c.brindes.length) push('(nenhum)');
+  push('');
+
+  push('TOTAIS');
+  push('Valor bruto', num(c.bruto.toFixed(2)));
+  push('Valor líquido', num(c.liq.toFixed(2)));
+  if(adm){
+    push('CMV dos itens', num(c.cmvItens.toFixed(2)));
+    push('Margem bruta (R$)', num(c.lucroBruto.toFixed(2)));
+    push('Margem bruta %', num((c.liq ? c.lucroBruto / c.liq * 100 : 0).toFixed(2)));
+    push('Bonificação + brindes', num((c.cmvBoni + c.cmvBrinde).toFixed(2)));
+    push('Imposto', num(c.imp.toFixed(2)));
+    push('Frete', num(c.fr.toFixed(2)));
+    push('Comissão', num(c.comissaoVal.toFixed(2)));
+    if(c.extrasVal > 0) push('Contrato + Promotoria', num(c.extrasVal.toFixed(2)));
+    push('Lucro final', num(c.lucro.toFixed(2)));
+  }
+  push('Rentabilidade %', num((c.rent * 100).toFixed(2)));
+
+  const esc = v => {
+    const s = String(v == null ? '' : v);
+    return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const csv = '﻿' + linhas.map(l => l.map(esc).join(';')).join('\r\n');
+  const quem = String((SESSION && SESSION.user) || 'dobro')
+                 .replace(/[^A-Za-z0-9]+/g, '_');
+  const d = new Date();
+  const stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') +
+                String(d.getDate()).padStart(2, '0') + '_' +
+                String(d.getHours()).padStart(2, '0') +
+                String(d.getMinutes()).padStart(2, '0');
+  const nome = 'pedido_' + quem + '_' + stamp + '.csv';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
+  a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return {nome: nome, linhas: linhas.length, itens: c.itens.length,
+          boni: c.boni.length, brindes: c.brindes.length, comCusto: adm};
+}
+window.calcExtrairPedido = calcExtrairPedido;
+
+function calcBotaoExtrair(){
+  const resumo = document.getElementById('calcResumo');
+  if(!resumo || document.getElementById('btnExtrairPedido')) return;
+  const card = resumo.closest('.card') || resumo.parentElement;
+  const h = card && card.querySelector('.card-h');
+  if(!h) return;
+  h.insertAdjacentHTML('beforeend',
+    '<button id="btnExtrairPedido" class="btn-y" style="margin-left:auto;' +
+    'font-size:12px;padding:6px 12px">Extrair pedido em Excel</button>');
+  const b = document.getElementById('btnExtrairPedido');
+  if(b) b.addEventListener('click', () => {
+    try{ calcExtrairPedido(); }catch(e){
+      console.error('extrair pedido:', e);
+      alert('Não consegui extrair: ' + e.message);
+    }
+  });
+}
+
+/* Pendurar nos dois momentos: o vCalc redesenha o bloco 1 (onde entram os
+   campos) e o renderCalcResumo redesenha o resumo (onde ficam o botão e a nota
+   dos custos). Um só não bastaria. */
+if(typeof vCalc === 'function'){
+  const _vCalcAntes = vCalc;
+  window.vCalc = function(){
+    const r = _vCalcAntes.apply(this, arguments);
+    try{ calcInjetarCustosExtra(); }catch(e){ console.error('custos extra:', e); }
+    return r;
+  };
+  const v = (typeof VIEWS !== 'undefined' && Array.isArray(VIEWS))
+              ? VIEWS.find(x => x.id === 'calc') : null;
+  if(v) v.fn = window.vCalc;      // a VIEWS guardou a referência antiga
+}
+if(typeof renderCalcResumo === 'function'){
+  const _resumoAntes = renderCalcResumo;
+  window.renderCalcResumo = function(){
+    const r = _resumoAntes.apply(this, arguments);
+    try{ calcMostrarExtras(); }catch(e){ console.error('nota de extras:', e); }
+    try{ calcBotaoExtrair(); }catch(e){ console.error('botao extrair:', e); }
+    return r;
+  };
+}
+
 window.orcRecarregar = orcRecarregar;
 
 /* ---------------- A aba fica EM TESTES, só o Igor entra (14/08/2026) -------
