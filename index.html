@@ -1236,13 +1236,20 @@ function vCarteira(){
       // oportunidade = atraso vs. recorrência habitual, MAS nunca se já faturou no mês filtrado
       if(rec!==null && diasUlt!==null && diasUlt>rec && !faturouNoFiltro) oport=true;
     }
-    return {cn:c.cn, rz:c.rz, v:c.v, ytd:vendaYTD[c.cn]||0, meses:porMes,
+    return {cn:c.cn, rz:c.rz, v:c.v, ci:c.ci||'', uf:c.uf||'',
+            ytd:vendaYTD[c.cn]||0, meses:porMes,
             rent, ticket, rec, diasUlt, oport, status};
   });
   // busca por CNPJ ou razão social
   if(CART_BUSCA){
     const q=CART_BUSCA.toLowerCase(); const qd=CART_BUSCA.replace(/\D/g,'');
-    rows=rows.filter(r=> (qd && r.cn.includes(qd)) || r.rz.toLowerCase().includes(q));
+    /* A busca passou a alcançar CIDADE e UF junto com as colunas novas
+       (20/08/2026): com uma coluna Cidade na tela, digitar "Campinas" e não
+       achar nada seria o comportamento surpreendente. */
+    rows=rows.filter(r=> (qd && r.cn.includes(qd))
+                      || r.rz.toLowerCase().includes(q)
+                      || (r.ci && r.ci.toLowerCase().includes(q))
+                      || (r.uf && r.uf.toLowerCase() === q));
   }
   // sort
   const {key,dir}=CART_SORT;
@@ -1280,6 +1287,8 @@ function vCarteira(){
   const head=`<thead><tr>
     <th style="text-align:left">CNPJ</th>
     <th style="text-align:left">Razão Social</th>
+    <th style="text-align:left">Cidade</th>
+    <th style="text-align:left">UF</th>
     <th style="text-align:left">Vendedor</th>
     ${thS('ytd','Vendas líq. YTD')}
     ${thS('rent','Rentab.')}
@@ -1295,6 +1304,8 @@ function vCarteira(){
   const body=pageRows.map(r=>`<tr>
     <td class="mono" style="white-space:nowrap">${r.cn}</td>
     <td class="rowlab" title="${r.rz}">${r.rz.substring(0,36)}</td>
+    <td class="rowlab" title="${r.ci}">${r.ci?r.ci.substring(0,22):'<span style="color:var(--line)">—</span>'}</td>
+    <td class="mono" style="text-align:center">${r.uf||'<span style="color:var(--line)">—</span>'}</td>
     <td class="rowlab">${r.v}</td>
     <td class="mono" style="text-align:right;font-weight:700">${r.ytd?brl(r.ytd):'—'}</td>
     <td style="text-align:right">${cellRent(r)}</td>
@@ -1329,6 +1340,8 @@ function vCarteira(){
   const totalRow=`<tr style="background:var(--navy);color:#fff;font-weight:700;position:sticky;top:0;z-index:2">
     <td>Todos</td>
     <td>${totalRows} ${totalRows===1?'razão social':'razões sociais'}</td>
+    <td>${new Set(rows.map(r=>r.ci).filter(Boolean)).size} cidade(s)</td>
+    <td style="text-align:center">${new Set(rows.map(r=>r.uf).filter(Boolean)).size} UF</td>
     <td>—</td>
     <td class="mono" style="text-align:right">${brl(ytdTot)}</td>
     <td style="text-align:right">${rentTotCell}</td>
@@ -1343,7 +1356,7 @@ function vCarteira(){
    <div class="card"><div class="card-h"><h3>Clientes da carteira</h3><span class="hint">${rows.length} CNPJs · ${semVenda} sem venda no período</span></div>
      <div style="padding:0 20px 12px;display:flex;align-items:center;flex-wrap:wrap;gap:8px">
        ${vendSel}
-       <input id="cartBusca" class="inp" placeholder="Buscar por CNPJ ou razão social" style="min-width:280px;padding:6px 10px" value="${CART_BUSCA}">
+       <input id="cartBusca" class="inp" placeholder="Buscar por CNPJ, razão social, cidade ou UF" style="min-width:280px;padding:6px 10px" value="${CART_BUSCA}">
      </div>
      ${pag}
      <div class="scroll"><table class="cart-tbl">${head}<tbody>${totalRow}${body}</tbody></table></div>
