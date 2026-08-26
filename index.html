@@ -2720,8 +2720,14 @@ function vCanaisNovo(){
     '<div class="scroll"><table><thead><tr><th>Canal</th><th>Faturamento</th>' +
     '<th>% total</th><th>Clientes</th><th>Notas</th><th>Ticket médio</th>' +
     thExtra + '</tr></thead><tbody>' +
+    /* data-canal + cursor: o clique abre a lista de clientes daquele canal
+       (pedido do Igor, 26/08/2026). O atributo carrega o nome do canal em vez de
+       eu ler o texto da célula na hora do clique - a célula pode ganhar pill,
+       ícone ou espaço e o texto deixaria de casar com a chave do dado. */
     arr.map(r =>
-      '<tr><td class="rowlab">' + r.k + '</td>' +
+      '<tr class="canal-row" data-canal="' + String(r.k).replace(/"/g, '&quot;') +
+        '" style="cursor:pointer" title="Clique para ver os clientes deste canal">' +
+      '<td class="rowlab">' + r.k + '</td>' +
       '<td class="mono">' + brl(r.fat) + '</td>' +
       '<td class="mono" style="color:var(--muted)">' + (tf ? pct(r.fat / tf) : '') + '</td>' +
       '<td class="mono">' + r.clientes + '</td>' +
@@ -4080,6 +4086,67 @@ function _tabela(cols, dados, resumo){
    'Clientes ativos' (1o cartao) e 'Compraram no período' (2o cartao). O numero e
    identicamente `compraram.size` nos dois, entao apontar para uma lista so e o
    certo; o que nao pode e o cabecalho do modal contradizer o botao que o abriu. */
+/* ---- clientes por trás de um número (26/08/2026) -------------------------
+   Pedido do Igor: clicar no Faturamento bruto do Resumo e no canal da aba
+   Canais & Ticket para ver quem são os clientes.
+
+   As duas listas saem do MESMO recorte que o número clicado (linhas() já vem
+   filtrada e já respeita a permissão), e mostram bruto, devolução e líquido
+   juntos. Mostrar só o bruto repetiria o cartão; é a devolução ao lado que
+   explica por que o líquido é menor - e foi exatamente essa confusão que já
+   custou caro aqui quando 'Situação' foi lida como 'nota inválida'. */
+function _clientesDe(L, rotulo, extra){
+  const info = {};
+  L.forEach(r => {
+    if(!r.cn) return;
+    const o = info[r.cn] = info[r.cn] ||
+      {bruto:0, dev:0, vend:{}, uf:r.uf, ca:r.ca, mo:r.mo, nfs:new Set()};
+    /* r.tipo === 0 é devolução, o MESMO teste que o dre() usa. Eu havia escrito
+       'r.dev || r.fat < 0': 'dev' não existe na linha, e cair no sinal do valor
+       classificaria como devolução qualquer venda negativa. Somar diferente do
+       dre() faria esta lista discordar do cartão que a abriu. */
+    if(r.venda){ o.bruto += r.fat; o.vend[r.v] = (o.vend[r.v] || 0) + r.fat;
+                 if(r.nfs) o.nfs.add(r.nfs); }
+    else if(r.tipo === 0){ o.dev += r.fat; }
+  });
+  const arr = Object.keys(info).map(cn => {
+    const o = info[cn];
+    const v = Object.entries(o.vend).sort((a,b) => b[1]-a[1])[0];
+    return {cn: cn,
+            nome: (typeof cliName === 'function' ? cliName(cn) : '') || cn,
+            vend: v ? v[0] : '—', mo: o.mo || '—', uf: o.uf || '—',
+            ca: o.ca || '—',
+            brutoN: o.bruto, bruto: brl(o.bruto),
+            devN: o.dev, dev: o.dev ? brl(o.dev) : '—',
+            liqN: o.bruto + o.dev, liq: brl(o.bruto + o.dev)};
+  }).filter(r => r.brutoN || r.devN)
+    .sort((a,b) => b.brutoN - a.brutoN);
+  const tb = arr.reduce((a,r) => a + r.brutoN, 0);
+  const td = arr.reduce((a,r) => a + r.devN, 0);
+  _modal(rotulo,
+    _tabela([{k:'nome',lab:'Cliente'},{k:'cn',lab:'CNPJ',mono:1},
+             {k:'vend',lab:'Vendedor'},{k:'mo',lab:'Modelo'},
+             {k:'uf',lab:'UF'},{k:'ca',lab:'Canal'},
+             {k:'bruto',lab:'Bruto',dir:'r',mono:1},
+             {k:'dev',lab:'Devolução',dir:'r',mono:1},
+             {k:'liq',lab:'Líquido',dir:'r',mono:1}], arr,
+      arr.length + ' cliente(s) · bruto ' + brl(tb) +
+      (td ? ' · devolução ' + brl(td) : '') +
+      ' · líquido ' + brl(tb + td) +
+      ' · mesmo recorte dos filtros da tela' + (extra ? ' · ' + extra : '')));
+}
+
+window.verFaturamentoBruto = function(){
+  _clientesDe(linhas(), 'Faturamento bruto · clientes do recorte',
+              'o cartão mostra o bruto, antes das devoluções');
+};
+
+window.verClientesDoCanal = function(canal){
+  const L = linhas().filter(r => (r.ca || '(vazio)') === canal);
+  _clientesDe(L, 'Canal ' + canal + ' · clientes',
+              'ticket e margens do canal na tabela atrás');
+};
+
 window.verClientesAtivos = function(titulo){
   const L = linhas();
   const info = {};
@@ -4434,7 +4501,12 @@ function ligarCliquesExtras(){
     });
   };
 
-  ligar(row, [[/clientes ativos/i, verClientesAtivos],
+  /* 'faturamento bruto' ANTES de 'clientes ativos' não importa aqui (rótulos
+     distintos), mas o padrão vale: o find para no primeiro que casar, então
+     rótulo mais específico primeiro. /bruto/ não casa com 'Faturamento líquido'
+     nem com 'Margem bruta' porque o teste é sobre o rótulo inteiro do cartão. */
+  ligar(row, [[/faturamento bruto/i, () => verFaturamentoBruto()],
+              [/clientes ativos/i, verClientesAtivos],
               [/devolu/i,          verDevolucoes],
               [/bonif/i,           verBonificacao]]);
 
@@ -4446,6 +4518,21 @@ function ligarCliquesExtras(){
   ligar(document.getElementById('kpiClientes'),
         [[/não compraram|nao compraram/i, () => verNaoCompraram()],
          [/compraram/i, () => verClientesAtivos('Compraram no período')]]);
+  /* Canais & Ticket: uma linha, um canal, um clique. Delegação numa <tbody> em
+     vez de listener por linha - a tabela é reconstruída a cada troca de filtro e
+     ligar linha por linha acumularia listeners na mesma <tr> a cada render. */
+  const canais = document.getElementById('v-canais');
+  const corpo = canais && canais.querySelector('tbody');
+  if(corpo && !corpo.dataset.cliqueCanal){
+    corpo.dataset.cliqueCanal = '1';
+    corpo.addEventListener('click', e => {
+      const tr = e.target && e.target.closest && e.target.closest('tr.canal-row');
+      if(!tr) return;                       // a linha de Total não abre nada
+      const c = tr.getAttribute('data-canal');
+      if(c) verClientesDoCanal(c);
+    });
+  }
+
   const cart = document.getElementById('v-carteira');
   if(cart && !document.getElementById('btnExtrairCarteira')){
     const h = cart.querySelector('.card-h');
