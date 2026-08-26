@@ -643,12 +643,12 @@ function linhas(){
 /* ---------- cálculo de DRE ---------- */
 // bonificação = linha de venda com faturamento zero e CMV positivo (produto dado, receita zero, custa o CMV)
 function dre(rows){
-  let fat=0,dev=0,cmv=0,imp=0,fr=0,com=0,q=0,boni=0; const ped=new Set();
+  let fat=0,dev=0,cmv=0,cmvBruto=0,cmvDev=0,imp=0,fr=0,com=0,q=0,boni=0; const ped=new Set();
   rows.forEach(r=>{
     if(r.venda){
-      fat+=r.fat;cmv+=r.cmv;imp+=r.imp;fr+=r.fr;com+=r.com;q+=r.q;
+      fat+=r.fat;cmv+=r.cmv;cmvBruto+=r.cmv;imp+=r.imp;fr+=r.fr;com+=r.com;q+=r.q;
       if(r.cn)ped.add(r.cn+'|'+r.m);                 // pedido = CNPJ+mês distinto (só venda)
-    } else if(r.tipo===0){ dev+=r.fat;cmv+=r.cmv;imp+=r.imp;fr+=r.fr;com+=r.com; }   // devolução (V8: liquida CMV/imposto/frete)
+    } else if(r.tipo===0){ dev+=r.fat;cmv+=r.cmv;cmvDev+=r.cmv;imp+=r.imp;fr+=r.fr;com+=r.com; }   // devolução (V8: liquida CMV/imposto/frete)
     else if(r.bonif){ boni+=r.cmv+r.imp; }            // bonificação: mercadoria líq + imposto
     else if(r.amostra){ boni+=r.cmv; }                // amostra: só mercadoria líq (isenta de imposto)
   });
@@ -656,7 +656,11 @@ function dre(rows){
   const lucroBruto=fatLiq-cmv;
   const lucro=lucroBruto-imp-fr-com-boni;            // bonificação entra como impacto negativo antes do lucro final
   const nfs=ped.size;
-  return {fat,dev,fatLiq,cmv,lucroBruto,margem:fatLiq?lucroBruto/fatLiq:0,
+  // cmvBruto = CMV das vendas; cmvDev = o CMV que a devolução DEVOLVE (negativo,
+  // porque a mercadoria volta ao estoque e o custo é revertido). cmvBruto+cmvDev
+  // = cmv, que é o que a linha única mostrava antes - nenhum número mudou, só
+  // ficou visível de onde vem. Medido no ano: 8.182.718 − 259.359 = 7.923.359.
+  return {fat,dev,fatLiq,cmv,cmvBruto,cmvDev,lucroBruto,margem:fatLiq?lucroBruto/fatLiq:0,
     imp,fr,com,boni,lucro,rent:fatLiq?lucro/fatLiq:0,q,nfs,ticket:nfs?fatLiq/nfs:0};
 }
 
@@ -848,7 +852,8 @@ function barTable(items,total){
 const DRE_ROWS_PUB=[['Faturamento','fat','brl'],['Devoluções','dev','brl'],['Faturamento líquido','fatLiq','brl','b'],
   ['Ticket médio','ticket','brl'],['Nº de notas','nfs','n']];
 const DRE_ROWS_FULL=[['Faturamento','fat','brl'],['Devoluções','dev','brl'],['Faturamento líquido','fatLiq','brl','b'],
-  ['CMV','cmv','brl','s'],['Lucro bruto','lucroBruto','brl','b'],['Margem bruta','margem','pct','s'],
+  ['CMV bruto','cmvBruto','brl','s'],['CMV devolvido','cmvDev','brl','s'],
+  ['CMV líquido','cmv','brl','s'],['Lucro bruto','lucroBruto','brl','b'],['Margem bruta','margem','pct','s'],
   ['Impostos','imp','brl','s'],['Frete','fr','brl'],['Comissão','com','brl'],
   ['Bonificação + Amostra','boni','brl'],
   ['Lucro final','lucro','brl','b'],['Rentabilidade','rent','pct','b'],
@@ -878,7 +883,7 @@ function vDRE(){
     let body=dreRowsFor().map(([lab,key,f,flag])=>{
       const sens=flag==='s',bold=flag==='b';
       let cls=(key==='rent'||key==='margem')?(d[key]>=0?'pos':'neg'):'';
-      return `<tr class="${bold?'tot':''}"><td class="rowlab ${bold?'tot':''}">${lab}${sens?SENS:''}</td>
+      return `<tr class="${bold?'tot':''}" data-dre="${key}"><td class="rowlab ${bold?'tot':''}">${lab}${sens?SENS:''}</td>
         <td class="mono ${cls} ${bold?'tot':''}">${fmtCell(d[key],f,key)}</td></tr>`;
     }).join('');
     el('v-dre').innerHTML=`<div class="card"><div class="card-h"><h3>${titulo}</h3><span class="hint">${meses.length} mês(es)</span></div>
@@ -892,7 +897,7 @@ function vDRE(){
   const body=dreRowsFor().map(([lab,key,f,flag])=>{
     const sens=flag==='s',bold=flag==='b';
     const cell=(dd)=>{ let cls=(key==='rent'||key==='margem')?(dd[key]>=0?'pos':'neg'):(key==='dev'&&dd[key]<0?'neg':''); return `<td class="mono ${cls} ${bold?'tot':''}">${fmtCell(dd[key],f,key)}</td>`; };
-    return `<tr class="${bold?'tot':''}"><td class="rowlab ${bold?'tot':''}">${lab}${sens?SENS:''}</td>
+    return `<tr class="${bold?'tot':''}" data-dre="${key}"><td class="rowlab ${bold?'tot':''}">${lab}${sens?SENS:''}</td>
       ${dMes.map(cell).join('')}
       <td class="mono ${bold?'tot':''}" style="border-left:2px solid var(--line);font-weight:700">${fmtCell(dYTD[key],f,key)}</td></tr>`;
   }).join('');
@@ -5776,6 +5781,183 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
   if(v) v.fn = vOrcamento;             // a VIEWS guardou a referencia antiga
 }
 
+</script>
+<style>
+/* Linhas do DRE que abrem detalhe por NF: só as que têm popup ganham a dica
+   visual. Sem isso ninguém descobre que dá para clicar. */
+#v-dre tr[data-dre="imp"] .rowlab,
+#v-dre tr[data-dre="fr"] .rowlab,
+#v-dre tr[data-dre="boni"] .rowlab{
+  cursor:pointer; text-decoration:underline; text-decoration-style:dotted;
+  text-underline-offset:3px;
+}
+#v-dre tr[data-dre="imp"]:hover,
+#v-dre tr[data-dre="fr"]:hover,
+#v-dre tr[data-dre="boni"]:hover{ background:#f2f6fc; }
+</style>
+<script>
+/* ============ DETALHE POR NF NO DRE (26/08/2026) ==========================
+   Pedido do Igor: clicar em Impostos, Frete e Bonificação e ver quanto foi de
+   cada NF e qual o cliente.
+
+   POR QUE UM BLOCO NOVO NO JSON, E NÃO O FATO
+   -------------------------------------------
+   O FATO é agregado por (vendedor, modelo, mês, tipo, canal, categoria, região,
+   UF, CNPJ, SKU, dia) e a coluna `nfs` guarda QUANTAS NFs caíram no grupo. Pôr a
+   NF na chave zeraria essa contagem em toda linha - e ela é lida aqui mesmo, no
+   _clientesDe(). O gerador passou a mandar um bloco NOTAS separado: uma linha
+   por NF, indexando as MESMAS dimensões do FATO.
+
+   TOLERANTE A JSON VELHO: se o arquivo não tiver NOTAS (HTML novo publicado
+   antes do JSON), o popup diz isso em português em vez de quebrar a tela.
+
+   O RECORTE É O MESMO DA TELA: repito a lógica do window.linhas() - mesmos
+   multiOK, mesmos meses, e o corte por VEND_VIS para quem não é admin. Se eu
+   filtrasse diferente, o total do popup discordaria da linha que o abriu, e aí
+   o número da tela viraria suspeito sem motivo. O rodapé do popup CONFERE os
+   dois e avisa quando sobra diferença (linha sem NF não entra). */
+let NOTAS = null, _notasErro = null;
+
+async function _carregarNotas(){
+  if(NOTAS || _notasErro) return;
+  try{
+    // mesmo teste que o resto do arquivo usa para o _Z (linhas 2150, 3668, 3787)
+    if(!(typeof _Z === 'object' && _Z && _Z.NOTAS)){
+      _notasErro = 'semBloco'; return;
+    }
+    NOTAS = await _unz(_Z.NOTAS);
+    NOTAS._CI = {};
+    NOTAS.cols.forEach((c,i)=>{ NOTAS._CI[c]=i; });
+  }catch(e){
+    console.error('NOTAS:', e);
+    _notasErro = 'falhou';
+  }
+}
+
+/* Mesmo recorte do window.linhas(), aplicado às linhas de NOTAS. */
+function notasFiltradas(){
+  if(!NOTAS) return [];
+  const CIN = NOTAS._CI, Dd = D;
+  const ms = new Set(mesesAtivos());
+  const filtra = (typeof podeFiltrar === 'function') ? podeFiltrar() : true;
+  const out = [];
+  NOTAS.rows.forEach(r => {
+    const m = Dd.Mes[r[CIN.m]];
+    if(!ms.has(m)) return;
+    const v = Dd.Vendedor[r[CIN.v]];
+    if(!SESSION.isAdmin && !VEND_VIS.has(v)) return;
+    const mo = Dd.Modelo[r[CIN.mo]], ca = Dd.CanalSeg[r[CIN.ca]];
+    const reg = Dd.Regiao[r[CIN.r]], uf = Dd.Estado[r[CIN.uf]];
+    if(filtra){
+      if(!multiOK(FILTER.vend, v))   return;
+      if(!multiOK(FILTER.mod,  mo))  return;
+      if(!multiOK(FILTER.reg,  reg)) return;
+      if(!multiOK(FILTER.uf,   uf))  return;
+      if(!multiOK(FILTER.canal,ca))  return;
+    }
+    out.push({nf: NOTAS.dims.NF[r[CIN.nf]], tipo: r[CIN.t], m: m, v: v,
+              cn: Dd.CNPJ[r[CIN.cn]], uf: uf, ca: ca,
+              merc: r[CIN.merc], cmv: r[CIN.cmv],
+              imp: r[CIN.imp], fr: r[CIN.fr]});
+  });
+  return out;
+}
+
+/* campo: 'imp' | 'fr' | 'boni' */
+/* `pct` só no frete: imposto é ~20% em toda linha e a coluna não diz nada, mas
+   ocupa largura - e com 10 colunas a tabela rola na horizontal e esconde
+   justamente a NF e o Cliente, que são o que o Igor pediu. No frete o
+   percentual sobre a mercadoria é a informação (a nota da WMB dá 35%). */
+const _DRE_NF = {
+  imp:  {tit: 'Impostos por NF',            campo: 'imp', pct: false,
+         tipos: [0,1], nota: 'venda e devolução; a devolução entra negativa'},
+  fr:   {tit: 'Frete por NF',               campo: 'fr',  pct: true,
+         tipos: [0,1], nota: 'venda e devolução; a devolução entra negativa'},
+  boni: {tit: 'Bonificação + Amostra por NF', campo: 'cmv', pct: false,
+         tipos: [2,3], nota: 'valor de tabela da mercadoria dada'}
+};
+
+window.verNotasDoDRE = async function(chave){
+  const cfg = _DRE_NF[chave];
+  if(!cfg) return;
+  await _carregarNotas();
+  if(!NOTAS){
+    _modal(cfg.tit,
+      '<div style="padding:22px;font-size:13px;color:#555;line-height:1.6">' +
+      (_notasErro === 'semBloco'
+        ? 'O detalhe por NF ainda não está no arquivo de dados. Ele passa a ' +
+          'existir na próxima geração do JSON — a automação diária resolve isso ' +
+          'sozinha. O número da linha do DRE está correto; só o detalhe é que ' +
+          'ainda não veio.'
+        : 'Não consegui abrir o detalhe por NF. O número da linha do DRE ' +
+          'continua correto.') + '</div>');
+    return;
+  }
+  const tipos = new Set(cfg.tipos);
+  const L = notasFiltradas().filter(r => tipos.has(r.tipo));
+  const porNF = {};
+  L.forEach(r => {
+    const k = r.nf + '|' + r.cn;
+    const o = porNF[k] = porNF[k] ||
+      {nf: r.nf, cn: r.cn, m: r.m, v: r.v, uf: r.uf, ca: r.ca,
+       val: 0, merc: 0, dev: false};
+    o.val += r[cfg.campo];
+    o.merc += r.merc;
+    if(r.tipo === 0) o.dev = true;
+  });
+  const arr = Object.values(porNF)
+    .filter(o => Math.abs(o.val) > 0.005)
+    .map(o => ({
+      nf: o.nf + (o.dev ? ' <span style="color:#b23">(devolução)</span>' : ''),
+      nome: (typeof cliName === 'function' ? cliName(o.cn) : '') || o.cn,
+      cn: o.cn, m: o.m, v: o.v, uf: o.uf || '—', ca: o.ca || '—',
+      valN: o.val, val: brl(o.val),
+      merc: o.merc ? brl(o.merc) : '—',
+      sobre: o.merc ? pct(o.val / o.merc) : '—'
+    }))
+    .sort((a,b) => Math.abs(b.valN) - Math.abs(a.valN));
+  const soma = arr.reduce((a,r) => a + r.valN, 0);
+
+  // CONFERÊNCIA com a linha que abriu o popup. Linha sem NF não entra no bloco
+  // NOTAS, então uma diferença é possível - e tem de aparecer, não ser escondida.
+  const dTela = dre(linhas());
+  const alvo = (chave === 'boni') ? dTela.boni : dTela[chave];
+  const dif = soma - alvo;
+  const conf = Math.abs(dif) < 0.01
+    ? 'fecha com a linha do DRE'
+    : '<b style="color:#b23">difere R$ ' + brl(dif).replace('R$ ','') +
+      ' da linha do DRE (' + brl(alvo) + ') — linhas sem NF não entram aqui</b>';
+
+  const colunas = [{k:'nf',lab:'NF',mono:1},{k:'nome',lab:'Cliente'},
+             {k:'cn',lab:'CNPJ',mono:1},{k:'m',lab:'Mês'},
+             {k:'v',lab:'Vendedor'},{k:'uf',lab:'UF'},{k:'ca',lab:'Canal'},
+             {k:'merc',lab:'Mercadoria',dir:'r',mono:1},
+             {k:'val',lab:'Valor',dir:'r',mono:1}];
+  if(cfg.pct) colunas.push({k:'sobre',lab:'% da merc.',dir:'r',mono:1});
+  _modal(cfg.tit,
+    _tabela(colunas, arr,
+      arr.length + ' NF(s) · total ' + brl(soma) + ' · ' + conf +
+      ' · ' + cfg.nota + ' · mesmo recorte dos filtros da tela'));
+};
+
+/* Clique delegado: a tabela do DRE é redesenhada a cada refresh, então o
+   listener mora no container, que não muda. */
+(function ligarCliquesDRE(){
+  const alvo = document.getElementById('v-dre');
+  if(!alvo){
+    // a view pode não existir ainda no primeiro parse; tenta de novo no load
+    window.addEventListener('load', ligarCliquesDRE, {once:true});
+    return;
+  }
+  if(alvo.dataset.nfLigado) return;
+  alvo.dataset.nfLigado = '1';
+  alvo.addEventListener('click', ev => {
+    const tr = ev.target.closest('tr[data-dre]');
+    if(!tr) return;
+    const k = tr.getAttribute('data-dre');
+    if(_DRE_NF[k]) verNotasDoDRE(k);
+  });
+})();
 </script>
 </body>
 </html>
