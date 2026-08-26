@@ -5160,6 +5160,92 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
   }
 }
 /* ==========================================================================
+   QUEM VÊ CADA SKU NA CALCULADORA  (26/08/2026)
+   ==========================================================================
+   O bloco 'SKUs Calculadora' do Parametros (AQ:AU) passou a mandar em quatro
+   coisas: descrição, produto ou brinde, ativo ou inativo, e PARA QUEM aparece.
+   Cada SKU chega aqui com um campo `ver`:
+
+       TODOS          qualquer usuário
+       APENAS ADMIN   só admin
+       <Modelo>       um ou mais Modelos, separados por vírgula
+
+   Por que o Modelo e não o vendedor: o pedido nasceu de packs feitos para um
+   canal (há um SKU NIKE e packs de Key Account). Amarrar a pessoa exigiria
+   editar a planilha a cada mudança de equipe; amarrar o Modelo acompanha.
+
+   Célula vazia conta como TODOS, de propósito: um branco não pode esconder SKU
+   — quem quiser esconder escreve APENAS ADMIN.
+   ====================================================================== */
+let _MODELO_USUARIO = null;
+
+function modeloDoUsuario(){
+  if(_MODELO_USUARIO !== null) return _MODELO_USUARIO;
+  const u = (SESSION && SESSION.user) || '';
+  const cont = {};
+  /* A carteira é a fonte: ela diz o Modelo de cada cliente e de quem é o
+     cliente. Uso o Modelo PREDOMINANTE do vendedor - alguém pode ter cliente de
+     dois Modelos, e nesse caso vale o do maior número de clientes. */
+  try{
+    (CARTEIRA || []).forEach(c => {
+      if(c && c.v === u && c.mo) cont[c.mo] = (cont[c.mo] || 0) + 1;
+    });
+  }catch(e){}
+  /* Reserva: se a carteira não souber, olho as vendas dele. */
+  if(!Object.keys(cont).length){
+    try{
+      (ROWS || []).forEach(r => {
+        if(r.v === u && r.mo) cont[r.mo] = (cont[r.mo] || 0) + 1;
+      });
+    }catch(e){}
+  }
+  const par = Object.entries(cont).sort((a,b) => b[1]-a[1])[0];
+  _MODELO_USUARIO = par ? par[0] : '';
+  return _MODELO_USUARIO;
+}
+
+function _semAcento(s){
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .trim().toUpperCase();
+}
+
+function podeVerSku(sk){
+  const s = CALC && CALC.skus && CALC.skus[sk];
+  if(!s) return false;
+  const regra = _semAcento(s.ver || 'TODOS');
+  if(!regra || regra === 'TODOS') return true;
+  if(SESSION && SESSION.isAdmin) return true;      // admin vê tudo, sempre
+  if(regra === 'APENAS ADMIN') return false;
+  const meu = _semAcento(modeloDoUsuario());
+  if(!meu) return false;      // não sei o Modelo: não mostro o restrito
+  return regra.split(',').map(x => x.trim()).some(x => x === meu);
+}
+
+/* Os dois filtros originais ignoravam 'ver'. E o brindeSkus ignorava também o
+   'ativo' - brinde aparecia só por ser brinde. Agora os dois respeitam as duas
+   coisas.
+
+   Cuidado que isso exigiu: no bloco legado TODO brinde tinha calc=0, então
+   ligar o filtro de ativo sem antes corrigir a origem esvaziaria a aba de
+   brindes inteira. O v8_criar_bloco_skus_calculadora semeia brinde com CMV > 0
+   como Ativo justamente por isso. */
+if(typeof calcSkusDe === 'function'){
+  const _calcSkusDeOrig = calcSkusDe;
+  window.calcSkusDe = function(cat){
+    return _calcSkusDeOrig.call(this, cat).filter(podeVerSku);
+  };
+}
+if(typeof brindeSkus === 'function'){
+  window.brindeSkus = function(){
+    return Object.keys((CALC && CALC.skus) || {})
+      .filter(sk => CALC.skus[sk].brinde === 1
+                 && CALC.skus[sk].calc === 1
+                 && podeVerSku(sk))
+      .sort((a, b) => prodName(a).localeCompare(prodName(b)));
+  };
+}
+
+/* ==========================================================================
    A DIGITAÇÃO QUE "SAÍA" DA CALCULADORA  (20/08/2026)
    ==========================================================================
    Sintoma relatado pelo Igor: digitar quantidade em pedido, bonificação ou
