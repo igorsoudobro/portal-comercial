@@ -590,6 +590,24 @@ function vendedoresVisiveis(){
 
 /* ---------- util formato ---------- */
 function brl(v){return (v<0?'-':'')+'R$ '+Math.abs(Math.round(v)).toLocaleString('pt-BR');}
+/* Duas casas na Calculadora (28/08/2026, pedido do Igor). O brl() do resto do
+   Portal arredonda para real inteiro, e la isso e o certo: num DRE de R$ 16
+   milhoes centavo e ruido. Na Calculadora nao - preco de tabela termina em ",99"
+   e R$ 74,99 aparecia como "R$ 75", R$ 41,99 como "R$ 42". Quem confere a conta
+   na mao nao fecha.
+
+   Vale para a Calculadora INTEIRA, nao so para a coluna de preco: se a linha
+   mostra 41,99 x 150 e o "Total do pedido" mostra R$ 6.298 arredondado, quem
+   multiplica acha 50 centavos de diferenca e desconfia da tela. Meio arredondado
+   e pior que nada arredondado.
+
+   Number(v)||0 no lugar de Math.round(v): brl(undefined) devolve "R$ NaN", e na
+   Calculadora ha SKU sem preco cadastrado (4 hoje). */
+function brl2(v){
+  const x = Number(v) || 0;
+  return (x < 0 ? '-' : '') + 'R$ ' + Math.abs(x).toLocaleString('pt-BR',
+    {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
 function n0(v){return Math.round(v).toLocaleString('pt-BR');}
 function n1(v){return (Math.round(v*10)/10).toLocaleString('pt-BR');}
 function pct(v){return (v*100).toFixed(1).replace('.',',')+'%';}
@@ -1520,11 +1538,11 @@ function renderCalcItens(){
      const q=CALC_QTD[sk]||0; const sub=pf*q;
      const dval=(CALC_DESCL[sk]!==undefined&&CALC_DESCL[sk]!=='')?CALC_DESCL[sk]:'';
      return `<tr class="${q>0?'filled':''}"><td class="rowlab">${prodName(sk)}</td>
-       <td class="mono">${brl(preco)}</td>
+       <td class="mono">${brl2(preco)}</td>
        <td><input type="number" min="0" max="100" placeholder="ger" value="${dval}" oninput="CALC_DESCL['${sk}']=this.value;renderCalcItens();renderCalcResumo();updateBadges()" class="calc-in" style="width:64px"></td>
-       <td class="mono">${brl(pf)}</td>
+       <td class="mono">${brl2(pf)}</td>
        <td><input type="number" min="0" value="${q||''}" placeholder="0" oninput="CALC_QTD['${sk}']=+this.value||0;renderCalcItens();renderCalcResumo();updateBadges()" class="calc-in" style="width:70px"></td>
-       <td class="mono">${q>0?brl(sub):'—'}</td></tr>`;
+       <td class="mono">${q>0?brl2(sub):'—'}</td></tr>`;
    }).join('')}</tbody></table>`;
 }
 
@@ -1535,9 +1553,9 @@ function renderCalcBoni(){
    <tbody>${skus.map(sk=>{
      const cmv=CALC.cmv[sk]||0; const q=CALC_BONI[sk]||0;
      return `<tr class="${q>0?'filled':''}"><td class="rowlab">${prodName(sk)}</td>
-       <td class="mono">${brl(cmv)}</td>
+       <td class="mono">${brl2(cmv)}</td>
        <td><input type="number" min="0" value="${q||''}" placeholder="0" oninput="CALC_BONI['${sk}']=+this.value||0;renderCalcBoni();renderCalcResumo()" class="calc-in" style="width:70px"></td>
-       <td class="mono ${q>0?'neg':''}">${q>0?brl(cmv*q):'—'}</td></tr>`;
+       <td class="mono ${q>0?'neg':''}">${q>0?brl2(cmv*q):'—'}</td></tr>`;
    }).join('')}</tbody></table>`;
 }
 
@@ -1548,9 +1566,9 @@ function renderCalcBrindes(){
    <tbody>${skus.map(sk=>{
      const cmv=CALC.cmv[sk]||0; const q=CALC_BRINDE[sk]||0;
      return `<tr class="${q>0?'filled':''}"><td class="rowlab">${prodName(sk)}</td>
-       <td class="mono">${brl(cmv)}</td>
+       <td class="mono">${brl2(cmv)}</td>
        <td><input type="number" min="0" value="${q||''}" placeholder="0" oninput="CALC_BRINDE['${sk}']=+this.value||0;renderCalcBrindes();renderCalcResumo()" class="calc-in" style="width:70px"></td>
-       <td class="mono ${q>0?'neg':''}">${q>0?brl(cmv*q):'—'}</td></tr>`;
+       <td class="mono ${q>0?'neg':''}">${q>0?brl2(cmv*q):'—'}</td></tr>`;
    }).join('')}</tbody></table>
    <div style="padding:8px 14px;font-size:11px;color:var(--muted)">Brindes e materiais saem com receita zero — entram só como custo (CMV).</div>`;
 }
@@ -1599,17 +1617,17 @@ function renderCalcResumo(){
   }
   const descGeral=(+el('calcDescGeral').value||0)/100;
   resumo.innerHTML=`<div class="kpirow" style="margin-bottom:14px">
-    <div class="kpi accent"><div class="lab">Valor líquido</div><div class="val">${brl(c.liq)}</div><div class="sub">bruto ${brl(c.bruto)}${descGeral?` · desc. geral ${pct(descGeral)}`:''}</div></div>
-    <div class="kpi sens"><div class="lab">CMV total ${SENS}</div><div class="val" style="font-size:20px">${brl(c.cmvT)}</div><div class="sub">itens ${brl(c.cmvItens)}${c.cmvBoni?` · bonif ${brl(c.cmvBoni)}`:''}${c.cmvBrinde?` · brinde ${brl(c.cmvBrinde)}`:''}</div></div>
-    <div class="kpi sens"><div class="lab">Margem bruta ${SENS}</div><div class="val" style="font-size:20px">${pct(c.liq?c.lucroBruto/c.liq:0)}</div><div class="sub">${brl(c.lucroBruto)}</div></div>
-    <div class="kpi"><div class="lab">Imp+Frete+Comissão</div><div class="val" style="font-size:20px">${brl(c.imp+c.fr+c.comissaoVal)}</div><div class="sub">imp ${brl(c.imp)} · frete ${brl(c.fr)}${c.comissaoVal?` · com ${brl(c.comissaoVal)}`:''}</div></div>
-    <div class="kpi ${c.rent>=0.15?'pos':c.rent<0?'sens':''}"><div class="lab">Rentabilidade</div><div class="val">${pct(c.rent)}</div><div class="sub">${brl(c.lucro)}</div></div>
+    <div class="kpi accent"><div class="lab">Valor líquido</div><div class="val">${brl2(c.liq)}</div><div class="sub">bruto ${brl2(c.bruto)}${descGeral?` · desc. geral ${pct(descGeral)}`:''}</div></div>
+    <div class="kpi sens"><div class="lab">CMV total ${SENS}</div><div class="val" style="font-size:20px">${brl2(c.cmvT)}</div><div class="sub">itens ${brl2(c.cmvItens)}${c.cmvBoni?` · bonif ${brl2(c.cmvBoni)}`:''}${c.cmvBrinde?` · brinde ${brl2(c.cmvBrinde)}`:''}</div></div>
+    <div class="kpi sens"><div class="lab">Margem bruta ${SENS}</div><div class="val" style="font-size:20px">${pct(c.liq?c.lucroBruto/c.liq:0)}</div><div class="sub">${brl2(c.lucroBruto)}</div></div>
+    <div class="kpi"><div class="lab">Imp+Frete+Comissão</div><div class="val" style="font-size:20px">${brl2(c.imp+c.fr+c.comissaoVal)}</div><div class="sub">imp ${brl2(c.imp)} · frete ${brl2(c.fr)}${c.comissaoVal?` · com ${brl2(c.comissaoVal)}`:''}</div></div>
+    <div class="kpi ${c.rent>=0.15?'pos':c.rent<0?'sens':''}"><div class="lab">Rentabilidade</div><div class="val">${pct(c.rent)}</div><div class="sub">${brl2(c.lucro)}</div></div>
   </div>
   <h4 style="color:var(--navy);margin:6px 0 8px">Itens do pedido (qtd &gt; 0)</h4>
   <table><thead><tr><th>Produto</th><th>Qtd</th><th>Preço final</th><th>Subtotal</th><th>Lucro unit. ${SENS}</th></tr></thead>
-   <tbody>${c.itens.sort((a,b)=>b.liq-a.liq).map(it=>`<tr><td class="rowlab">${prodName(it.sk).substring(0,44)}</td><td class="mono">${it.q}</td><td class="mono">${brl(it.pf)}</td><td class="mono">${brl(it.liq)}</td><td class="mono ${it.lucroUnit<0?'neg':''}">${brl(it.lucroUnit)}</td></tr>`).join('')}
-   ${c.boni.map(b=>`<tr style="opacity:.75"><td class="rowlab">${prodName(b.sk).substring(0,44)} <span class="pill y">bonif</span></td><td class="mono">${b.q}</td><td class="mono">R$ 0,00</td><td class="mono">R$ 0,00</td><td class="mono neg">${brl(-(CALC.cmv[b.sk]||0))}</td></tr>`).join('')}
-   ${c.brindes.map(b=>`<tr style="opacity:.75"><td class="rowlab">${prodName(b.sk).substring(0,44)} <span class="pill">brinde</span></td><td class="mono">${b.q}</td><td class="mono">R$ 0,00</td><td class="mono">R$ 0,00</td><td class="mono neg">${brl(-(CALC.cmv[b.sk]||0))}</td></tr>`).join('')}
+   <tbody>${c.itens.sort((a,b)=>b.liq-a.liq).map(it=>`<tr><td class="rowlab">${prodName(it.sk).substring(0,44)}</td><td class="mono">${it.q}</td><td class="mono">${brl2(it.pf)}</td><td class="mono">${brl2(it.liq)}</td><td class="mono ${it.lucroUnit<0?'neg':''}">${brl2(it.lucroUnit)}</td></tr>`).join('')}
+   ${c.boni.map(b=>`<tr style="opacity:.75"><td class="rowlab">${prodName(b.sk).substring(0,44)} <span class="pill y">bonif</span></td><td class="mono">${b.q}</td><td class="mono">R$ 0,00</td><td class="mono">R$ 0,00</td><td class="mono neg">${brl2(-(CALC.cmv[b.sk]||0))}</td></tr>`).join('')}
+   ${c.brindes.map(b=>`<tr style="opacity:.75"><td class="rowlab">${prodName(b.sk).substring(0,44)} <span class="pill">brinde</span></td><td class="mono">${b.q}</td><td class="mono">R$ 0,00</td><td class="mono">R$ 0,00</td><td class="mono neg">${brl2(-(CALC.cmv[b.sk]||0))}</td></tr>`).join('')}
    </tbody></table>`;
 
   // insights
@@ -1617,10 +1635,10 @@ function renderCalcResumo(){
   if(c.rent<0) ins.push({t:'alert',x:`Rentabilidade <b>negativa</b> (${pct(c.rent)}). Revise desconto, bonificação e brindes antes de fechar.`});
   else if(c.rent<0.10) ins.push({t:'warn',x:`Rentabilidade apertada em <b>${pct(c.rent)}</b>, abaixo de 10%.`});
   else if(c.rent>=0.15) ins.push({t:'ok',x:`Rentabilidade saudável em <b>${pct(c.rent)}</b>.`});
-  if(c.cmvBoni>0){ const r=c.liq?c.cmvBoni/c.liq:0; ins.push({t:r>0.05?'warn':'info',x:`A bonificação custa <b>${brl(c.cmvBoni)}</b> em CMV (${pct(r)} da receita líquida).`}); }
-  if(c.cmvBrinde>0){ const r=c.liq?c.cmvBrinde/c.liq:0; ins.push({t:r>0.03?'warn':'info',x:`Os brindes/materiais custam <b>${brl(c.cmvBrinde)}</b> (${pct(r)} da receita).`}); }
+  if(c.cmvBoni>0){ const r=c.liq?c.cmvBoni/c.liq:0; ins.push({t:r>0.05?'warn':'info',x:`A bonificação custa <b>${brl2(c.cmvBoni)}</b> em CMV (${pct(r)} da receita líquida).`}); }
+  if(c.cmvBrinde>0){ const r=c.liq?c.cmvBrinde/c.liq:0; ins.push({t:r>0.03?'warn':'info',x:`Os brindes/materiais custam <b>${brl2(c.cmvBrinde)}</b> (${pct(r)} da receita).`}); }
   const neg=c.itens.filter(it=>it.lucroUnit<0).sort((a,b)=>a.lucroUnit-b.lucroUnit)[0];
-  if(neg) ins.push({t:'warn',x:`<b>${prodName(neg.sk).substring(0,40)}</b> está com lucro unitário negativo (${brl(neg.lucroUnit)}/un) — desconto alto demais para esse item.`});
+  if(neg) ins.push({t:'warn',x:`<b>${prodName(neg.sk).substring(0,40)}</b> está com lucro unitário negativo (${brl2(neg.lucroUnit)}/un) — desconto alto demais para esse item.`});
   if(el('calcFreteModo').value==='auto') ins.push({t:'info',x:`Frete pelo médio real de <b>${c.uf}</b> (${pct(c.frPct)}). Para cotação específica, use o modo manual.`});
   if(!ins.some(o=>o.t==='alert'||o.t==='warn')) ins.push({t:'ok',x:`Pedido equilibrado — nada pressionando a margem de forma preocupante.`});
   const col={info:'var(--sky)',ok:'var(--pos)',warn:'var(--warn)',alert:'var(--neg)'},ic={info:'ℹ',ok:'✓',warn:'!',alert:'✕'};
@@ -3132,10 +3150,10 @@ function mostrarTotalPedido(){
     '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;' +
     'color:var(--muted);font-weight:700">Total do pedido</div>' +
     '<div style="font-size:19px;font-weight:800;color:var(--navy)">' +
-    brl(c.liq) + '</div>' +
+    brl2(c.liq) + '</div>' +
     '<div style="font-size:10.5px;color:var(--muted)">' +
     (c.itens.length
-      ? n0(qtdItens) + ' un · bruto ' + brl(c.bruto)
+      ? n0(qtdItens) + ' un · bruto ' + brl2(c.bruto)
       : 'nenhum item lançado') + '</div>';
 }
 
@@ -3162,13 +3180,13 @@ window.renderCalcBoni = function(){
       const cmv = CALC.cmv[sk] || 0, q = CALC_BONI[sk] || 0;
       return '<tr class="' + (q > 0 ? 'filled' : '') + '">' +
         '<td class="rowlab">' + prodName(sk) + '</td>' +
-        (adm ? '<td class="mono">' + brl(cmv) + '</td>' : '') +
+        (adm ? '<td class="mono">' + brl2(cmv) + '</td>' : '') +
         '<td><input type="number" min="0" value="' + (q || '') +
         '" placeholder="0" oninput="CALC_BONI[\'' + sk +
         '\']=+this.value||0;renderCalcBoni();renderCalcResumo()" ' +
         'class="calc-in" style="width:70px"></td>' +
         (adm ? '<td class="mono ' + (q > 0 ? 'neg' : '') + '">' +
-               (q > 0 ? brl(cmv * q) : '—') + '</td>' : '') +
+               (q > 0 ? brl2(cmv * q) : '—') + '</td>' : '') +
         '</tr>';
     }).join('') + '</tbody></table>' +
     (adm ? '' : '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">' +
@@ -3200,13 +3218,13 @@ window.renderCalcBrindes = function(){
       const cmv = CALC.cmv[sk] || 0, q = CALC_BRINDE[sk] || 0;
       return '<tr class="' + (q > 0 ? 'filled' : '') + '">' +
         '<td class="rowlab">' + prodName(sk) + '</td>' +
-        (adm ? '<td class="mono">' + brl(cmv) + '</td>' : '') +
+        (adm ? '<td class="mono">' + brl2(cmv) + '</td>' : '') +
         '<td><input type="number" min="0" value="' + (q || '') +
         '" placeholder="0" oninput="CALC_BRINDE[\'' + sk +
         '\']=+this.value||0;renderCalcBrindes();renderCalcResumo()" ' +
         'class="calc-in" style="width:70px"></td>' +
         (adm ? '<td class="mono ' + (q > 0 ? 'neg' : '') + '">' +
-               (q > 0 ? brl(cmv * q) : '—') + '</td>' : '') +
+               (q > 0 ? brl2(cmv * q) : '—') + '</td>' : '') +
         '</tr>';
     }).join('') + '</tbody></table>' +
     '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">' +
@@ -3285,7 +3303,7 @@ window.renderCalcResumo = function(){
     (faixa === 'verde' ? 'pos' : faixa === 'vermelho' ? 'sens' : '') + '">' +
     '<div class="lab">Rentabilidade</div><div class="val">' +
     farolComRotulo(c.rent, adm) + '</div>' +
-    '<div class="sub">' + (adm ? brl(c.lucro) : 'do pedido') + '</div></div>';
+    '<div class="sub">' + (adm ? brl2(c.lucro) : 'do pedido') + '</div></div>';
 
   /* A ORDEM segue o DRE: CMV -> margem bruta -> bonificacao -> imp/frete/com.
      O CMV mostra SO OS ITENS (era itens+bonif+brinde, o que fazia a margem
@@ -3298,26 +3316,26 @@ window.renderCalcResumo = function(){
      impacto era zero quando nao era. */
   const kpiBoni = (!adm || c.cmvBoniBrinde <= 0) ? '' :
     '<div class="kpi sens"><div class="lab">Bonif. + brindes ' + SENS + '</div>' +
-    '<div class="val" style="font-size:20px">' + brl(c.cmvBoniBrinde) + '</div>' +
+    '<div class="val" style="font-size:20px">' + brl2(c.cmvBoniBrinde) + '</div>' +
     '<div class="sub">' +
-    (c.cmvBoni ? 'bonif ' + brl(c.cmvBoni) : '') +
+    (c.cmvBoni ? 'bonif ' + brl2(c.cmvBoni) : '') +
     (c.cmvBoni && c.cmvBrinde ? ' · ' : '') +
-    (c.cmvBrinde ? 'brinde ' + brl(c.cmvBrinde) : '') +
+    (c.cmvBrinde ? 'brinde ' + brl2(c.cmvBrinde) : '') +
     ' · −' + pct(c.liq ? c.cmvBoniBrinde / c.liq : 0) +
     ' de rentab.</div></div>';
 
   const kpisAdm = !adm ? '' :
     '<div class="kpi sens"><div class="lab">CMV dos itens ' + SENS + '</div>' +
-    '<div class="val" style="font-size:20px">' + brl(c.cmvItens) + '</div>' +
+    '<div class="val" style="font-size:20px">' + brl2(c.cmvItens) + '</div>' +
     '<div class="sub">sem bonificação e brindes</div></div>' +
     '<div class="kpi sens"><div class="lab">Margem bruta ' + SENS + '</div>' +
     '<div class="val" style="font-size:20px">' +
     pct(c.liq ? c.lucroBruto / c.liq : 0) + '</div>' +
-    '<div class="sub">' + brl(c.lucroBruto) + ' · mesmo critério do DRE</div></div>' +
+    '<div class="sub">' + brl2(c.lucroBruto) + ' · mesmo critério do DRE</div></div>' +
     kpiBoni +
     '<div class="kpi"><div class="lab">Imp+Frete+Comissão</div>' +
     '<div class="val" style="font-size:20px">' +
-    brl(c.imp + c.fr + c.comissaoVal) + '</div>' +
+    brl2(c.imp + c.fr + c.comissaoVal) + '</div>' +
     /* O frete diz que e ESTIMATIVA e mostra a taxa (12/08/2026).
 
        O Igor simulou um pedido de Junho e comparou com o DRE do mesmo CNPJ: a
@@ -3336,11 +3354,11 @@ window.renderCalcResumo = function(){
 
        No modo manual nao ha estimativa nenhuma: o rotulo troca para 'informado'
        para ninguem achar que o valor dele foi ajustado por UF. */
-    '<div class="sub">imp ' + brl(c.imp) + ' · frete ' + brl(c.fr) +
+    '<div class="sub">imp ' + brl2(c.imp) + ' · frete ' + brl2(c.fr) +
     (el2('calcFreteModo') && el2('calcFreteModo').value === 'manual'
       ? ' (informado)'
       : ' (estim. média ' + (c.uf || 'UF') + ' ' + pct(c.frPct) + ')') +
-    (c.comissaoVal ? ' · com ' + brl(c.comissaoVal) : '') + '</div></div>';
+    (c.comissaoVal ? ' · com ' + brl2(c.comissaoVal) : '') + '</div></div>';
 
   /* Impacto de bonificacao e brinde, para o VENDEDOR, em PONTOS DE MARGEM.
      Em 30/07/2026 o Igor viu "R$ 0,00 / R$ 0,00" na linha de bonificacao e
@@ -3357,7 +3375,7 @@ window.renderCalcResumo = function(){
   const colLucro = adm ? '<th>Lucro unit. ' + SENS + '</th>'
                        : '<th>Impacto na margem</th>';
   const tdLucro = (v) => adm
-    ? '<td class="mono ' + (v < 0 ? 'neg' : '') + '">' + brl(v) + '</td>' : '';
+    ? '<td class="mono ' + (v < 0 ? 'neg' : '') + '">' + brl2(v) + '</td>' : '';
   // custoLinha = custo TOTAL da linha (unitario x qtd), nao o unitario
   const tdImpacto = (custoLinha) => adm ? '' :
     '<td class="mono ' + (custoLinha > 0 ? 'neg' : '') + '" title="quanto esta ' +
@@ -3368,8 +3386,8 @@ window.renderCalcResumo = function(){
   resumo.innerHTML =
     '<div class="kpirow" style="margin-bottom:14px">' +
     '<div class="kpi accent"><div class="lab">Valor líquido</div>' +
-    '<div class="val">' + brl(c.liq) + '</div>' +
-    '<div class="sub">bruto ' + brl(c.bruto) +
+    '<div class="val">' + brl2(c.liq) + '</div>' +
+    '<div class="sub">bruto ' + brl2(c.bruto) +
     (descGeral ? ' · desc. geral ' + pct(descGeral) : '') + '</div></div>' +
     kpisAdm + kpiImpacto + kpiRent + '</div>' +
     '<h4 style="color:var(--navy);margin:6px 0 8px">Itens do pedido (qtd &gt; 0)</h4>' +
@@ -3378,8 +3396,8 @@ window.renderCalcResumo = function(){
     c.itens.slice().sort((a, b) => b.liq - a.liq).map(it =>
       '<tr><td class="rowlab">' + prodName(it.sk).substring(0, 44) + '</td>' +
       '<td class="mono">' + it.q + '</td>' +
-      '<td class="mono">' + brl(it.pf) + '</td>' +
-      '<td class="mono">' + brl(it.liq) + '</td>' +
+      '<td class="mono">' + brl2(it.pf) + '</td>' +
+      '<td class="mono">' + brl2(it.liq) + '</td>' +
       tdLucro(it.lucroUnit) + tdVazio + '</tr>').join('') +
     // Bonificacao nao tem preco final: o produto TEM preco de tabela e nao foi
     // vendido a zero - ele nao foi vendido. "R$ 0,00" lia-se como "vendi de
@@ -3427,12 +3445,12 @@ window.renderCalcResumo = function(){
   if(adm && c.cmvBoni > 0){
     const r = c.liq ? c.cmvBoni / c.liq : 0;
     ins.push({t: r > 0.05 ? 'warn' : 'info', x: 'A bonificação custa <b>' +
-      brl(c.cmvBoni) + '</b> em CMV (' + pct(r) + ' da receita líquida).'});
+      brl2(c.cmvBoni) + '</b> em CMV (' + pct(r) + ' da receita líquida).'});
   }
   if(adm && c.cmvBrinde > 0){
     const r = c.liq ? c.cmvBrinde / c.liq : 0;
     ins.push({t: r > 0.03 ? 'warn' : 'info', x: 'Os brindes/materiais custam <b>' +
-      brl(c.cmvBrinde) + '</b> (' + pct(r) + ' da receita).'});
+      brl2(c.cmvBrinde) + '</b> (' + pct(r) + ' da receita).'});
   }
   if(!adm && (c.cmvBoni > 0 || c.cmvBrinde > 0)){
     ins.push({t: 'info', x: 'Bonificação e brindes entram no resultado do ' +
@@ -3445,7 +3463,7 @@ window.renderCalcResumo = function(){
                      .sort((a, b) => a.lucroUnit - b.lucroUnit)[0];
   if(neg) ins.push({t: 'warn', x: '<b>' + prodName(neg.sk).substring(0, 40) +
     '</b> está ' + (adm
-      ? 'com lucro unitário negativo (' + brl(neg.lucroUnit) + '/un) — desconto ' +
+      ? 'com lucro unitário negativo (' + brl2(neg.lucroUnit) + '/un) — desconto ' +
         'alto demais para esse item.'
       : 'saindo <b>no prejuízo</b> — o desconto está alto demais nesse item.')});
   const fm = el2('calcFreteModo');
@@ -5309,8 +5327,8 @@ function calcAtualizarLinha(inp){
     const pf = preco * (1 - d);
     const q = CALC_QTD[sk] || 0;
     // mono[0] = preço tabela | mono[1] = preço final | mono[2] = subtotal
-    if(mono[1]) mono[1].textContent = brl(pf);
-    if(mono[2]) mono[2].textContent = q > 0 ? brl(pf * q) : '—';
+    if(mono[1]) mono[1].textContent = brl2(pf);
+    if(mono[2]) mono[2].textContent = q > 0 ? brl2(pf * q) : '—';
     tr.classList.toggle('filled', q > 0);
   } else {
     const cmv = (CALC.cmv && CALC.cmv[sk]) || 0;
@@ -5318,7 +5336,7 @@ function calcAtualizarLinha(inp){
     // a coluna de custo só existe para quem vê CMV; se não existir, nada a fazer
     const ultimo = mono[mono.length - 1];
     if(ultimo && mono.length > 1){
-      ultimo.textContent = q > 0 ? brl(cmv * q) : '—';
+      ultimo.textContent = q > 0 ? brl2(cmv * q) : '—';
       ultimo.classList.toggle('neg', q > 0);
     }
     tr.classList.toggle('filled', q > 0);
@@ -5481,7 +5499,7 @@ function calcInjetarCustosExtra(){
     if(calc) calc.style.display = ehManual ? 'none' : 'flex';
     if(man) man.style.display = ehManual ? '' : 'none';
     const tot = document.getElementById('calcPromoTotal');
-    if(tot) tot.value = brl(calcPromotoria().total);
+    if(tot) tot.value = brl2(calcPromotoria().total);
   }
 
   const liga = (id, setter) => {
@@ -5541,12 +5559,12 @@ function calcMostrarExtras(){
   d.id = 'calcExtrasNota';
   d.style.cssText = 'padding:8px 14px;font-size:12px;color:var(--muted)';
   d.innerHTML =
-    '<b>Contrato + Promotoria:</b> ' + brl(c.extrasVal) +
-    (c.contratoVal ? ' · contrato ' + brl(c.contratoVal) +
+    '<b>Contrato + Promotoria:</b> ' + brl2(c.extrasVal) +
+    (c.contratoVal ? ' · contrato ' + brl2(c.contratoVal) +
                      ' (' + pct(c.contratoPct) + ')' : '') +
-    (c.promoVal ? ' · promotoria ' + brl(c.promoVal) +
+    (c.promoVal ? ' · promotoria ' + brl2(c.promoVal) +
                   (c.promo && c.promo.modo === 'calculo'
-                     ? ' (' + c.promo.lojas + ' loja(s) × ' + brl(c.promo.custo) +
+                     ? ' (' + c.promo.lojas + ' loja(s) × ' + brl2(c.promo.custo) +
                        ' × ' + c.promo.freq + ')'
                      : ' (valor manual)') : '') +
     ' — sai depois da margem bruta, então baixa a rentabilidade e não a margem.';
