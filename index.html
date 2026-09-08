@@ -1525,6 +1525,62 @@ function calcTetoDesc(tab){
   return (tab===CALC_TAB_KA || tab===CALC_TAB_LEGADO) ? 100 : CALC_TETO_CANAL;
 }
 
+/* ---- desconto da linha: PRENDE no teto de verdade (08/09/2026) -----------
+   O `max="5"` do input NÃO impede digitar 40 — ele governa só as setinhas e a
+   validação de formulário. O Igor digitou 40 no Especializado: a caixa mostrava
+   40 e a conta aplicava 5%, porque o corte só existia no descLinha(). Número na
+   tela discordando do número aplicado é pior que o valor errado: quem confere
+   acredita no que lê.
+
+   Agora o corte acontece na ENTRADA e o valor cortado volta para a caixa. */
+function calcSetDescLinha(sk, valor){
+  if(valor===''||valor===null||valor===undefined){ CALC_DESCL[sk]=''; }
+  else{
+    let v=+String(valor).replace(',','.');
+    if(!isFinite(v)) v=0;
+    CALC_DESCL[sk]=String(Math.max(0, Math.min(v, calcTetoDesc())));
+  }
+  renderCalcItens(); renderCalcResumo(); updateBadges();
+}
+
+/* O MESMO problema entra por um segundo caminho, e o meu próprio teste achou:
+   lançar 45% no Key Account e depois TROCAR para Especializado. O valor 45 fica
+   guardado em CALC_DESCL, a caixa mostra 45 e a conta aplica 5%. Corrigir só na
+   digitação não bastava — o teto também muda debaixo de um valor já digitado.
+   Chamado pelo onCond, que é quem roda quando a tabela troca. */
+function calcPrenderDescontos(){
+  const teto=calcTetoDesc();
+  Object.keys(CALC_DESCL).forEach(sk=>{
+    const bruto=CALC_DESCL[sk];
+    if(bruto===''||bruto===null||bruto===undefined) return;
+    const v=+bruto;
+    if(!isFinite(v)){ CALC_DESCL[sk]=''; return; }
+    if(v>teto || v<0) CALC_DESCL[sk]=String(Math.max(0, Math.min(v, teto)));
+  });
+}
+
+/* ---- não perder o foco a cada tecla --------------------------------------
+   renderCalcItens() troca o innerHTML inteiro, o que DESTRÓI o input em que a
+   pessoa está digitando. O efeito é digitar um algarismo e o campo largar o
+   cursor — e, usando as setinhas, ver a linha se comportar de forma errática.
+   Guardo quem estava focado e onde estava o cursor, e devolvo depois. */
+function calcGuardarFoco(){
+  const a=document.activeElement;
+  if(!a || a.tagName!=='INPUT' || !a.dataset || !a.dataset.sk) return null;
+  let ini=null, fim=null;
+  /* input[type=number] não expõe selectionStart em parte dos navegadores */
+  try{ ini=a.selectionStart; fim=a.selectionEnd; }catch(e){}
+  return {sk:a.dataset.sk, campo:a.dataset.campo, ini:ini, fim:fim};
+}
+function calcDevolverFoco(f){
+  if(!f) return;
+  const alvo=document.querySelector('#calcItens input[data-sk="'+
+    (window.CSS&&CSS.escape?CSS.escape(f.sk):f.sk)+'"][data-campo="'+f.campo+'"]');
+  if(!alvo) return;                      /* a linha saiu da grade: nada a fazer */
+  alvo.focus();
+  if(f.ini!==null){ try{ alvo.setSelectionRange(f.ini,f.fim); }catch(e){} }
+}
+
 /* Aviso dos itens lançados que NÃO entraram no pedido por não terem preço na
    tabela escolhida. Fica aqui, e não dentro do renderCalcResumo, porque o
    resumo tem dois caminhos de saída — o normal e o "Lance as quantidades" — e
@@ -1625,6 +1681,7 @@ function onCond(){
     const aviso=el('calcDescTeto');
     if(aviso) aviso.textContent = teto<100 ? ('máximo '+teto+'% nesta tabela') : 'sem limite nesta tabela';
   }
+  calcPrenderDescontos();      /* o teto mudou: prende o que já estava digitado */
   el('calcCondAviso').innerHTML = c.ok?'' : `<div style="background:#FEF3F2;border-left:3px solid var(--neg);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--neg)">⚠ ${c.msg}</div>`;
   el('calcMain').style.display = c.ok?'':'none';
   if(c.ok){ renderCalcItens(); renderCalcBoni(); renderCalcBrindes(); renderCalcResumo(); updateBadges(); }
@@ -1648,6 +1705,7 @@ function renderCalcItens(){
   const tab=calcTabelaSel(), teto=calcTetoDesc(tab);
   const geral=Math.min(+el('calcDescGeral').value||0, teto);
   let semPreco=0;
+  const foco=calcGuardarFoco();
   cont.innerHTML=`<table class="calc-grid"><thead><tr><th style="min-width:280px">Produto</th><th>Preço consumidor final</th><th>Preço tabela</th><th>Desc. linha %</th><th>Preço final</th><th>Qtd</th><th>Subtotal</th></tr></thead>
    <tbody>${skus.map(sk=>{
      const pcf=CALC.precos[sk]||0;
@@ -1675,12 +1733,13 @@ function renderCalcItens(){
      return `<tr class="${q>0?'filled':''}"><td class="rowlab">${prodName(sk)}</td>
        <td class="mono" style="color:var(--muted)">${brl2(pcf)}</td>
        <td class="mono">${brl2(preco)}</td>
-       <td><input type="number" min="0" max="${teto}" value="${dval}" oninput="CALC_DESCL['${sk}']=this.value;renderCalcItens();renderCalcResumo();updateBadges()" class="calc-in" style="width:64px"></td>
+       <td><input type="number" min="0" max="${teto}" step="0.5" value="${dval}" data-sk="${sk}" data-campo="desc" oninput="calcSetDescLinha('${sk}',this.value)" class="calc-in" style="width:64px"></td>
        <td class="mono">${brl2(pf)}</td>
-       <td><input type="number" min="0" value="${q||''}" placeholder="0" oninput="CALC_QTD['${sk}']=+this.value||0;renderCalcItens();renderCalcResumo();updateBadges()" class="calc-in" style="width:70px"></td>
+       <td><input type="number" min="0" value="${q||''}" placeholder="0" data-sk="${sk}" data-campo="qtd" oninput="CALC_QTD['${sk}']=+this.value||0;renderCalcItens();renderCalcResumo();updateBadges()" class="calc-in" style="width:70px"></td>
        <td class="mono">${q>0?brl2(sub):'—'}</td></tr>`;
    }).join('')}</tbody></table>
    ${semPreco?`<div style="padding:8px 14px;font-size:11px;color:var(--muted)">${semPreco} item(ns) sem preço na tabela <b>${tab}</b> — para liberar, preencha a coluna &ldquo;Tabela ${tab}&rdquo; na aba Parametros do V8.</div>`:''}`;
+  calcDevolverFoco(foco);
 }
 
 function renderCalcBoni(){
