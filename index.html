@@ -1481,7 +1481,7 @@ const CALC_TETO_CANAL = 5;          /* desconto máx. %, nos canais tabelados */
    perdi três hipóteses até desconfiar de que o arquivo aberto no navegador dele
    não era o que eu tinha editado. Sem uma marca, "qual build você está usando?"
    não tem resposta. Aparece no console ao carregar e em calcVersao(). */
-const CALC_BUILD = '2026-09-08 · tabelas por canal r3 (teto 5%, desconto geral manda)';
+const CALC_BUILD = '2026-09-08 · tabelas por canal r4 (sem remendo de célula por índice)';
 function calcVersao(){
   return {build: CALC_BUILD,
           tabelas: Object.keys((typeof CALC!=='undefined' && CALC.tabelas)||{}),
@@ -1563,27 +1563,27 @@ function calcTetoDesc(tab){
    jeito. Enquanto o número digitado estiver acima do limite, a caixa fica
    vermelha — para não repetir o problema de a tela mostrar 40 e a conta usar 5
    sem ninguém avisar. */
-function calcDescLinhaDigitando(sk, valor, inp){
+/* NÃO REMENDAR CÉLULA POR ÍNDICE (08/09/2026, 3ª volta)
+   ----------------------------------------------------
+   A versão anterior desta função, em vez de redesenhar, escrevia direto em
+   `tr.children[4]` e `tr.children[6]` para não destruir o campo em que a pessoa
+   digita. O Igor mostrou o resultado: numa linha só apareceram TRÊS fórmulas
+   diferentes e valores de dois instantes — "Preço tabela" com o preço de
+   consumidor descontado, "Preço final" com um subtotal, e o subtotal com a
+   quantidade anterior. Rodei a sequência exata dele e não reproduzi; ele
+   confirmou pela marca de versão que estava nesta build.
+
+   Não defendo código que produz isso e que eu não consigo explicar. O remendo
+   por índice era a única coisa capaz de escrever número numa célula sem passar
+   pelo template, então ele sai. Agora existe UMA fonte de verdade para a
+   aparência da linha: o renderCalcItens.
+
+   O custo é redesenhar a tabela a cada tecla — que é o que o Portal já fazia
+   antes de 08/09 e nunca incomodou. O que incomodava era o CORTE a cada tecla,
+   e esse continua acontecendo só na saída do campo. */
+function calcDescLinhaDigitando(sk, valor){
   CALC_DESCL[sk] = (valor===null||valor===undefined) ? '' : String(valor);
-  const teto=calcTetoDesc();
-  const v=+String(valor).replace(',','.');
-  const passou = isFinite(v) && v>teto;
-  if(inp){
-    inp.style.borderColor = passou ? 'var(--neg)' : '';
-    inp.style.color = passou ? 'var(--neg)' : '';
-    inp.title = passou ? ('acima do limite de '+teto+'% desta tabela — vai ser '+
-                          'ajustado para '+teto+'% ao sair do campo') : '';
-    /* Atualiza SÓ esta linha. Redesenhar a tabela aqui é o que destruía o campo
-       em que a pessoa está digitando. */
-    const tr = inp.closest ? inp.closest('tr') : null;
-    if(tr && tr.children.length>=7){
-      const pf = calcPrecoTabela(sk)*(1-descLinha(sk));
-      const q = CALC_QTD[sk]||0;
-      tr.children[4].textContent = brl2(pf);
-      tr.children[6].textContent = q>0 ? brl2(pf*q) : '—';
-    }
-  }
-  renderCalcResumo(); updateBadges();
+  renderCalcItens(); renderCalcResumo(); updateBadges();
 }
 
 function calcSetDescLinha(sk, valor){
@@ -1802,10 +1802,17 @@ function renderCalcItens(){
         continua ajustável". Enquanto ninguém digita nada aqui, CALC_DESCL fica
         vazio e a linha continua seguindo o geral automaticamente. */
      const dval=(CALC_DESCL[sk]!==undefined&&CALC_DESCL[sk]!=='')?CALC_DESCL[sk]:geral;
+     /* Enquanto o número digitado passar do teto, a caixa fica vermelha. O
+        estilo nasce AQUI, no template, e não num remendo depois do desenho:
+        assim a aparência da linha tem uma fonte só. A conta já usa o teto
+        (descLinha corta), e ao sair do campo o valor é ajustado. */
+     const passou=(+String(dval).replace(',','.'))>teto;
+     const estiloDesc=passou?'width:64px;border-color:var(--neg);color:var(--neg)':'width:64px';
+     const avisoDesc=passou?` title="acima do limite de ${teto}% desta tabela — vai virar ${teto}% ao sair do campo"`:'';
      return `<tr class="${q>0?'filled':''}"><td class="rowlab">${prodName(sk)}</td>
        <td class="mono" style="color:var(--muted)">${brl2(pcf)}</td>
        <td class="mono">${brl2(preco)}</td>
-       <td><input type="number" min="0" max="${teto}" step="0.5" value="${dval}" data-sk="${sk}" data-campo="desc" oninput="calcDescLinhaDigitando('${sk}',this.value,this)" onchange="calcSetDescLinha('${sk}',this.value)" class="calc-in" style="width:64px"></td>
+       <td><input type="number" min="0" max="${teto}" step="0.5" value="${dval}" data-sk="${sk}" data-campo="desc"${avisoDesc} oninput="calcDescLinhaDigitando('${sk}',this.value)" onchange="calcSetDescLinha('${sk}',this.value)" class="calc-in" style="${estiloDesc}"></td>
        <td class="mono">${brl2(pf)}</td>
        <td><input type="number" min="0" value="${q||''}" placeholder="0" data-sk="${sk}" data-campo="qtd" oninput="CALC_QTD['${sk}']=+this.value||0;renderCalcItens();renderCalcResumo();updateBadges()" class="calc-in" style="width:70px"></td>
        <td class="mono">${q>0?brl2(sub):'—'}</td></tr>`;
