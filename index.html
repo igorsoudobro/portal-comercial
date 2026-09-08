@@ -1476,6 +1476,20 @@ const CALC_TAB_KA = 'Key Account';
 const CALC_TAB_LEGADO = 'Preço de tabela';
 const CALC_TETO_CANAL = 5;          /* desconto máx. %, nos canais tabelados */
 
+/* Marca de versão da Calculadora. Existe por um motivo concreto: em 08/09/2026
+   o Igor viu na tela um número que eu não consegui reproduzir em nenhum teste, e
+   perdi três hipóteses até desconfiar de que o arquivo aberto no navegador dele
+   não era o que eu tinha editado. Sem uma marca, "qual build você está usando?"
+   não tem resposta. Aparece no console ao carregar e em calcVersao(). */
+const CALC_BUILD = '2026-09-08 · tabelas por canal r3 (teto 5%, desconto geral manda)';
+function calcVersao(){
+  return {build: CALC_BUILD,
+          tabelas: Object.keys((typeof CALC!=='undefined' && CALC.tabelas)||{}),
+          colunasDaGrade: document.querySelectorAll('#calcItens thead th').length,
+          tabelaSelecionada: (document.getElementById('calcTabela')||{}).value};
+}
+try{ console.info('Calculadora ' + CALC_BUILD); }catch(e){}
+
 function calcTabelasDoExcel(){ return (typeof CALC!=='undefined' && CALC.tabelas) || {}; }
 function calcModoLegado(){ return Object.keys(calcTabelasDoExcel()).length===0; }
 
@@ -1533,6 +1547,45 @@ function calcTetoDesc(tab){
    acredita no que lê.
 
    Agora o corte acontece na ENTRADA e o valor cortado volta para a caixa. */
+/* CORTAR A CADA TECLA É INCOMPATÍVEL COM DIGITAR (08/09/2026, 2ª volta)
+   -------------------------------------------------------------------
+   A 1ª versão cortava no `oninput` e devolvia o valor cortado para a caixa.
+   Efeito relatado pelo Igor: a caixa vem preenchida com 5, ele digita 3, o
+   campo fica "53", eu corto para 5 na mesma tecla — e ele nunca chega no 3.
+   "Só desce clicando na setinha."
+
+   Então agora são DOIS momentos:
+     oninput  (digitando) - guarda o que ele escreveu, NÃO corta, NÃO redesenha
+                            a tabela. Só atualiza as células daquela linha.
+     onchange (saiu do campo / Enter) - aí sim corta e redesenha.
+
+   A conta NUNCA usa valor acima do teto, porque o descLinha() corta de todo
+   jeito. Enquanto o número digitado estiver acima do limite, a caixa fica
+   vermelha — para não repetir o problema de a tela mostrar 40 e a conta usar 5
+   sem ninguém avisar. */
+function calcDescLinhaDigitando(sk, valor, inp){
+  CALC_DESCL[sk] = (valor===null||valor===undefined) ? '' : String(valor);
+  const teto=calcTetoDesc();
+  const v=+String(valor).replace(',','.');
+  const passou = isFinite(v) && v>teto;
+  if(inp){
+    inp.style.borderColor = passou ? 'var(--neg)' : '';
+    inp.style.color = passou ? 'var(--neg)' : '';
+    inp.title = passou ? ('acima do limite de '+teto+'% desta tabela — vai ser '+
+                          'ajustado para '+teto+'% ao sair do campo') : '';
+    /* Atualiza SÓ esta linha. Redesenhar a tabela aqui é o que destruía o campo
+       em que a pessoa está digitando. */
+    const tr = inp.closest ? inp.closest('tr') : null;
+    if(tr && tr.children.length>=7){
+      const pf = calcPrecoTabela(sk)*(1-descLinha(sk));
+      const q = CALC_QTD[sk]||0;
+      tr.children[4].textContent = brl2(pf);
+      tr.children[6].textContent = q>0 ? brl2(pf*q) : '—';
+    }
+  }
+  renderCalcResumo(); updateBadges();
+}
+
 function calcSetDescLinha(sk, valor){
   if(valor===''||valor===null||valor===undefined){ CALC_DESCL[sk]=''; }
   else{
@@ -1541,6 +1594,21 @@ function calcSetDescLinha(sk, valor){
     CALC_DESCL[sk]=String(Math.max(0, Math.min(v, calcTetoDesc())));
   }
   renderCalcItens(); renderCalcResumo(); updateBadges();
+}
+
+/* MUDAR O DESCONTO GERAL MANDA EM TODAS AS LINHAS (pedido do Igor, 08/09/2026)
+   ---------------------------------------------------------------------------
+   Antes, o desconto digitado na linha vencia o geral para sempre — a nota da
+   tela dizia "o desconto da linha sobrescreve o geral". O Igor mudou a regra:
+   "caso alguém mude o desconto geral, todos devem mudar, independente do
+   desconto na linha".
+
+   Então o ajuste manual da linha vale até a próxima vez que alguém mexer no
+   geral, e nesse momento ele é descartado. Zerar CALC_DESCL é o que faz todas
+   as linhas voltarem a seguir o geral, porque linha vazia = segue o geral. */
+function calcSetDescGeral(){
+  CALC_DESCL = {};
+  onCond();
 }
 
 /* O MESMO problema entra por um segundo caminho, e o meu próprio teste achou:
@@ -1608,7 +1676,7 @@ function vCalc(){
   if(!CALC_BONISEL) CALC_BONISEL=catBoni[0];
 
   el('v-calc').innerHTML=`
-   <div class="note"><b>Monte o pedido como na sua planilha.</b> Preencha as condições (obrigatórias) — inclusive <b>a tabela de preço do pedido</b> —, depois lance as quantidades por categoria. A rentabilidade usa o preço de sell-in da tabela escolhida, CMV real, imposto e frete médios da base. O desconto vem do geral e pode ser ajustado por linha (<b>a linha sobrescreve o geral</b>), com <b>limite de ${CALC_TETO_CANAL}%</b> nas tabelas de canal.</div>
+   <div class="note"><b>Monte o pedido como na sua planilha.</b> Preencha as condições (obrigatórias) — inclusive <b>a tabela de preço do pedido</b> —, depois lance as quantidades por categoria. A rentabilidade usa o preço de sell-in da tabela escolhida, CMV real, imposto e frete médios da base. O desconto vem do geral e pode ser ajustado por linha, com <b>limite de ${CALC_TETO_CANAL}%</b> nas tabelas de canal — <b>mexer no desconto geral refaz todas as linhas</b>, inclusive as ajustadas à mão.</div>
 
    <div class="card"><div class="card-h"><h3>1 · Condições do pedido <span style="color:var(--neg)">*</span></h3><span class="hint">preenchimento obrigatório</span></div>
      <div style="padding:16px 20px;display:flex;gap:18px;flex-wrap:wrap;align-items:end">
@@ -1644,7 +1712,11 @@ function vCalc(){
    </div>`;
 
   // listeners condições
-  ['calcUF','calcDescGeral','calcComissao','calcFreteManual'].forEach(id=>el(id).addEventListener('input',onCond));
+  ['calcUF','calcComissao','calcFreteManual'].forEach(id=>el(id).addEventListener('input',onCond));
+  /* O desconto geral tem handler PRÓPRIO porque ele descarta os descontos de
+     linha (ver calcSetDescGeral). Se ficasse no onCond genérico, trocar a UF ou
+     o frete também apagaria o que a pessoa ajustou linha por linha. */
+  el('calcDescGeral').addEventListener('input',calcSetDescGeral);
   el('calcUF').addEventListener('change',onCond);
   /* Trocar de tabela muda TODOS os preços da grade e o teto do desconto, então
      é 'change' no seletor e não só o onCond do fim da função. */
@@ -1733,7 +1805,7 @@ function renderCalcItens(){
      return `<tr class="${q>0?'filled':''}"><td class="rowlab">${prodName(sk)}</td>
        <td class="mono" style="color:var(--muted)">${brl2(pcf)}</td>
        <td class="mono">${brl2(preco)}</td>
-       <td><input type="number" min="0" max="${teto}" step="0.5" value="${dval}" data-sk="${sk}" data-campo="desc" oninput="calcSetDescLinha('${sk}',this.value)" class="calc-in" style="width:64px"></td>
+       <td><input type="number" min="0" max="${teto}" step="0.5" value="${dval}" data-sk="${sk}" data-campo="desc" oninput="calcDescLinhaDigitando('${sk}',this.value,this)" onchange="calcSetDescLinha('${sk}',this.value)" class="calc-in" style="width:64px"></td>
        <td class="mono">${brl2(pf)}</td>
        <td><input type="number" min="0" value="${q||''}" placeholder="0" data-sk="${sk}" data-campo="qtd" oninput="CALC_QTD['${sk}']=+this.value||0;renderCalcItens();renderCalcResumo();updateBadges()" class="calc-in" style="width:70px"></td>
        <td class="mono">${q>0?brl2(sub):'—'}</td></tr>`;
