@@ -1454,8 +1454,97 @@ function vRanking(){
   }));
 }
 
+/* ======================= TABELA DE PREÇO POR CANAL (08/09/2026) ===========
+   Mudança de política do Igor: existe tabela de sell-in por canal
+   (Especializado, Supermercados, Distribuidores) e o desconto sobre ela é
+   limitado a 5% — no geral e na linha. Key Account NÃO entra nessa regra:
+   continua funcionando como funcionava antes desta data, ou seja, base no preço
+   de consumidor final (CALC.precos, o antigo "Preço tabela") e desconto livre,
+   porque KA é negociação e não canal tabelado.
+
+   OS NOMES DOS CANAIS VÊM DO EXCEL, não daqui. Toda coluna da Parametros a
+   partir de AX cujo cabeçalho comece com "Tabela" virou uma entrada de
+   CALC.tabelas. Criar o canal Farmácia é digitar "Tabela Farmácia" em BA3 e os
+   preços embaixo — nada aqui muda.
+
+   RESERVA: se CALC.tabelas vier vazio (JSON antigo, antes de o gerador passar a
+   ler AX+), a Calculadora volta ao comportamento anterior — uma tabela só,
+   chamada "Preço de tabela", com base em CALC.precos e desconto livre. Sem essa
+   reserva, publicar o HTML antes do JSON deixaria a Calculadora inutilizável,
+   sem nenhuma tabela para escolher. */
+const CALC_TAB_KA = 'Key Account';
+const CALC_TAB_LEGADO = 'Preço de tabela';
+const CALC_TETO_CANAL = 5;          /* desconto máx. %, nos canais tabelados */
+
+function calcTabelasDoExcel(){ return (typeof CALC!=='undefined' && CALC.tabelas) || {}; }
+function calcModoLegado(){ return Object.keys(calcTabelasDoExcel()).length===0; }
+
+/* Quem pode escolher Key Account: admin ou a Júlia Barros. É o MESMO portão dos
+   custos de contrato/promotoria (calcVeCustosExtra, ~linha 5440), que já trata
+   'Júlia' sem acento e não confunde com Julia Urban / Julia Gumes.
+
+   Chamo direto, sem `typeof` na frente, de propósito: em 20/08 um guard desses
+   fez a função cair calada no "não é admin" e o Igor não viu os campos. Se um
+   dia ela deixar de existir, quero erro no console e não permissão errada. */
+function calcPodeKeyAccount(){ return !!calcVeCustosExtra(); }
+
+function calcTabelasDisponiveis(){
+  if(calcModoLegado()) return [CALC_TAB_LEGADO];
+  const t = Object.keys(calcTabelasDoExcel());
+  /* Se o KA ganhar coluna própria no Excel um dia, ela manda e eu não acrescento
+     a sintética — mas o acesso continua restrito. */
+  if(t.indexOf(CALC_TAB_KA) >= 0) return calcPodeKeyAccount() ? t : t.filter(x=>x!==CALC_TAB_KA);
+  return calcPodeKeyAccount() ? t.concat([CALC_TAB_KA]) : t;
+}
+function calcTabelaSel(){ const s=el('calcTabela'); return s?s.value:''; }
+
+/* Preço de sell-in da linha na tabela escolhida. KA e modo legado leem
+   CALC.precos, que é o preço de consumidor final — é essa a base histórica. */
+function calcPrecoTabela(sk, tab){
+  if(tab===undefined) tab=calcTabelaSel();
+  if(!tab) return 0;
+  const t=calcTabelasDoExcel()[tab];
+  if(t) return +t[sk]||0;
+  if(tab===CALC_TAB_KA || tab===CALC_TAB_LEGADO) return +(CALC.precos[sk]||0);
+  return 0;
+}
+/* Célula vazia no Excel = "não vende neste canal" (hoje, os 9 packs). Sem esta
+   distinção o item entraria a R$ 0,00, que é o pior desfecho possível: parece
+   pedido de graça e ninguém percebe. */
+function calcTemPreco(sk, tab){
+  if(tab===undefined) tab=calcTabelaSel();
+  const t=calcTabelasDoExcel()[tab];
+  if(t) return t[sk]!==undefined && t[sk]!==null && +t[sk]>0;
+  if(tab===CALC_TAB_KA || tab===CALC_TAB_LEGADO) return (+(CALC.precos[sk]||0))>0;
+  return false;
+}
+/* O teto segue o NOME do canal, não a origem do preço: se o KA ganhar coluna
+   no Excel, o desconto dele continua livre. */
+function calcTetoDesc(tab){
+  if(tab===undefined) tab=calcTabelaSel();
+  return (tab===CALC_TAB_KA || tab===CALC_TAB_LEGADO) ? 100 : CALC_TETO_CANAL;
+}
+
+/* Aviso dos itens lançados que NÃO entraram no pedido por não terem preço na
+   tabela escolhida. Fica aqui, e não dentro do renderCalcResumo, porque o
+   resumo tem dois caminhos de saída — o normal e o "Lance as quantidades" — e
+   justamente o segundo é o caso perigoso: se TODOS os itens lançados forem
+   descartados, c.itens fica vazio e a tela diria "lance as quantidades" para
+   quem acabou de lançar. */
+function calcAvisoForaDaTabela(c){
+  const fora=(c.ignorados||[]).filter(sk=>(CALC_QTD[sk]||0)>0);
+  if(!fora.length) return '';
+  const lista=fora.slice(0,4).map(sk=>prodName(sk)+' ('+(CALC_QTD[sk]||0)+')').join(', ');
+  return '<div style="background:#FFFBEB;border-left:3px solid #D97706;'+
+    'border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:12px">'+
+    '<b>'+fora.length+' item(ns) fora deste pedido</b> — sem preço na tabela '+
+    '<b>'+(c.tab||'')+'</b>, então não entraram na conta: '+lista+
+    (fora.length>4?' e outros '+(fora.length-4):'')+'.</div>';
+}
+
 function vCalc(){
   const estados=Object.keys(CALC.frete_estado).sort();
+  const tabelas=calcTabelasDisponiveis();
   // categorias que realmente têm SKU na calc
   const cats=CAT_ORDER_CALC.filter(c=>calcSkusDe(c).length>0);
   if(!CALC_CATSEL) CALC_CATSEL=cats[0];
@@ -1463,12 +1552,13 @@ function vCalc(){
   if(!CALC_BONISEL) CALC_BONISEL=catBoni[0];
 
   el('v-calc').innerHTML=`
-   <div class="note"><b>Monte o pedido como na sua planilha.</b> Preencha as condições (obrigatórias), depois lance as quantidades por categoria. A rentabilidade usa preço de tabela, CMV real, imposto e frete médios da base. Desconto pode ser geral (todo o pedido) e ajustado por linha — <b>o desconto da linha sobrescreve o geral</b>.</div>
+   <div class="note"><b>Monte o pedido como na sua planilha.</b> Preencha as condições (obrigatórias) — inclusive <b>a tabela de preço do pedido</b> —, depois lance as quantidades por categoria. A rentabilidade usa o preço de sell-in da tabela escolhida, CMV real, imposto e frete médios da base. O desconto vem do geral e pode ser ajustado por linha (<b>a linha sobrescreve o geral</b>), com <b>limite de ${CALC_TETO_CANAL}%</b> nas tabelas de canal.</div>
 
    <div class="card"><div class="card-h"><h3>1 · Condições do pedido <span style="color:var(--neg)">*</span></h3><span class="hint">preenchimento obrigatório</span></div>
      <div style="padding:16px 20px;display:flex;gap:18px;flex-wrap:wrap;align-items:end">
        <div><label class="calc-lab">Estado (UF) *</label><br><select id="calcUF" class="inp"><option value="">—</option>${estados.map(e=>`<option>${e}</option>`).join('')}</select></div>
-       <div><label class="calc-lab">Desconto geral %</label><br><input id="calcDescGeral" class="inp" type="number" value="0" min="0" max="100" style="width:120px"></div>
+       <div><label class="calc-lab">Tabela de preço *</label><br><select id="calcTabela" class="inp"><option value="">—</option>${tabelas.map(t=>`<option>${t}</option>`).join('')}</select></div>
+       <div><label class="calc-lab">Desconto geral %</label><br><input id="calcDescGeral" class="inp" type="number" value="0" min="0" max="100" style="width:120px"><div id="calcDescTeto" style="font-size:10px;color:var(--muted);margin-top:2px"></div></div>
        <div><label class="calc-lab">Comissão RCA %</label><br><input id="calcComissao" class="inp" type="number" value="0" min="0" max="100" style="width:120px"></div>
        <div><label class="calc-lab">Frete *</label><br><select id="calcFreteModo" class="inp"><option value="auto">Médio real do estado</option><option value="manual">Valor manual</option></select></div>
        <div id="calcFreteManualWrap" style="display:none"><label class="calc-lab">Frete manual (R$)</label><br><input id="calcFreteManual" class="inp" type="number" value="0" min="0" style="width:130px"></div>
@@ -1500,6 +1590,9 @@ function vCalc(){
   // listeners condições
   ['calcUF','calcDescGeral','calcComissao','calcFreteManual'].forEach(id=>el(id).addEventListener('input',onCond));
   el('calcUF').addEventListener('change',onCond);
+  /* Trocar de tabela muda TODOS os preços da grade e o teto do desconto, então
+     é 'change' no seletor e não só o onCond do fim da função. */
+  el('calcTabela').addEventListener('change',onCond);
   el('calcFreteModo').addEventListener('change',()=>{ el('calcFreteManualWrap').style.display=el('calcFreteModo').value==='manual'?'':'none'; onCond(); });
   // tabs categorias
   [...document.querySelectorAll('#calcCatTabs .cat-tab')].forEach(b=>b.addEventListener('click',()=>{CALC_CATSEL=b.dataset.c; [...document.querySelectorAll('#calcCatTabs .cat-tab')].forEach(x=>x.classList.toggle('on',x===b)); renderCalcItens();}));
@@ -1512,38 +1605,82 @@ function condOK(){
   const freteModo=el('calcFreteModo').value;
   const freteManual=+el('calcFreteManual').value||0;
   if(!uf) return {ok:false,msg:'Selecione o estado (UF) para calcular imposto e frete.'};
+  /* A tabela é obrigatória como a UF: sem ela não existe preço de linha, e o
+     pedido inteiro sairia a zero. Pedido do Igor em 08/09 — escolher a tabela
+     logo depois do estado. */
+  if(!calcTabelaSel()) return {ok:false,msg:'Selecione a tabela de preço que vale para este pedido.'};
   if(freteModo==='manual' && freteManual<=0) return {ok:false,msg:'Informe o valor do frete manual (maior que zero).'};
   return {ok:true};
 }
 function onCond(){
   const c=condOK();
+  /* O teto do desconto acompanha a tabela: nos canais tabelados é 5%, no Key
+     Account (e no modo legado) segue livre. Mexo no atributo `max` E corto o
+     valor, porque `max` sozinho não impede digitar 40 num input number. */
+  const teto=calcTetoDesc();
+  const dg=el('calcDescGeral');
+  if(dg){
+    dg.max=teto;
+    if((+dg.value||0)>teto) dg.value=teto;
+    const aviso=el('calcDescTeto');
+    if(aviso) aviso.textContent = teto<100 ? ('máximo '+teto+'% nesta tabela') : 'sem limite nesta tabela';
+  }
   el('calcCondAviso').innerHTML = c.ok?'' : `<div style="background:#FEF3F2;border-left:3px solid var(--neg);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--neg)">⚠ ${c.msg}</div>`;
   el('calcMain').style.display = c.ok?'':'none';
   if(c.ok){ renderCalcItens(); renderCalcBoni(); renderCalcBrindes(); renderCalcResumo(); updateBadges(); }
 }
 
-function descLinha(sk){ // efetivo: linha sobrescreve geral
-  const geral=(+el('calcDescGeral').value||0)/100;
-  if(CALC_DESCL[sk]!==undefined && CALC_DESCL[sk]!=='') return (+CALC_DESCL[sk]||0)/100;
+function descLinha(sk){ // efetivo: linha sobrescreve geral, as duas presas ao teto
+  const teto=calcTetoDesc();
+  const geral=Math.min(+el('calcDescGeral').value||0, teto)/100;
+  if(CALC_DESCL[sk]!==undefined && CALC_DESCL[sk]!=='')
+    return Math.min(+CALC_DESCL[sk]||0, teto)/100;
   return geral;
 }
 
 function renderCalcItens(){
   const cont=el('calcItens'); if(!cont) return;
   const skus=calcSkusDe(CALC_CATSEL);
-  cont.innerHTML=`<table class="calc-grid"><thead><tr><th style="min-width:280px">Produto</th><th>Preço tabela</th><th>Desc. linha %</th><th>Preço final</th><th>Qtd</th><th>Subtotal</th></tr></thead>
+  /* SETE colunas desde 08/09/2026. "Preço tabela" passou a ser o sell-in do
+     canal escolhido, e o preço que ficava aqui antes virou "Preço consumidor
+     final" — mesmo número de sempre (CALC.precos), nome novo, porque ele nunca
+     foi sell-in. O "Preço final" continua sendo preço tabela menos o desconto. */
+  const tab=calcTabelaSel(), teto=calcTetoDesc(tab);
+  const geral=Math.min(+el('calcDescGeral').value||0, teto);
+  let semPreco=0;
+  cont.innerHTML=`<table class="calc-grid"><thead><tr><th style="min-width:280px">Produto</th><th>Preço consumidor final</th><th>Preço tabela</th><th>Desc. linha %</th><th>Preço final</th><th>Qtd</th><th>Subtotal</th></tr></thead>
    <tbody>${skus.map(sk=>{
-     const preco=CALC.precos[sk]||0;
+     const pcf=CALC.precos[sk]||0;
+     const tem=calcTemPreco(sk,tab);
+     /* Sem preço no canal a linha aparece, mas SEM campo de quantidade: o
+        vendedor precisa ver que o produto existe e que não tem preço nesta
+        tabela. Deixar entrar a R$ 0,00 seria pedido de graça sem aviso. */
+     if(!tem){
+       semPreco++;
+       return `<tr style="opacity:.55"><td class="rowlab">${prodName(sk)}</td>
+       <td class="mono">${brl2(pcf)}</td>
+       <td class="mono" title="Sem preço nesta tabela — preencha a coluna no Excel (Parametros)">—</td>
+       <td class="mono">—</td><td class="mono">—</td>
+       <td style="font-size:11px;color:var(--muted)">sem preço</td>
+       <td class="mono">—</td></tr>`;
+     }
+     const preco=calcPrecoTabela(sk,tab);
      const d=descLinha(sk); const pf=preco*(1-d);
      const q=CALC_QTD[sk]||0; const sub=pf*q;
-     const dval=(CALC_DESCL[sk]!==undefined&&CALC_DESCL[sk]!=='')?CALC_DESCL[sk]:'';
+     /* O desconto da linha JÁ VEM PREENCHIDO com o geral, em vez do antigo
+        placeholder "ger": pedido do Igor — "traz o desconto da condição, mas
+        continua ajustável". Enquanto ninguém digita nada aqui, CALC_DESCL fica
+        vazio e a linha continua seguindo o geral automaticamente. */
+     const dval=(CALC_DESCL[sk]!==undefined&&CALC_DESCL[sk]!=='')?CALC_DESCL[sk]:geral;
      return `<tr class="${q>0?'filled':''}"><td class="rowlab">${prodName(sk)}</td>
+       <td class="mono" style="color:var(--muted)">${brl2(pcf)}</td>
        <td class="mono">${brl2(preco)}</td>
-       <td><input type="number" min="0" max="100" placeholder="ger" value="${dval}" oninput="CALC_DESCL['${sk}']=this.value;renderCalcItens();renderCalcResumo();updateBadges()" class="calc-in" style="width:64px"></td>
+       <td><input type="number" min="0" max="${teto}" value="${dval}" oninput="CALC_DESCL['${sk}']=this.value;renderCalcItens();renderCalcResumo();updateBadges()" class="calc-in" style="width:64px"></td>
        <td class="mono">${brl2(pf)}</td>
        <td><input type="number" min="0" value="${q||''}" placeholder="0" oninput="CALC_QTD['${sk}']=+this.value||0;renderCalcItens();renderCalcResumo();updateBadges()" class="calc-in" style="width:70px"></td>
        <td class="mono">${q>0?brl2(sub):'—'}</td></tr>`;
-   }).join('')}</tbody></table>`;
+   }).join('')}</tbody></table>
+   ${semPreco?`<div style="padding:8px 14px;font-size:11px;color:var(--muted)">${semPreco} item(ns) sem preço na tabela <b>${tab}</b> — para liberar, preencha a coluna &ldquo;Tabela ${tab}&rdquo; na aba Parametros do V8.</div>`:''}`;
 }
 
 function renderCalcBoni(){
@@ -1587,13 +1724,22 @@ function calcCompute(){
   const impPct=CALC.imp_estado[uf]??0.16, frPct=CALC.frete_estado[uf]??0.07;
   const comissao=(+el('calcComissao').value||0)/100;
   const freteModo=el('calcFreteModo').value, freteManual=+el('calcFreteManual').value||0;
+  const tab=calcTabelaSel();
   let bruto=0, liq=0, cmvItens=0; const itens=[];
+  const ignorados=[];
   Object.keys(CALC_QTD).forEach(sk=>{
     const q=CALC_QTD[sk]||0; if(q<=0) return;
-    const preco=CALC.precos[sk]||0, d=descLinha(sk), pf=preco*(1-d);
+    /* Guarda que a tela sozinha não dá: a quantidade sobrevive à troca de
+       tabela. Se o item tinha preço no Especializado, o vendedor lançou 10, e
+       depois trocou para Distribuidores onde ele não tem preço, a linha
+       desaparece da grade mas CALC_QTD continua com 10 — e o pedido sairia com
+       um item a R$ 0,00 que ninguém vê. Aqui ele fica de fora e é reportado. */
+    if(!calcTemPreco(sk,tab)){ ignorados.push(sk); return; }
+    const preco=calcPrecoTabela(sk,tab), d=descLinha(sk), pf=preco*(1-d);
     const b=preco*q, l=pf*q, cmv=(CALC.cmv[sk]||0)*q;
     bruto+=b; liq+=l; cmvItens+=cmv;
-    itens.push({sk,q,preco,d,pf,liq:l,cmv,lucroUnit:pf-(CALC.cmv[sk]||0)});
+    itens.push({sk,q,preco,pcf:CALC.precos[sk]||0,d,pf,liq:l,cmv,
+                lucroUnit:pf-(CALC.cmv[sk]||0)});
   });
   let cmvBoni=0; const boni=[];
   Object.keys(CALC_BONI).forEach(sk=>{ const q=CALC_BONI[sk]||0; if(q<=0)return; const cmv=(CALC.cmv[sk]||0)*q; cmvBoni+=cmv; boni.push({sk,q,cmv}); });
@@ -1606,7 +1752,7 @@ function calcCompute(){
   const lucroBruto=liq-cmvT;
   const lucro=lucroBruto-imp-fr-comissaoVal;
   const rent=liq?lucro/liq:0;
-  return {uf,impPct,frPct,itens,boni,brindes,bruto,liq,cmvItens,cmvBoni,cmvBrinde,cmvT,imp,fr,comissaoVal,lucroBruto,lucro,rent};
+  return {uf,tab,ignorados,impPct,frPct,itens,boni,brindes,bruto,liq,cmvItens,cmvBoni,cmvBrinde,cmvT,imp,fr,comissaoVal,lucroBruto,lucro,rent};
 }
 
 function renderCalcResumo(){
@@ -3278,13 +3424,25 @@ window.renderCalcResumo = function(){
   const c = calcCompute();
   try{ mostrarTotalPedido(); }catch(e){}
   if(!c.itens.length && !c.boni.length && !c.brindes.length){
-    resumo.innerHTML =
+    /* O aviso vem ANTES do "lance as quantidades": se a pessoa lançou e tudo
+       foi descartado por falta de preço na tabela, a mensagem sozinha seria
+       mentira. */
+    resumo.innerHTML = calcAvisoForaDaTabela(c) +
       '<div class="empty">Lance as quantidades para ver a rentabilidade.</div>';
     if(insights) insights.innerHTML = '';
     return;
   }
   const dg = el2('calcDescGeral');
   const descGeral = (dg ? (+dg.value || 0) : 0) / 100;
+
+  /* Item que ficou de fora por não ter preço na tabela escolhida (08/09/2026).
+     Isto TEM de estar na tela: a quantidade sobrevive à troca de tabela, então
+     quem lançou 10 no Especializado e trocou para Distribuidores veria o total
+     cair sem entender por quê. O aviso diz o quê e quanto. */
+  /* Nome longo de propósito: `fora` já significa outra coisa neste arquivo (em
+     renderCalcBrindes é "sem CMV cadastrado"), e duas coisas diferentes com o
+     mesmo nome no mesmo assunto é como se erra na próxima leitura. */
+  const avisoFora = calcAvisoForaDaTabela(c);
 
   /* KPI do impacto total, so para vendedor: e a resposta direta a "quanto isso
      me custa de margem". O admin ja tem o CMV total e a margem bruta. */
@@ -3384,11 +3542,13 @@ window.renderCalcResumo = function(){
   const tdVazio = adm ? '' : '<td class="mono" style="color:var(--muted)">—</td>';
 
   resumo.innerHTML =
+    avisoFora +
     '<div class="kpirow" style="margin-bottom:14px">' +
     '<div class="kpi accent"><div class="lab">Valor líquido</div>' +
     '<div class="val">' + brl2(c.liq) + '</div>' +
     '<div class="sub">bruto ' + brl2(c.bruto) +
-    (descGeral ? ' · desc. geral ' + pct(descGeral) : '') + '</div></div>' +
+    (descGeral ? ' · desc. geral ' + pct(descGeral) : '') +
+    (c.tab ? ' · tabela ' + c.tab : '') + '</div></div>' +
     kpisAdm + kpiImpacto + kpiRent + '</div>' +
     '<h4 style="color:var(--navy);margin:6px 0 8px">Itens do pedido (qtd &gt; 0)</h4>' +
     '<table><thead><tr><th>Produto</th><th>Qtd</th><th>Preço final</th>' +
@@ -5602,6 +5762,11 @@ function calcExtrairPedido(){
   push('Extraído em', new Date().toLocaleString('pt-BR'));
   push('Usuário', (SESSION && SESSION.user) || '');
   push('Estado (UF)', c.uf);
+  /* A tabela usada vai no arquivo porque sem ela o pedido é irreproduzível: o
+     mesmo SKU tem três preços de sell-in, e em dezembro ninguém lembra qual
+     canal era. */
+  push('Tabela de preço', c.tab || '');
+  push('Teto de desconto %', num(calcTetoDesc(c.tab)));
   const dg = document.getElementById('calcDescGeral');
   push('Desconto geral %', num(dg ? dg.value : 0));
   const cm = document.getElementById('calcComissao');
@@ -5626,15 +5791,25 @@ function calcExtrairPedido(){
   push('');
 
   push('PEDIDO');
-  push(...['Produto', 'Preço tabela', 'Desc. linha %', 'Preço final', 'Qtd',
+  push(...['Produto', 'Preço consumidor final', 'Preço tabela',
+           'Desc. linha %', 'Preço final', 'Qtd',
            'Subtotal'].concat(adm ? ['CMV unit.', 'CMV total'] : []));
   c.itens.forEach(i => {
     const cmvU = (CALC.cmv[i.sk] || 0);
-    push(...[prodName(i.sk), num(i.preco.toFixed(2)),
+    push(...[prodName(i.sk), num((i.pcf || 0).toFixed(2)),
+             num(i.preco.toFixed(2)),
              num((i.d * 100).toFixed(2)), num(i.pf.toFixed(2)), i.q,
              num(i.liq.toFixed(2))]
             .concat(adm ? [num(cmvU.toFixed(2)), num(i.cmv.toFixed(2))] : []));
   });
+  /* Item lançado e depois descartado por não ter preço na tabela escolhida:
+     tem de aparecer no arquivo, senão a diferença entre o que a pessoa digitou
+     e o que o pedido cobra fica invisível. */
+  if(c.ignorados && c.ignorados.length){
+    push('');
+    push('ITENS IGNORADOS (sem preço na tabela ' + (c.tab || '') + ')');
+    c.ignorados.forEach(sk => push(prodName(sk), CALC_QTD[sk] || 0));
+  }
   push('');
 
   push('BONIFICAÇÃO');
