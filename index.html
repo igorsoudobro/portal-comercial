@@ -269,6 +269,47 @@ table.mapa-tbl tbody tr:hover td{background:#F0F3FA}
 #v-carteira table tbody tr:hover td:first-child,
 #v-ranking table tbody tr:hover td:first-child{ background: #F0F3FA; }
 
+/* ---------- BLOCO DE SHARES (09/09/2026) ----------------------------------
+   Fundos comparando cada mês com o ANTERIOR, como na matriz do fechamento em
+   Word. Tons bem claros de propósito: são 13 categorias × até 9 meses, e cor
+   forte nessa densidade vira ruído em vez de leitura. */
+.shr-up{ background:#E9F6EF; }     /* share subiu contra o mês anterior */
+.shr-dn{ background:#FDEDEC; }     /* caiu */
+.shr-eq{ background:#FFF7E0; }     /* ficou igual (arredondado a 0,1 p.p.) */
+.shr-tbl{ width:100%; border-collapse:collapse; font-size:12px; }
+.shr-tbl th, .shr-tbl td{ padding:5px 9px; white-space:nowrap; }
+.shr-tbl thead th{
+  background:#F6F7F9; color:var(--navy); font-weight:700;
+  font-size:10px; text-transform:uppercase; letter-spacing:.04em;
+  border-bottom:1px solid var(--line); text-align:right;
+}
+.shr-tbl thead th:first-child{ text-align:left; }
+.shr-tbl td{ text-align:right; border-bottom:1px solid #F1F3F7; }
+.shr-tbl td:first-child{ text-align:left; }
+/* primeira coluna presa: com 9 meses a tabela rola e o nome tem de ficar */
+.shr-tbl th:first-child, .shr-tbl td:first-child{
+  position:sticky; left:0; z-index:2; background:#fff;
+}
+.shr-tbl thead th:first-child{ z-index:3; background:#F6F7F9; }
+.shr-tbl tr.shr-cat td:first-child{ cursor:pointer; user-select:none; font-weight:600; }
+.shr-tbl tr.shr-cat:hover td:first-child{ background:#F0F3FA; }
+.shr-tbl tr.shr-cat.aberta td:first-child{ background:#DCE4F0; }
+.shr-caret{ color:var(--muted); font-size:9px; margin-right:4px; }
+.shr-tbl tr.shr-sku td{ background:#FBFCFE; color:var(--muted); font-size:11px; }
+.shr-tbl tr.shr-sku td:first-child{ padding-left:26px; background:#FBFCFE; }
+.shr-tbl tr.shr-tot td{
+  font-weight:800; color:var(--navy); border-top:2px solid var(--navy);
+  border-bottom:none; background:#fff;
+}
+.shr-tog{ display:inline-flex; gap:0; margin-left:auto; }
+.shr-tog button{
+  font-size:11px; padding:4px 10px; cursor:pointer;
+  border:1px solid var(--line); background:#fff; color:var(--muted);
+}
+.shr-tog button:first-child{ border-radius:6px 0 0 6px; }
+.shr-tog button:last-child{ border-radius:0 6px 6px 0; border-left:none; }
+.shr-tog button.on{ background:var(--navy); color:#fff; border-color:var(--navy); }
+
 /* ---------- AJUSTE 1: filtros em "chips" ---------------------------------- */
 .chipbox{
   display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
@@ -2964,6 +3005,14 @@ function vResumoNovo(){
     // pode levar embora a tabela por vendedor, que e o que sempre existiu.
     try{ montarVendaDiaria(); }catch(e){ console.error('venda diaria:', e); }
     view.insertAdjacentHTML('beforeend', tabela);
+    /* Shares ACIMA do Match do frete (pedido do Igor, 09/09/2026): share de
+       categoria e leitura comercial, o match do frete e qualidade de dado.
+       Em try/catch pelo mesmo motivo da venda diaria - um erro aqui nao pode
+       levar embora a tabela por vendedor, que e o que sempre existiu. */
+    try{
+      const sh = montarShares();
+      if(sh){ view.insertAdjacentHTML('beforeend', sh); ligarShares(); }
+    }catch(e){ console.error('shares:', e); }
     // Match do frete depois da tabela por vendedor: e indicador de QUALIDADE do
     // dado, nao de resultado comercial - fica no fim de proposito.
     try{
@@ -4007,6 +4056,226 @@ function vMixNovo(){
     novo.addEventListener(id === 'mixBusca' ? 'input' : 'change', render);
   });
   render();
+}
+
+/* ============== BLOCO DE SHARES (09/09/2026) ==============================
+   Pedido do Igor: na aba Resumo, acima do Match do frete, dois quadros de
+   share de categoria - um em PERCENTUAL e um em VALOR BRUTO -, cada um com
+   botao para alternar entre faturamento e volume, e clicar na categoria abre
+   os SKUs dela, como no Mix por CNPJ.
+
+   DUAS DECISOES MEDIDAS, NAO ESCOLHIDAS NO ESCURO
+   -----------------------------------------------
+   1. LIQUIDO (venda + devolucao), nao so venda. Medido contra a matriz do
+      fechamento em Word de Agosto: liquido da Carbs Gel 36,6%, BT Nitrato Lata
+      12,7%, BT Nitrato Gel 10,9% e total R$ 1.758.958 - identico ao documento.
+      So-venda daria 38,1% / 12,1% / 10,4%. Ou seja: liquido e o que faz as duas
+      pecas concordarem, e concordar entre telas e o que evita a discussao de
+      "qual dos dois esta errado".
+
+   2. VOLUME tambem liquido, porque a devolucao vem com quantidade NEGATIVA -
+      conferido nas 565 linhas de devolucao do FATO, todas com q < 0. Se viesse
+      positiva, somar seria inflar o volume com o que voltou, e eu teria de
+      inventar um sinal.
+
+   A RESSALVA QUE VAI NA TELA: volume e quantidade em UNIDADE DE VENDA. Uma
+   caixa de "BT Nitrato Gel 10x30" conta 1 e um stick avulso conta 1. Entao
+   share por volume compara embalagens diferentes - util para ver movimento
+   dentro da mesma categoria, enganoso para comparar categorias entre si. Sem o
+   rotulo, alguem conclui que Creatina Stick vende mais que Carbs Gel.
+
+   AS CORES seguem a matriz do Word: verde = o share subiu contra o mes
+   ANTERIOR DA TELA, vermelho = caiu, amarelo = ficou igual arredondado a
+   0,1 p.p. A primeira coluna nunca tem cor, porque nao ha anterior - mesma
+   regra que deixa Janeiro sem cor no documento.
+
+   RESPEITA O FILTRO DE PERIODO (escolha do Igor): so aparecem os meses que
+   estao no recorte. Com um mes so, o quadro fica com uma coluna e sem cores -
+   e a nota explica por que, em vez de a cor simplesmente nao aparecer. */
+const SHARE_ABERTAS = new Set();          /* categorias abertas em SKU */
+const SHARE_MODO = {pct: 'fat', abs: 'fat'};   /* cada quadro tem o seu */
+
+function shrDados(){
+  /* LIQUIDO: venda + devolucao. tipo===0 e devolucao (fat e q negativos). */
+  const L = linhas().filter(r => r.venda || r.tipo === 0);
+  const meses = MESES_ORD.filter(m => L.some(r => r.m === m));
+  const cat = {}, sku = {}, tot = {}, catDoSku = {}, totalCat = {};
+
+  const soma = (alvo, chave, m, r) => {
+    const o = alvo[chave] = alvo[chave] || {};
+    const c = o[m] = o[m] || {fat: 0, vol: 0};
+    c.fat += r.fat; c.vol += r.q;
+  };
+  L.forEach(r => {
+    const c = r.cat || 'Outros';
+    soma(cat, c, r.m, r);
+    soma(sku, r.sk, r.m, r);
+    catDoSku[r.sk] = c;
+    const t = tot[r.m] = tot[r.m] || {fat: 0, vol: 0};
+    t.fat += r.fat; t.vol += r.q;
+    const tc = totalCat[c] = totalCat[c] || {fat: 0, vol: 0};
+    tc.fat += r.fat; tc.vol += r.q;
+  });
+
+  /* Ordem: maior faturamento liquido do PERIODO, decrescente. Escolhi o total
+     do periodo e nao "o ultimo mes" (como o Word faz) porque aqui o recorte
+     muda: ordenar pelo ultimo mes faria a lista pular de posicao a cada
+     filtro, e o mes corrente e parcial. */
+  const cats = Object.keys(cat).sort((a, b) =>
+    (totalCat[b].fat - totalCat[a].fat) || a.localeCompare(b, 'pt-BR'));
+  const skusDaCat = {};
+  cats.forEach(c => {
+    skusDaCat[c] = Object.keys(sku)
+      .filter(s => catDoSku[s] === c)
+      .sort((a, b) => {
+        const sa = meses.reduce((x, m) => x + ((sku[a][m] || {}).fat || 0), 0);
+        const sb = meses.reduce((x, m) => x + ((sku[b][m] || {}).fat || 0), 0);
+        return sb - sa;
+      });
+  });
+  return {meses, cats, cat, sku, tot, skusDaCat};
+}
+
+/* Classe de fundo comparando com o mes anterior DA TELA. `ant` undefined =
+   primeira coluna, sem comparacao possivel. */
+function shrCor(v, ant, casas){
+  if(ant === undefined || ant === null) return '';
+  const a = +v.toFixed(casas), b = +ant.toFixed(casas);
+  return a > b ? 'shr-up' : a < b ? 'shr-dn' : 'shr-eq';
+}
+
+function shrTabela(qual){
+  const modo = SHARE_MODO[qual];                 /* 'fat' | 'vol' */
+  const ehPct = (qual === 'pct');
+  const D = shrDados();
+  if(!D.meses.length || !D.cats.length)
+    return '<div class="empty">Sem vendas nos filtros selecionados.</div>';
+
+  const valor = (o, m) => (o && o[m]) ? (o[m][modo] || 0) : 0;
+  const share = (o, m) => {
+    const t = (D.tot[m] || {})[modo] || 0;
+    return t ? valor(o, m) / t : 0;
+  };
+  const fmt = (x) => ehPct ? pct(x) : (modo === 'fat' ? brl(x) : n0(x));
+
+  const linha = (nome, o, cls, dataCat, aberta, nSku) => {
+    let tds = '';
+    let ant;
+    D.meses.forEach(m => {
+      const v = ehPct ? share(o, m) : valor(o, m);
+      const cor = shrCor(v, ant, ehPct ? 3 : 0);
+      ant = v;
+      tds += '<td class="mono ' + cor + '">' + fmt(v) + '</td>';
+    });
+    const caret = dataCat
+      ? '<span class="shr-caret">' + (aberta ? '▼' : '▶') + '</span>' : '';
+    const marca = dataCat ? ' data-shr-cat="' + encodeURIComponent(nome) + '"' : '';
+    const conta = (dataCat && nSku)
+      ? ' <span style="color:var(--muted);font-weight:400">(' + nSku + ')</span>' : '';
+    return '<tr class="' + cls + (aberta ? ' aberta' : '') + '"' + marca + '>' +
+      '<td>' + caret + nome + conta + '</td>' + tds + '</tr>';
+  };
+
+  let corpo = '';
+  D.cats.forEach(c => {
+    const aberta = SHARE_ABERTAS.has(c);
+    corpo += linha(c, D.cat[c], 'shr-cat', true, aberta, D.skusDaCat[c].length);
+    if(aberta) D.skusDaCat[c].forEach(s => {
+      const nome = prodName(s).replace(/^Dobro\s+/i, '');
+      corpo += linha(nome, D.sku[s], 'shr-sku', false);
+    });
+  });
+
+  /* Linha de total: no quadro de % fecha 100% em cada mes (e a prova de que a
+     coluna esta consistente); no de valores mostra o liquido do mes. */
+  let tdsTot = '', antT;
+  D.meses.forEach(m => {
+    const v = ehPct ? 1 : ((D.tot[m] || {})[modo] || 0);
+    const cor = ehPct ? '' : shrCor(v, antT, 0);
+    antT = v;
+    tdsTot += '<td class="mono ' + cor + '">' + fmt(v) + '</td>';
+  });
+
+  return '<table class="shr-tbl"><thead><tr><th>Categoria</th>' +
+    D.meses.map(m => '<th>' + m.substring(0, 3) + '</th>').join('') +
+    '</tr></thead><tbody>' + corpo +
+    '<tr class="shr-tot"><td>' + (ehPct ? 'Total' : 'Total do mês') + '</td>' +
+    tdsTot + '</tr></tbody></table>';
+}
+
+function shrCard(qual, titulo, dica){
+  const modo = SHARE_MODO[qual];
+  return '<div class="card" id="cardShr' + qual + '"><div class="card-h">' +
+    '<h3>' + titulo + '</h3><span class="hint">' + dica + '</span>' +
+    '<span class="shr-tog" data-shr-quadro="' + qual + '">' +
+    '<button data-shr-modo="fat"' + (modo === 'fat' ? ' class="on"' : '') +
+    '>Faturamento</button>' +
+    '<button data-shr-modo="vol"' + (modo === 'vol' ? ' class="on"' : '') +
+    '>Volume</button></span></div>' +
+    '<div class="scroll" id="shrOut' + qual + '">' + shrTabela(qual) + '</div>' +
+    '</div>';
+}
+
+function montarShares(){
+  const D = shrDados();
+  if(!D.meses.length || !D.cats.length) return '';
+  const umMes = D.meses.length === 1;
+  const nota = '<div class="note"><b>Fundo verde</b> = o share subiu contra o ' +
+    'mês anterior desta tela · <b>vermelho</b> = caiu · <b>amarelo</b> = ficou ' +
+    'igual (arredondado a 0,1 p.p.). A primeira coluna nunca tem cor, porque ' +
+    'não há mês anterior para comparar. ' +
+    (umMes ? '<b>Com um mês só no filtro não há comparação</b>, então nenhuma ' +
+             'célula fica colorida — amplie o período para ver o movimento. '
+           : '') +
+    'Percentual sobre o faturamento <b>líquido</b> do mês (venda − devolução), ' +
+    'o mesmo critério da matriz do fechamento em Word. ' +
+    '<b>Clique na categoria</b> para abrir os SKUs dela. ' +
+    '<b>Volume é quantidade em unidade de venda</b> — uma caixa de 10x30 conta ' +
+    '1 e um stick avulso conta 1, então volume serve para ver movimento dentro ' +
+    'da categoria, não para comparar categorias entre si.</div>';
+
+  return '<div class="card" style="padding:0;border:none;box-shadow:none;' +
+    'margin:0"><div class="card-h" style="border:none;padding-bottom:0">' +
+    '<h3>Shares por categoria</h3><span class="hint">' + D.meses.length +
+    ' mês(es) no filtro · clique na categoria para abrir por SKU</span>' +
+    '</div></div>' +
+    shrCard('pct', 'Share de categoria', 'percentual do líquido do mês') +
+    shrCard('abs', 'Faturamento e volume por categoria', 'valores brutos') +
+    nota;
+}
+
+/* Ouvinte no CARTAO, nao no botao nem na linha: o innerHTML de #shrOut* e
+   trocado a cada clique, e handler pendurado em elemento que sera destruido
+   para de funcionar. Foi exatamente o bug da Calculadora em 08/09/2026 - o
+   campo era substituido no meio do proprio evento. Aqui o cartao permanece. */
+function ligarShares(){
+  ['pct', 'abs'].forEach(qual => {
+    const card = document.getElementById('cardShr' + qual);
+    if(!card || card.dataset.ligado) return;
+    card.dataset.ligado = '1';
+    card.addEventListener('click', ev => {
+      const bt = ev.target.closest('[data-shr-modo]');
+      if(bt){
+        SHARE_MODO[qual] = bt.dataset.shrModo;
+        card.querySelectorAll('[data-shr-modo]').forEach(b =>
+          b.classList.toggle('on', b === bt));
+        const out = document.getElementById('shrOut' + qual);
+        if(out) out.innerHTML = shrTabela(qual);
+        return;
+      }
+      const tr = ev.target.closest('tr[data-shr-cat]');
+      if(!tr) return;
+      const c = decodeURIComponent(tr.dataset.shrCat);
+      if(SHARE_ABERTAS.has(c)) SHARE_ABERTAS.delete(c); else SHARE_ABERTAS.add(c);
+      /* abrir/fechar categoria vale para os DOIS quadros: e a mesma pergunta
+         ("o que tem dentro dessa categoria"), e ver aberto num e fechado no
+         outro so confunde */
+      ['pct', 'abs'].forEach(q => {
+        const o = document.getElementById('shrOut' + q);
+        if(o) o.innerHTML = shrTabela(q);
+      });
+    });
+  });
 }
 
 /* ============== MATCH DO FRETE (visao admin) ==============================
