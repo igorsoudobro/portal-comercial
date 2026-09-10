@@ -713,11 +713,45 @@ function linhas(){
    O CNPJ é normalizado para só dígitos aqui porque a planilha guarda com
    pontuação e o FATO indexa sem. Normalizar num lugar só evita o modo de falha
    silencioso: de-para que não casa não dá erro, só deixa de cobrar. */
-function contratoPct(cn){
+/* ZEROS À ESQUERDA: a base perde, a planilha guarda (10/09/2026)
+   -------------------------------------------------------------
+   O Igor viu que o WMB Supermercados não estava sendo cobrado apesar de ter
+   faturado, e desconfiou certo: "acredito que eles estejam puxando sem os 0".
+
+   Medido: a dimensão CNPJ do FATO tem 70 chaves de 11 dígitos contra 1.355 de
+   14. O WMB está lá como '63960006999' enquanto a planilha guarda
+   '00.063.960/0069-99' — os dois zeros da frente se perderam no caminho do
+   OMIE, provavelmente por CNPJ virar número em algum passo. Comparar só
+   dígito a dígito não casava, e o modo de falha era o pior: nenhum erro na
+   tela, só custo que deixa de ser cobrado.
+
+   A chave canônica ignora zeros à esquerda dos dois lados. A checagem que me
+   deixou fazer isso: nas 1.425 chaves da base, ZERO pares distintos colapsam
+   na mesma forma canônica - então não existe risco de cobrar de quem não deve.
+   Se um dia existir, o gerador avisa (ver ler_contratos no Python).
+
+   Eu tinha esse sinal e o desperdicei: quando carreguei a tabela, o confronto
+   com a base marcou estes 5 CNPJs como "não está na base de 2026" e eu
+   expliquei como "cliente que ainda não comprou". O alarme era certo. */
+function _canonCnpj(v){
+  return String(v||'').replace(/\D/g,'').replace(/^0+/,'');
+}
+let _CONTR_IX=null, _CONTR_SRC=null;
+function contratoIndex(){
   const M=(typeof _Z==='object'&&_Z&&_Z.CONTRATOS)?_Z.CONTRATOS:null;
-  if(!M) return 0;
-  const d=String(cn||'').replace(/\D/g,'');
-  return +M[d]||0;
+  if(_CONTR_IX && _CONTR_SRC===M) return _CONTR_IX;   // cache por identidade
+  const ix={};
+  if(M) Object.keys(M).forEach(k=>{
+    const c=_canonCnpj(k);
+    if(c) ix[c]=+M[k]||0;
+  });
+  _CONTR_IX=ix; _CONTR_SRC=M;
+  return ix;
+}
+function contratoPct(cn){
+  const c=_canonCnpj(cn);
+  if(!c) return 0;
+  return +contratoIndex()[c]||0;
 }
 
 function dre(rows){
@@ -4822,6 +4856,48 @@ window.verFaturamentoBruto = function(){
               'o cartão mostra o bruto, antes das devoluções');
 };
 
+/* Contratos: quem gera o custo, com percentual e valor (10/09/2026)
+   Pedido do Igor: clicar no cartão e ver cliente, CNPJ, percentual e valor, no
+   mesmo formato dos outros popups. Soma pelo MESMO critério do dre() - líquido
+   (venda + devolução) por CNPJ, vezes o percentual -, senão a lista discorda do
+   cartão que a abriu, que é o erro que o _clientesDe documenta ter custado caro. */
+window.verContratos = function(){
+  const info = {};
+  linhas().forEach(r => {
+    if(!r.cn) return;
+    if(!(r.venda || r.tipo === 0)) return;      // bonif/amostra não têm receita
+    const p = contratoPct(r.cn);
+    if(!p) return;
+    const o = info[r.cn] = info[r.cn] ||
+      {liq:0, pct:p, uf:r.uf, ca:r.ca, mo:r.mo};
+    o.liq += r.fat;
+  });
+  const arr = Object.keys(info).map(cn => {
+    const o = info[cn];
+    return {cn: cn,
+            nome: (typeof cliName === 'function' ? cliName(cn) : '') || cn,
+            mo: o.mo || '—', uf: o.uf || '—', ca: o.ca || '—',
+            pctN: o.pct, pct: pct(o.pct),
+            liqN: o.liq, liq: brl(o.liq),
+            valN: o.liq * o.pct, val: brl(o.liq * o.pct)};
+  }).sort((a, b) => b.valN - a.valN);
+  const tv = arr.reduce((a, r) => a + r.valN, 0);
+  const tl = arr.reduce((a, r) => a + r.liqN, 0);
+  const neg = arr.filter(r => r.liqN < 0).length;
+  _modal('Contratos no período',
+    _tabela([{k:'nome',lab:'Cliente'},{k:'cn',lab:'CNPJ',mono:1},
+             {k:'mo',lab:'Modelo'},{k:'uf',lab:'UF'},{k:'ca',lab:'Canal'},
+             {k:'pct',lab:'Contrato',dir:'r',mono:1},
+             {k:'liq',lab:'Faturamento líquido',dir:'r',mono:1},
+             {k:'val',lab:'Custo do contrato',dir:'r',mono:1}], arr,
+      arr.length + ' cliente(s) · líquido ' + brl(tl) +
+      ' · custo ' + brl(tv) +
+      ' · percentual sobre o líquido de cada CNPJ, de Parametros!BB:BD' +
+      (neg ? ' · ' + neg + ' com líquido negativo (mais devolução que venda no '
+           + 'recorte), então o contrato aparece como crédito' : '') +
+      ' · mesmo recorte dos filtros da tela'));
+};
+
 window.verClientesDoCanal = function(canal){
   const L = linhas().filter(r => (r.ca || '(vazio)') === canal);
   _clientesDe(L, 'Canal ' + canal + ' · clientes',
@@ -5189,7 +5265,10 @@ function ligarCliquesExtras(){
   ligar(row, [[/faturamento bruto/i, () => verFaturamentoBruto()],
               [/clientes ativos/i, verClientesAtivos],
               [/devolu/i,          verDevolucoes],
-              [/bonif/i,           verBonificacao]]);
+              [/bonif/i,           verBonificacao],
+              /* 'contrato' não colide com nenhum outro rótulo do cartão, e o
+                 find para no primeiro que casa - por isso entra no fim. */
+              [/contrato/i,        verContratos]]);
 
   /* 'não compraram' ANTES de 'compraram': /compraram/ casa dentro de "Não
       compraram" tambem, e o find para no primeiro. Invertido, os dois botoes
