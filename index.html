@@ -6069,21 +6069,132 @@ function slaRender(S){
     'não atende a localidade. <b>Clique num estado</b> (no mapa ou na tabela) ' +
     'para ver transportadoras, prazos e buscar cidade.</div>';
 
+  /* ORDEM DA TELA (pedido do Igor, 10/09/2026): cidade primeiro, depois as
+     transportadoras do estado, e o mapa embaixo.
+
+     A inversão mudou a natureza da busca. Antes ela vivia DENTRO do estado -
+     era preciso escolher a UF para só então procurar a cidade. Se a cidade vem
+     primeiro, a busca tem de ser das 11.198 de uma vez, e é ela que descobre o
+     estado. É o caminho de quem usa: o vendedor sabe a cidade do cliente, não a
+     UF de cor.
+
+     A datalist é preenchida SOB DEMANDA, a partir de 2 letras e no máximo 60
+     opções. Jogar 11.198 <option> no DOM de uma vez travaria o campo enquanto
+     se digita, e o navegador não precisa da lista inteira para sugerir. */
   box.innerHTML = carimbo +
+    '<div class="card"><div class="card-h"><h3>Buscar cidade</h3>' +
+    '<span class="hint">digite a cidade e veja o prazo de cada transportadora</span>' +
+    '</div><div style="padding:14px 20px">' +
+      '<input id="slaBusca" class="inp" list="slaLista" ' +
+        'style="min-width:320px" placeholder="Ex.: Jundiai, Rio Branco…" ' +
+        'autocomplete="off">' +
+      '<datalist id="slaLista"></datalist>' +
+      '<div id="slaCidade" style="margin-top:12px"></div>' +
+    '</div></div>' +
+    '<div id="slaDetalhe"></div>' +
     '<div class="card"><div class="card-h"><h3>SLA de entrega por estado</h3>' +
-    '<span class="hint">mais escuro = entrega mais rápida no melhor caso</span></div>' +
+    '<span class="hint">mais escuro = entrega mais rápida no melhor caso · ' +
+    'clique num estado</span></div>' +
     '<div style="padding:14px 20px;display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">' +
       '<div style="flex:1 1 60%;min-width:320px">'+mapa+'</div>' +
       '<div style="flex:1 1 32%;min-width:230px;max-height:560px;overflow:auto">'+tabela+'</div>' +
-    '</div></div>' +
-    '<div id="slaDetalhe"></div>';
+    '</div></div>';
 
   const ir = (uf) => { SLA_UF = uf; slaPainel(S, uf); };
   box.querySelectorAll('[data-slauf]').forEach(p =>
     p.addEventListener('click', () => ir(p.getAttribute('data-slauf'))));
   box.querySelectorAll('[data-slaufrow]').forEach(tr =>
     tr.addEventListener('click', () => ir(tr.getAttribute('data-slaufrow'))));
+
+  slaLigarBusca(S);
   if(SLA_UF && S.sla[SLA_UF]) slaPainel(S, SLA_UF);
+}
+
+/* Sem acento e sem caixa: a base da logística guarda a cidade em maiúscula e
+   SEM acento ('SAO PAULO'), mas quem digita escreve 'São Paulo'. Comparar cru
+   faria a busca falhar justamente nas cidades mais procuradas. */
+function slaChave(s){
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+         .trim().toLowerCase();
+}
+
+let SLA_FLAT = null;
+function slaLista(S){
+  if(SLA_FLAT) return SLA_FLAT;
+  SLA_FLAT = [];
+  Object.keys(S.cities || {}).forEach(uf => {
+    (S.cities[uf] || []).forEach(c => {
+      const disp = slaTitulo(c.c) + ' — ' + uf;
+      SLA_FLAT.push({c: c, uf: uf, disp: disp, k: slaChave(c.c),
+                     kd: slaChave(disp)});
+    });
+  });
+  return SLA_FLAT;
+}
+
+function slaLigarBusca(S){
+  const inp = el('slaBusca'), lista = el('slaLista'), alvo = el('slaCidade');
+  if(!inp) return;
+  const todas = slaLista(S);
+
+  const achar = (txt) => {
+    const k = slaChave(txt);
+    if(!k) return null;
+    /* casamento exato pelo rótulo ("Jundiai — SP") primeiro: é o que a datalist
+       devolve quando a pessoa escolhe uma sugestão. Depois pelo nome puro, para
+       quem digita só a cidade e ela é única. */
+    let e = todas.find(x => x.kd === k);
+    if(e) return e;
+    const so = todas.filter(x => x.k === k);
+    return so.length === 1 ? so[0] : null;
+  };
+
+  const desenhar = () => {
+    const bruto = inp.value || '';
+    const k = slaChave(bruto);
+    /* sugestões */
+    if(k.length >= 2){
+      const m = todas.filter(x => x.k.indexOf(k) === 0).slice(0, 60);
+      const m2 = m.length ? m
+               : todas.filter(x => x.k.indexOf(k) >= 0).slice(0, 60);
+      lista.innerHTML = m2.map(x =>
+        '<option value="' + x.disp.replace(/"/g, '&quot;') + '">').join('');
+    } else {
+      lista.innerHTML = '';
+    }
+    /* detalhe, quando a cidade é identificável */
+    const e = achar(bruto);
+    if(!e){
+      const varias = k.length >= 3 &&
+        todas.filter(x => x.k === k).length > 1;
+      alvo.innerHTML = varias
+        ? '<div style="font-size:12px;color:var(--muted)">Existe mais de uma ' +
+          'cidade com esse nome — escolha uma da lista, com a UF.</div>' : '';
+      return;
+    }
+    const c = e.c;
+    const its = Object.keys(c).filter(x => x !== 'c').sort((a,b) => c[a]-c[b]);
+    const nomeUF = (S.names && S.names[e.uf]) || e.uf;
+    alvo.innerHTML = '<div style="border:1px solid var(--line);border-radius:8px;' +
+      'padding:12px 14px;max-width:520px">' +
+      '<b style="color:var(--navy);font-size:14px">' + slaTitulo(c.c) + '</b> ' +
+      '<span class="pill">' + e.uf + '</span>' +
+      '<div style="font-size:11px;color:var(--muted);margin:2px 0 8px">' +
+        nomeUF + '</div>' +
+      (its.length ? its.map(x =>
+        '<div style="display:flex;justify-content:space-between;padding:4px 0;' +
+        'border-top:1px solid #F1F3F7">' +
+        '<span>' + x + '</span><span class="mono" style="color:' + slaCor(c[x]) +
+        ';font-weight:700">' + n1(c[x]) + ' dias</span></div>').join('')
+        : '<div style="color:var(--muted);font-size:12px">Nenhuma ' +
+          'transportadora com prazo cadastrado para esta cidade.</div>') +
+      '</div>';
+    /* a cidade PUXA o estado: as transportadoras da UF aparecem logo abaixo */
+    if(SLA_UF !== e.uf){ SLA_UF = e.uf; slaPainel(S, e.uf); }
+  };
+
+  inp.addEventListener('input', desenhar);
+  inp.addEventListener('change', desenhar);
 }
 
 function slaPainel(S, uf){
@@ -6108,7 +6219,6 @@ function slaPainel(S, uf){
       '<td class="mono" style="text-align:right;color:var(--muted)">'+cob+'</td></tr>';
   }).join('');
 
-  const cidades = (S.cities && S.cities[uf]) || [];
   slot.innerHTML =
     '<div class="card"><div class="card-h">' +
     '<h3>'+nome+' <span class="pill">'+uf+'</span></h3>' +
@@ -6119,42 +6229,11 @@ function slaPainel(S, uf){
     '<th style="text-align:right">Média</th>' +
     '<th style="text-align:right">Cidades</th>' +
     '<th style="text-align:right">Cobertura</th></tr></thead><tbody>' +
-    linhas_ + '</tbody></table></div>' +
-    '<div style="padding:12px 20px">' +
-    '<label class="calc-lab">Buscar cidade em '+nome+'</label><br>' +
-    '<input id="slaBusca" class="inp" list="slaLista" style="min-width:280px" ' +
-      'placeholder="Digite a cidade…" autocomplete="off">' +
-    '<datalist id="slaLista"></datalist>' +
-    '<div id="slaCidade" style="margin-top:10px"></div></div></div>';
-
-  const mapaNome = {};
-  el('slaLista').innerHTML = cidades.map(c => {
-    const d = slaTitulo(c.c);
-    mapaNome[d.toLowerCase()] = c;
-    return '<option value="'+d.replace(/"/g,'&quot;')+'">';
-  }).join('');
-
-  const inp = el('slaBusca');
-  const mostrar = () => {
-    const c = mapaNome[(inp.value || '').trim().toLowerCase()];
-    const alvo = el('slaCidade');
-    if(!c){ alvo.innerHTML = ''; return; }
-    const its = Object.keys(c).filter(k => k !== 'c')
-      .sort((a,b) => c[a]-c[b]);
-    alvo.innerHTML = '<div style="border:1px solid var(--line);border-radius:8px;' +
-      'padding:12px 14px;max-width:460px">' +
-      '<b style="color:var(--navy)">'+slaTitulo(c.c)+' — '+uf+'</b>' +
-      (its.length ? its.map(k =>
-        '<div style="display:flex;justify-content:space-between;padding:4px 0">' +
-        '<span>'+k+'</span><span class="mono" style="color:'+slaCor(c[k])+
-        ';font-weight:700">'+n1(c[k])+' dias</span></div>').join('')
-        : '<div style="color:var(--muted);font-size:12px;margin-top:6px">' +
-          'Nenhuma transportadora com prazo cadastrado para esta cidade.</div>') +
-      '</div>';
-  };
-  inp.addEventListener('change', mostrar);
-  inp.addEventListener('input', mostrar);
-  slot.scrollIntoView({block:'nearest', behavior:'smooth'});
+    linhas_ + '</tbody></table></div></div>';
+  /* A busca de cidade saiu daqui: ela agora é global e fica ACIMA (ver
+     slaLigarBusca). Ter as duas seria dois campos fazendo a mesma pergunta, e
+     a de dentro do estado obrigava a escolher a UF primeiro - exatamente o
+     passo que o Igor pediu para inverter. */
 }
 
 /* Registrar a aba. Mesmo padrão (e mesma armadilha) do Orçamento acima: sem o
