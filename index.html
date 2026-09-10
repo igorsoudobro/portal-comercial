@@ -5920,6 +5920,271 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
   }
 }
 /* ==========================================================================
+   SLA DE ENTREGA  (10/09/2026)
+   ==========================================================================
+   Pedido do Igor: a logística montou um HTML próprio de SLA por transportadora
+   e ele quer isso como aba do Portal, SEM a parte de baixo (estimativa de
+   frete). Refiz a tela no estilo do Portal em vez de embutir o arquivo deles.
+
+   TRÊS DECISÕES, TODAS MEDIDAS
+   ---------------------------
+   1. REUSO O MAPA QUE JÁ EXISTE. O arquivo da logística trazia 118 KB de paths
+      SVG do Brasil. O Portal já tem o blob BR_SVG ({w,h,paths,cent}, 27 UFs),
+      usado no mapa da aba Resumo. Importar o segundo mapa seria desenhar o
+      mesmo país de duas formas — e no dia em que um fosse corrigido, o outro
+      ficaria errado calado.
+
+   2. O DADO VEM COMPRIMIDO E SÓ DESCOMPRIME AO ABRIR A ABA. São 11.198 cidades:
+      571 KB crus, 130 KB em base64. Descomprimir isso no carregamento do Portal
+      penalizaria quem nunca abre a aba, então `slaDados()` faz na primeira
+      visita e guarda.
+
+   3. A DATA DA FONTE VAI NA TELA, EM DESTAQUE. A planilha de origem é a
+      ops-ss-anls-comparativo-sla-20260622.xlsx — 22/06/2026. Prazo de entrega é
+      exatamente o número que um vendedor promete ao cliente; mostrar SLA de
+      junho sem dizer que é de junho é convidar promessa errada. Acima de 60
+      dias o carimbo fica amarelo.
+
+   O QUE NÃO ENTROU: a estimativa de frete. Além de o Igor não ter pedido, ela
+   carrega razões frete/valor-da-NF por cidade, que é o tipo de número que não
+   vai para o HTML público do GitHub. */
+let SLA = null, SLA_UF = null;
+
+async function slaDados(){
+  if(SLA) return SLA;
+  const b = (typeof _Z === 'object' && _Z && _Z.SLA) ? _Z.SLA : null;
+  if(!b) return null;
+  try{ SLA = await _unz(b); }
+  catch(e){ console.error('SLA:', e); return null; }
+  return SLA;
+}
+
+function slaTitulo(s){
+  return String(s || '').toLowerCase().replace(/(^|[\s\-\/\(])([a-záéíóúâêôãõç])/g,
+    (m, a, b) => a + b.toUpperCase());
+}
+/* Faixa de dias -> cor do selo. Mesma régua do arquivo da logística: até 3 dias
+   é rápido, até 7 é médio, acima disso é lento. */
+function slaCor(d){
+  return d <= 3 ? 'var(--pos)' : d <= 7 ? '#B8860B' : 'var(--neg)';
+}
+
+function vSLA(){
+  const box = el('v-sla');
+  if(!box) return;
+  box.innerHTML = '<div class="empty">Carregando o mapa de SLA…</div>';
+  slaDados().then(S => {
+    if(!S || !S.sla){
+      box.innerHTML = '<div class="empty">Este pacote de dados não tem o SLA. ' +
+        'Para gerar: <code>python sla_extrair.py</code> e depois o gerador.</div>';
+      return;
+    }
+    slaRender(S);
+  }).catch(e => {
+    console.error('SLA:', e);
+    box.innerHTML = '<div class="empty">Não consegui carregar o SLA.</div>';
+  });
+}
+
+function slaRender(S){
+  const box = el('v-sla');
+  /* melhor prazo de cada UF = a menor média entre as transportadoras que
+     atendem. É o número que responde "em quanto tempo eu consigo entregar
+     aí, no melhor caso". */
+  const melhor = {}, nTransp = {};
+  Object.keys(S.sla).forEach(uf => {
+    const t = S.sla[uf].transportadoras || {};
+    const medias = Object.values(t).map(x => x.media).filter(x => x > 0);
+    if(medias.length){ melhor[uf] = Math.min(...medias); nTransp[uf] = medias.length; }
+  });
+  const vals = Object.values(melhor);
+  const mn = vals.length ? Math.min(...vals) : 0;
+  const mx = vals.length ? Math.max(...vals) : 1;
+
+  /* Escala de cor: RÁPIDO = navy escuro, LENTO = azul bem claro. O mesmo
+     gradiente do mapa da Resumo, e o número de dias vai escrito dentro do
+     estado - com o rótulo na tela, ninguém precisa adivinhar o que a cor diz. */
+  const cor = (uf) => {
+    const v = melhor[uf];
+    if(v === undefined) return '#EEF1F6';
+    const t = mx > mn ? 1 - (v - mn) / (mx - mn) : 1;
+    const c1 = [42,62,126], c2 = [196,216,247];
+    const r = Math.round(c2[0]+(c1[0]-c2[0])*t),
+          g = Math.round(c2[1]+(c1[1]-c2[1])*t),
+          b = Math.round(c2[2]+(c1[2]-c2[2])*t);
+    return 'rgb('+r+','+g+','+b+')';
+  };
+
+  const S2 = (typeof BR_SVG !== 'undefined' && BR_SVG) ? BR_SVG : null;
+  let mapa = '<div class="empty">Mapa não disponível neste pacote.</div>';
+  if(S2){
+    const paths = Object.entries(S2.paths).map(([uf, d]) =>
+      '<path d="'+d+'" fill="'+cor(uf)+'" stroke="#fff" stroke-width="1" ' +
+      'data-slauf="'+uf+'" class="uf-path" style="cursor:pointer"/>').join('');
+    const labels = Object.entries(S2.cent).map(([uf, xy]) => {
+      const v = melhor[uf];
+      return '<text x="'+xy[0]+'" y="'+xy[1]+'" font-size="12" fill="#33384a" ' +
+        'text-anchor="middle" style="pointer-events:none;font-weight:700">'+uf+'</text>' +
+        (v === undefined ? '' :
+         '<text x="'+xy[0]+'" y="'+(xy[1]+12)+'" font-size="10" fill="#33384a" ' +
+         'text-anchor="middle" style="pointer-events:none;opacity:.85">'+
+         n1(v)+'d</text>');
+    }).join('');
+    mapa = '<svg viewBox="0 0 '+S2.w+' '+S2.h+'" style="width:100%;display:block;' +
+           'margin:0 auto">'+paths+labels+'</svg>';
+  }
+
+  const ufs = Object.keys(melhor).sort((a,b) => melhor[a]-melhor[b] || a.localeCompare(b));
+  const tabela = '<table class="mapa-tbl"><thead><tr>' +
+    '<th style="text-align:left">UF</th>' +
+    '<th style="text-align:right">Melhor prazo</th>' +
+    '<th style="text-align:right">Transp.</th>' +
+    '<th style="text-align:right">Cidades</th></tr></thead><tbody>' +
+    ufs.map(uf => '<tr data-slaufrow="'+uf+'" style="cursor:pointer">' +
+      '<td style="font-weight:700">'+uf+'</td>' +
+      '<td class="mono" style="text-align:right;color:'+slaCor(melhor[uf])+
+        ';font-weight:700">'+n1(melhor[uf])+' d</td>' +
+      '<td class="mono" style="text-align:right">'+nTransp[uf]+'</td>' +
+      '<td class="mono" style="text-align:right;color:var(--muted)">'+
+        n0((S.sla[uf].total_cidades)||0)+'</td></tr>').join('') +
+    '</tbody></table>';
+
+  /* Carimbo da fonte. Amarelo quando passou de 60 dias - ver o cabeçalho. */
+  let velho = false;
+  if(S.fonte_data){
+    const p = S.fonte_data.split('/');
+    if(p.length === 3){
+      const dt = new Date(+p[2], +p[1]-1, +p[0]);
+      velho = (Date.now() - dt.getTime()) / 86400000 > 60;
+    }
+  }
+  const carimbo = '<div class="note"' +
+    (velho ? ' style="background:#FFFBEB;border-left:3px solid #D97706"' : '') +
+    '><b>Prazos de ' + (S.fonte_data || 'data não declarada') + '</b> — ' +
+    (velho ? 'já passou de 60 dias. ' : '') +
+    'fonte: <code>' + (S.fonte || '?') + '</code>, da logística. ' +
+    n0(S.n_cidades||0) + ' cidades em ' + Object.keys(S.sla).length + ' UFs · ' +
+    (S.transportadoras||[]).length + ' transportadoras. ' +
+    'Prazos em <b>dias corridos de SLA</b>; “—” significa que a transportadora ' +
+    'não atende a localidade. <b>Clique num estado</b> (no mapa ou na tabela) ' +
+    'para ver transportadoras, prazos e buscar cidade.</div>';
+
+  box.innerHTML = carimbo +
+    '<div class="card"><div class="card-h"><h3>SLA de entrega por estado</h3>' +
+    '<span class="hint">mais escuro = entrega mais rápida no melhor caso</span></div>' +
+    '<div style="padding:14px 20px;display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">' +
+      '<div style="flex:1 1 60%;min-width:320px">'+mapa+'</div>' +
+      '<div style="flex:1 1 32%;min-width:230px;max-height:560px;overflow:auto">'+tabela+'</div>' +
+    '</div></div>' +
+    '<div id="slaDetalhe"></div>';
+
+  const ir = (uf) => { SLA_UF = uf; slaPainel(S, uf); };
+  box.querySelectorAll('[data-slauf]').forEach(p =>
+    p.addEventListener('click', () => ir(p.getAttribute('data-slauf'))));
+  box.querySelectorAll('[data-slaufrow]').forEach(tr =>
+    tr.addEventListener('click', () => ir(tr.getAttribute('data-slaufrow'))));
+  if(SLA_UF && S.sla[SLA_UF]) slaPainel(S, SLA_UF);
+}
+
+function slaPainel(S, uf){
+  const slot = el('slaDetalhe');
+  if(!slot) return;
+  const info = S.sla[uf];
+  if(!info){ slot.innerHTML = ''; return; }
+  const nome = (S.names && S.names[uf]) || uf;
+  const transp = Object.entries(info.transportadoras || {})
+    .sort((a,b) => a[1].media - b[1].media);
+
+  const linhas_ = transp.map(([t, c]) => {
+    const faixa = (c.min === c.max) ? n1(c.min) : (n1(c.min)+'–'+n1(c.max));
+    const cob = info.total_cidades
+      ? pct(c.cidades_atendidas / info.total_cidades) : '—';
+    return '<tr><td style="font-weight:600">'+t+'</td>' +
+      '<td class="mono" style="text-align:right;color:'+slaCor(c.media)+
+        ';font-weight:700">'+faixa+' dias</td>' +
+      '<td class="mono" style="text-align:right;color:var(--muted)">média '+
+        n1(c.media)+' d</td>' +
+      '<td class="mono" style="text-align:right">'+n0(c.cidades_atendidas)+'</td>' +
+      '<td class="mono" style="text-align:right;color:var(--muted)">'+cob+'</td></tr>';
+  }).join('');
+
+  const cidades = (S.cities && S.cities[uf]) || [];
+  slot.innerHTML =
+    '<div class="card"><div class="card-h">' +
+    '<h3>'+nome+' <span class="pill">'+uf+'</span></h3>' +
+    '<span class="hint">'+n0(info.total_cidades||0)+' cidades cadastradas · ' +
+      transp.length+' transportadora(s) atendem</span></div>' +
+    '<div class="scroll"><table><thead><tr><th>Transportadora</th>' +
+    '<th style="text-align:right">Prazo</th>' +
+    '<th style="text-align:right">Média</th>' +
+    '<th style="text-align:right">Cidades</th>' +
+    '<th style="text-align:right">Cobertura</th></tr></thead><tbody>' +
+    linhas_ + '</tbody></table></div>' +
+    '<div style="padding:12px 20px">' +
+    '<label class="calc-lab">Buscar cidade em '+nome+'</label><br>' +
+    '<input id="slaBusca" class="inp" list="slaLista" style="min-width:280px" ' +
+      'placeholder="Digite a cidade…" autocomplete="off">' +
+    '<datalist id="slaLista"></datalist>' +
+    '<div id="slaCidade" style="margin-top:10px"></div></div></div>';
+
+  const mapaNome = {};
+  el('slaLista').innerHTML = cidades.map(c => {
+    const d = slaTitulo(c.c);
+    mapaNome[d.toLowerCase()] = c;
+    return '<option value="'+d.replace(/"/g,'&quot;')+'">';
+  }).join('');
+
+  const inp = el('slaBusca');
+  const mostrar = () => {
+    const c = mapaNome[(inp.value || '').trim().toLowerCase()];
+    const alvo = el('slaCidade');
+    if(!c){ alvo.innerHTML = ''; return; }
+    const its = Object.keys(c).filter(k => k !== 'c')
+      .sort((a,b) => c[a]-c[b]);
+    alvo.innerHTML = '<div style="border:1px solid var(--line);border-radius:8px;' +
+      'padding:12px 14px;max-width:460px">' +
+      '<b style="color:var(--navy)">'+slaTitulo(c.c)+' — '+uf+'</b>' +
+      (its.length ? its.map(k =>
+        '<div style="display:flex;justify-content:space-between;padding:4px 0">' +
+        '<span>'+k+'</span><span class="mono" style="color:'+slaCor(c[k])+
+        ';font-weight:700">'+n1(c[k])+' dias</span></div>').join('')
+        : '<div style="color:var(--muted);font-size:12px;margin-top:6px">' +
+          'Nenhuma transportadora com prazo cadastrado para esta cidade.</div>') +
+      '</div>';
+  };
+  inp.addEventListener('change', mostrar);
+  inp.addEventListener('input', mostrar);
+  slot.scrollIntoView({block:'nearest', behavior:'smooth'});
+}
+
+/* Registrar a aba. Mesmo padrão (e mesma armadilha) do Orçamento acima: sem o
+   <div class="view" id="v-sla"> o showView estoura em classList of null. */
+if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
+  if(!VIEWS.some(v => v.id === 'sla')){
+    const nova = {id:'sla', lab:'SLA de Entrega', fn:vSLA};
+    const i = VIEWS.findIndex(v => v.id === 'orcamento');
+    const j = VIEWS.findIndex(v => v.id === 'calc');
+    const onde = i >= 0 ? i : (j >= 0 ? j : VIEWS.length);
+    VIEWS.splice(onde, 0, nova);
+  }
+  if(!document.getElementById('v-sla')){
+    const irmao = document.getElementById('v-orcamento') ||
+                  document.getElementById('v-calc') ||
+                  document.querySelector('.view');
+    if(irmao && irmao.parentNode){
+      const d = document.createElement('div');
+      d.className = 'view';
+      d.id = 'v-sla';
+      irmao.parentNode.insertBefore(d, irmao);
+    }
+  }
+  if(typeof buildNav === 'function' && document.getElementById('nav') &&
+     document.getElementById('nav').children.length){
+    try{ buildNav(); }catch(e){}
+  }
+}
+
+/* ==========================================================================
    QUEM VÊ CADA SKU NA CALCULADORA  (26/08/2026)
    ==========================================================================
    O bloco 'SKUs Calculadora' do Parametros (AQ:AU) passou a mandar em quatro
