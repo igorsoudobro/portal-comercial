@@ -701,26 +701,53 @@ function linhas(){
 
 /* ---------- cálculo de DRE ---------- */
 // bonificação = linha de venda com faturamento zero e CMV positivo (produto dado, receita zero, custa o CMV)
+/* ---------- CONTRATOS: custo por CNPJ (10/09/2026) -------------------------
+   Alguns clientes têm um percentual de contrato combinado sobre o que faturam.
+   Vem de Parametros!BB:BD, publicado no JSON como CONTRATOS {cnpj: fração}.
+
+   A BASE É O LÍQUIDO do cliente no recorte, não o bruto — copiei da Calculadora
+   de pedido, que faz `contratoVal = líquido × pct` desde 20/08/2026. Se o DRE
+   usasse bruto, as duas telas dariam números diferentes para o mesmo cliente e
+   alguém teria de descobrir qual estava certa.
+
+   O CNPJ é normalizado para só dígitos aqui porque a planilha guarda com
+   pontuação e o FATO indexa sem. Normalizar num lugar só evita o modo de falha
+   silencioso: de-para que não casa não dá erro, só deixa de cobrar. */
+function contratoPct(cn){
+  const M=(typeof _Z==='object'&&_Z&&_Z.CONTRATOS)?_Z.CONTRATOS:null;
+  if(!M) return 0;
+  const d=String(cn||'').replace(/\D/g,'');
+  return +M[d]||0;
+}
+
 function dre(rows){
   let fat=0,dev=0,cmv=0,cmvBruto=0,cmvDev=0,imp=0,fr=0,com=0,q=0,boni=0; const ped=new Set();
+  const liqCn={};                                    // CNPJ -> líquido, para o contrato
   rows.forEach(r=>{
     if(r.venda){
       fat+=r.fat;cmv+=r.cmv;cmvBruto+=r.cmv;imp+=r.imp;fr+=r.fr;com+=r.com;q+=r.q;
       if(r.cn)ped.add(r.cn+'|'+r.m);                 // pedido = CNPJ+mês distinto (só venda)
-    } else if(r.tipo===0){ dev+=r.fat;cmv+=r.cmv;cmvDev+=r.cmv;imp+=r.imp;fr+=r.fr;com+=r.com; }   // devolução (V8: liquida CMV/imposto/frete)
+      if(r.cn)liqCn[r.cn]=(liqCn[r.cn]||0)+r.fat;
+    } else if(r.tipo===0){ dev+=r.fat;cmv+=r.cmv;cmvDev+=r.cmv;imp+=r.imp;fr+=r.fr;com+=r.com;   // devolução (V8: liquida CMV/imposto/frete)
+      if(r.cn)liqCn[r.cn]=(liqCn[r.cn]||0)+r.fat; }  // devolução reduz a base do contrato
     else if(r.bonif){ boni+=r.cmv+r.imp; }            // bonificação: mercadoria líq + imposto
     else if(r.amostra){ boni+=r.cmv; }                // amostra: só mercadoria líq (isenta de imposto)
   });
+  /* Bonificação e amostra NÃO entram na base: têm faturamento zero, então um
+     percentual sobre elas seria zero de qualquer jeito - mas deixo explícito
+     para ninguém "consertar" isso depois somando o CMV delas. */
+  let contrato=0;
+  Object.keys(liqCn).forEach(cn=>{ contrato+=liqCn[cn]*contratoPct(cn); });
   const fatLiq=fat+dev;
   const lucroBruto=fatLiq-cmv;
-  const lucro=lucroBruto-imp-fr-com-boni;            // bonificação entra como impacto negativo antes do lucro final
+  const lucro=lucroBruto-imp-fr-com-boni-contrato;   // bonificação e contrato entram como impacto negativo antes do lucro final
   const nfs=ped.size;
   // cmvBruto = CMV das vendas; cmvDev = o CMV que a devolução DEVOLVE (negativo,
   // porque a mercadoria volta ao estoque e o custo é revertido). cmvBruto+cmvDev
   // = cmv, que é o que a linha única mostrava antes - nenhum número mudou, só
   // ficou visível de onde vem. Medido no ano: 8.182.718 − 259.359 = 7.923.359.
   return {fat,dev,fatLiq,cmv,cmvBruto,cmvDev,lucroBruto,margem:fatLiq?lucroBruto/fatLiq:0,
-    imp,fr,com,boni,lucro,rent:fatLiq?lucro/fatLiq:0,q,nfs,ticket:nfs?fatLiq/nfs:0};
+    imp,fr,com,boni,contrato,lucro,rent:fatLiq?lucro/fatLiq:0,q,nfs,ticket:nfs?fatLiq/nfs:0};
 }
 
 /* ---------- agrupadores ---------- */
@@ -915,6 +942,14 @@ const DRE_ROWS_FULL=[['Faturamento','fat','brl'],['Devoluções','dev','brl'],['
   ['CMV líquido','cmv','brl','s'],['Lucro bruto','lucroBruto','brl','b'],['Margem bruta','margem','pct','s'],
   ['Impostos','imp','brl','s'],['Frete','fr','brl'],['Comissão','com','brl'],
   ['Bonificação + Amostra','boni','brl'],
+  /* Contratos vem DEPOIS de bonificação e ANTES do lucro final, na mesma ordem
+     em que a conta subtrai (lucroBruto − imp − fr − com − boni − contrato).
+     Quem lê a coluna de cima para baixo subtraindo chega no lucro final sem
+     sobrar nada, e é isso que faz um DRE ser conferível.
+
+     Fica só no DRE_ROWS_FULL, de propósito: o vendedor já não vê Impostos,
+     Frete, Comissão nem Lucro final, e contrato é da mesma natureza. */
+  ['Contratos','contrato','brl'],
   ['Lucro final','lucro','brl','b'],['Rentabilidade','rent','pct','b'],
   ['Ticket médio','ticket','brl'],['Nº de notas','nfs','n']];
 // DRE que o vendedor vê: faturamento, devolução, margem bruta (farol), bonif.+amostra, rentabilidade (farol).
@@ -2709,6 +2744,16 @@ function ajustarKpisResumo(){
      sub: d.fatLiq > 0 ? pct(d.boni / d.fatLiq) + ' do líquido' : '—',
      dica: 'Bonificação e amostra pelo VALOR DE TABELA do produto, somadas. ' +
            'Saem com receita zero e entram como custo antes do lucro final.'},
+    /* Contratos: sensível como Frete e Comissão, e só aparece quando existe.
+       Um KPI 'R$ 0,00' fixo na tela ensina a ignorar a linha — foi exatamente
+       o que o Igor apontou em 30/07 sobre a bonificação. */
+    ...(d.contrato ? [{lab: 'Contratos', val: brl(d.contrato), cls: '',
+     sens: true,
+     sub: d.fatLiq ? pct(d.contrato / d.fatLiq) + ' do líquido' : '—',
+     dica: 'Percentual de contrato combinado com clientes específicos, ' +
+           'aplicado sobre o faturamento líquido de cada CNPJ. Vem de ' +
+           'Parametros!BB:BD do V8. Mesmo critério do campo Contrato da ' +
+           'Calculadora de pedido.'}] : []),
     {lab: 'Rentabilidade', val: verNum ? pct(d.rent) : farol(d.rent, false),
      cls: farolFaixa(d.rent) === 'verde' ? 'pos' :
           farolFaixa(d.rent) === 'vermelho' ? 'sens' : '',
@@ -2719,7 +2764,8 @@ function ajustarKpisResumo(){
            '(negado).'},
     {lab: 'Lucro final ' + SENS, val: brl(d.lucro), cls: 'sens', sens: true,
      sub: 'Rentab. ' + pct(d.rent), bruto: true,
-     dica: 'O que sobra depois de CMV, imposto, frete, comissão e bonificação.'},
+     dica: 'O que sobra depois de CMV, imposto, frete, comissão, bonificação ' +
+           'e contratos.'},
     {lab: 'Ticket médio', val: brl(d.ticket), cls: '',
      sub: n0(d.nfs) + ' pedidos',
      dica: 'Faturamento líquido ÷ pedidos (pedido = CNPJ + mês).'},
