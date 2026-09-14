@@ -309,6 +309,14 @@ table.mapa-tbl tbody tr:hover td{background:#F0F3FA}
 .shr-tog button:first-child{ border-radius:6px 0 0 6px; }
 .shr-tog button:last-child{ border-radius:0 6px 6px 0; border-left:none; }
 .shr-tog button.on{ background:var(--navy); color:#fff; border-color:var(--navy); }
+/* Coluna Média: separada por uma borda e com fundo próprio, para não ser lida
+   como "mais um mês". Ela nunca recebe a cor de comparação — não há mês
+   anterior a ela. */
+.shr-tbl th.shr-media, .shr-tbl td.shr-media{
+  border-left:2px solid var(--line); background:#F6F8FC; font-weight:700;
+}
+.shr-tbl tr.shr-sku td.shr-media{ background:#F2F5FA; font-weight:600; }
+.shr-tbl tr.shr-tot td.shr-media{ background:#EEF2F9; }
 
 /* ---------- AJUSTE 1: filtros em "chips" ---------------------------------- */
 .chipbox{
@@ -4224,29 +4232,78 @@ function shrCor(v, ant, casas){
   return a > b ? 'shr-up' : a < b ? 'shr-dn' : 'shr-eq';
 }
 
+/* MÉDIA E TICKET MÉDIO (14/09/2026, pedido do Igor)
+   -------------------------------------------------
+   Duas adições ao bloco de Shares: uma coluna Média no fim e uma terceira
+   visão, ticket médio = faturamento ÷ volume.
+
+   TICKET SÓ NO QUADRO DE VALORES. "Share de ticket médio" não é uma grandeza:
+   os tickets das categorias não somam o ticket do total, então uma coluna de
+   percentual sobre ele não fecharia 100% e a linha Total viraria um número sem
+   significado. O quadro de percentuais fica com Faturamento e Volume.
+
+   COMO A MÉDIA É CALCULADA, e por que não é a mesma conta nos três modos:
+     faturamento e volume -> soma do período ÷ nº de meses. É a média mensal.
+     percentual           -> média simples dos shares mensais. A linha Total
+                             continua fechando 100%, porque a soma das médias é
+                             a média das somas, e cada mês soma 100%.
+     ticket médio         -> faturamento total ÷ volume total do período, e NÃO
+                             a média dos tickets mensais. Média de ticket trata
+                             um mês de 50 unidades igual a um de 5.000; a razão
+                             dos totais é o ticket que de fato aconteceu.
+
+   A coluna Média não recebe cor de comparação: ela não tem "mês anterior". */
 function shrTabela(qual){
-  const modo = SHARE_MODO[qual];                 /* 'fat' | 'vol' */
+  let modo = SHARE_MODO[qual];                   /* 'fat' | 'vol' | 'tic' */
   const ehPct = (qual === 'pct');
+  if(ehPct && modo === 'tic') modo = SHARE_MODO[qual] = 'fat';   /* ver acima */
+  const ehTic = (modo === 'tic');
   const D = shrDados();
   if(!D.meses.length || !D.cats.length)
     return '<div class="empty">Sem vendas nos filtros selecionados.</div>';
 
-  const valor = (o, m) => (o && o[m]) ? (o[m][modo] || 0) : 0;
+  const cru = (o, m, campo) => (o && o[m]) ? (o[m][campo] || 0) : 0;
+  /* No modo ticket o valor da célula é uma razão: sem volume não existe ticket,
+     e devolver 0 mentiria (0 é "vendeu de graça", não "não vendeu"). */
+  const valor = (o, m) => {
+    if(!ehTic) return cru(o, m, modo);
+    const v = cru(o, m, 'vol');
+    return v ? cru(o, m, 'fat') / v : null;
+  };
   const share = (o, m) => {
     const t = (D.tot[m] || {})[modo] || 0;
-    return t ? valor(o, m) / t : 0;
+    return t ? cru(o, m, modo) / t : 0;
   };
-  const fmt = (x) => ehPct ? pct(x) : (modo === 'fat' ? brl(x) : n0(x));
+  const fmt = (x) => x === null ? '—'
+    : ehPct ? pct(x) : ehTic ? brl2(x) : (modo === 'fat' ? brl(x) : n0(x));
+
+  const nM = D.meses.length;
+  /* média da linha, pela regra de cada modo (ver cabeçalho) */
+  const media = (o) => {
+    if(ehTic){
+      let f = 0, v = 0;
+      D.meses.forEach(m => { f += cru(o, m, 'fat'); v += cru(o, m, 'vol'); });
+      return v ? f / v : null;
+    }
+    let s = 0;
+    D.meses.forEach(m => { s += ehPct ? share(o, m) : cru(o, m, modo); });
+    return nM ? s / nM : 0;
+  };
+
+  const casas = ehPct ? 3 : ehTic ? 2 : 0;
 
   const linha = (nome, o, cls, dataCat, aberta, nSku) => {
     let tds = '';
     let ant;
     D.meses.forEach(m => {
       const v = ehPct ? share(o, m) : valor(o, m);
-      const cor = shrCor(v, ant, ehPct ? 3 : 0);
-      ant = v;
+      /* célula sem ticket não vira referência da próxima: comparar contra "—"
+         pintaria a seguinte de verde sem haver com o que comparar */
+      const cor = (v === null) ? '' : shrCor(v, ant, casas);
+      if(v !== null) ant = v;
       tds += '<td class="mono ' + cor + '">' + fmt(v) + '</td>';
     });
+    tds += '<td class="mono shr-media">' + fmt(media(o)) + '</td>';
     const caret = dataCat
       ? '<span class="shr-caret">' + (aberta ? '▼' : '▶') + '</span>' : '';
     const marca = dataCat ? ' data-shr-cat="' + encodeURIComponent(nome) + '"' : '';
@@ -4267,31 +4324,40 @@ function shrTabela(qual){
   });
 
   /* Linha de total: no quadro de % fecha 100% em cada mes (e a prova de que a
-     coluna esta consistente); no de valores mostra o liquido do mes. */
+     coluna esta consistente); no de valores mostra o liquido do mes - e, no
+     ticket, o ticket do MES INTEIRO (faturamento do mes / volume do mes), que
+     nao e a media dos tickets das categorias. */
   let tdsTot = '', antT;
   D.meses.forEach(m => {
-    const v = ehPct ? 1 : ((D.tot[m] || {})[modo] || 0);
-    const cor = ehPct ? '' : shrCor(v, antT, 0);
-    antT = v;
+    const v = ehPct ? 1 : valor(D.tot, m);
+    const cor = (ehPct || v === null) ? '' : shrCor(v, antT, casas);
+    if(v !== null) antT = v;
     tdsTot += '<td class="mono ' + cor + '">' + fmt(v) + '</td>';
   });
+  tdsTot += '<td class="mono shr-media">' +
+    fmt(ehPct ? 1 : media(D.tot)) + '</td>';
 
+  const rotTot = ehPct ? 'Total' : ehTic ? 'Ticket do mês' : 'Total do mês';
   return '<table class="shr-tbl"><thead><tr><th>Categoria</th>' +
     D.meses.map(m => '<th>' + m.substring(0, 3) + '</th>').join('') +
+    '<th class="shr-media">Média</th>' +
     '</tr></thead><tbody>' + corpo +
-    '<tr class="shr-tot"><td>' + (ehPct ? 'Total' : 'Total do mês') + '</td>' +
+    '<tr class="shr-tot"><td>' + rotTot + '</td>' +
     tdsTot + '</tr></tbody></table>';
 }
 
 function shrCard(qual, titulo, dica){
   const modo = SHARE_MODO[qual];
+  /* O botão de ticket médio só existe no quadro de valores - ver o cabeçalho
+     do shrTabela para o motivo. */
+  const bt = (m, rot) => '<button data-shr-modo="' + m + '"' +
+    (modo === m ? ' class="on"' : '') + '>' + rot + '</button>';
   return '<div class="card" id="cardShr' + qual + '"><div class="card-h">' +
     '<h3>' + titulo + '</h3><span class="hint">' + dica + '</span>' +
     '<span class="shr-tog" data-shr-quadro="' + qual + '">' +
-    '<button data-shr-modo="fat"' + (modo === 'fat' ? ' class="on"' : '') +
-    '>Faturamento</button>' +
-    '<button data-shr-modo="vol"' + (modo === 'vol' ? ' class="on"' : '') +
-    '>Volume</button></span></div>' +
+    bt('fat', 'Faturamento') + bt('vol', 'Volume') +
+    (qual === 'abs' ? bt('tic', 'Ticket médio') : '') +
+    '</span></div>' +
     '<div class="scroll" id="shrOut' + qual + '">' + shrTabela(qual) + '</div>' +
     '</div>';
 }
