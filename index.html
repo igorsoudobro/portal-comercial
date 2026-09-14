@@ -4253,15 +4253,12 @@ function shrCor(v, ant, casas){
                              dos totais é o ticket que de fato aconteceu.
 
    A coluna Média não recebe cor de comparação: ela não tem "mês anterior". */
-function shrTabela(qual){
-  let modo = SHARE_MODO[qual];                   /* 'fat' | 'vol' | 'tic' */
+/* O MOTOR DAS CONTAS FICA AQUI, e a tabela e o CSV usam os DOIS o mesmo.
+   Se a exportação recalculasse por conta própria, um dia divergiria da tela -
+   e "qual dos dois está certo" é a pergunta que custa caro. */
+function shrMotor(D, qual, modo){
   const ehPct = (qual === 'pct');
-  if(ehPct && modo === 'tic') modo = SHARE_MODO[qual] = 'fat';   /* ver acima */
   const ehTic = (modo === 'tic');
-  const D = shrDados();
-  if(!D.meses.length || !D.cats.length)
-    return '<div class="empty">Sem vendas nos filtros selecionados.</div>';
-
   const cru = (o, m, campo) => (o && o[m]) ? (o[m][campo] || 0) : 0;
   /* No modo ticket o valor da célula é uma razão: sem volume não existe ticket,
      e devolver 0 mentiria (0 é "vendeu de graça", não "não vendeu"). */
@@ -4274,11 +4271,9 @@ function shrTabela(qual){
     const t = (D.tot[m] || {})[modo] || 0;
     return t ? cru(o, m, modo) / t : 0;
   };
-  const fmt = (x) => x === null ? '—'
-    : ehPct ? pct(x) : ehTic ? brl2(x) : (modo === 'fat' ? brl(x) : n0(x));
-
+  const celula = (o, m) => ehPct ? share(o, m) : valor(o, m);
   const nM = D.meses.length;
-  /* média da linha, pela regra de cada modo (ver cabeçalho) */
+  /* média da linha, pela regra de cada modo (ver cabeçalho do shrTabela) */
   const media = (o) => {
     if(ehTic){
       let f = 0, v = 0;
@@ -4289,8 +4284,25 @@ function shrTabela(qual){
     D.meses.forEach(m => { s += ehPct ? share(o, m) : cru(o, m, modo); });
     return nM ? s / nM : 0;
   };
+  return {ehPct, ehTic, celula, media,
+          casas: ehPct ? 3 : ehTic ? 2 : 0,
+          fmt: (x) => x === null ? '—'
+            : ehPct ? pct(x) : ehTic ? brl2(x)
+            : (modo === 'fat' ? brl(x) : n0(x))};
+}
 
-  const casas = ehPct ? 3 : ehTic ? 2 : 0;
+function shrTabela(qual){
+  let modo = SHARE_MODO[qual];                   /* 'fat' | 'vol' | 'tic' */
+  const ehPct = (qual === 'pct');
+  if(ehPct && modo === 'tic') modo = SHARE_MODO[qual] = 'fat';   /* ver acima */
+  const D = shrDados();
+  if(!D.meses.length || !D.cats.length)
+    return '<div class="empty">Sem vendas nos filtros selecionados.</div>';
+
+  const M = shrMotor(D, qual, modo);
+  const ehTic = M.ehTic, fmt = M.fmt, media = M.media, casas = M.casas;
+  const valor = (o, m) => M.celula(o, m);
+  const share = valor;
 
   const linha = (nome, o, cls, dataCat, aberta, nSku) => {
     let tds = '';
@@ -4357,9 +4369,99 @@ function shrCard(qual, titulo, dica){
     '<span class="shr-tog" data-shr-quadro="' + qual + '">' +
     bt('fat', 'Faturamento') + bt('vol', 'Volume') +
     (qual === 'abs' ? bt('tic', 'Ticket médio') : '') +
-    '</span></div>' +
+    '</span>' +
+    '<button class="btn-y" data-shr-xls="' + qual + '" style="margin-left:10px;' +
+    'font-size:12px;padding:6px 12px">Extrair Excel</button>' +
+    '</div>' +
     '<div class="scroll" id="shrOut' + qual + '">' + shrTabela(qual) + '</div>' +
     '</div>';
+}
+
+/* EXTRAIR EXCEL (14/09/2026, pedido do Igor)
+   ------------------------------------------
+   Mesmo formato dos dois exports que já existem aqui (carteira e pedido): BOM +
+   ';' + CRLF, que é o que faz o Excel em português abrir com as colunas
+   separadas e o acento certo. Sem o BOM, "Razão" vira "RazÃ£o".
+
+   TRÊS ESCOLHAS QUE MUDAM O QUE VEM NO ARQUIVO
+   1. O botão exporta O CARTÃO INTEIRO, não só o modo que está na tela: o de
+      valores traz faturamento, volume e ticket; o de percentuais traz share de
+      faturamento e de volume. Uma seção cada. Exportar só a aba visível faria
+      a pessoa clicar três vezes e juntar à mão.
+   2. Vêm SEMPRE todos os SKUs, mesmo com a categoria fechada na tela. No Excel
+      o detalhe é o motivo de exportar; esconder o que está fechado seria levar
+      a limitação da tela para dentro do arquivo. A coluna `Nível` diz se a
+      linha é Categoria ou SKU, então dá para filtrar e fazer tabela dinâmica.
+   3. Número vai CRU, com vírgula decimal - 1234,56 e não "R$ 1.234,56". O
+      Excel soma o primeiro; o segundo é texto. Percentual vai em pontos
+      percentuais (58,3), não em fração.
+
+   As contas saem do shrMotor, o MESMO da tabela - ver o comentário lá. */
+function shrExtrair(qual){
+  const D = shrDados();
+  if(!D.meses.length || !D.cats.length){ alert('Sem dados no recorte atual.'); return null; }
+
+  const secoes = (qual === 'pct')
+    ? [['fat', 'SHARE % DO FATURAMENTO LÍQUIDO'], ['vol', 'SHARE % DO VOLUME']]
+    : [['fat', 'FATURAMENTO LÍQUIDO (R$)'], ['vol', 'VOLUME (unidades)'],
+       ['tic', 'TICKET MÉDIO (R$)']];
+
+  const linhas = [];
+  const push = (...cols) => linhas.push(cols);
+  const nx = (v, casas) => (v === null || v === undefined || !isFinite(v))
+    ? '' : Number(v).toFixed(casas).replace('.', ',');
+
+  push('SHARES POR CATEGORIA');
+  push('Extraído em', new Date().toLocaleString('pt-BR'));
+  push('Usuário', (typeof SESSION === 'object' && SESSION && SESSION.user) || '');
+  push('Recorte', D.meses.join(', '));
+  push('Base', 'faturamento líquido (venda − devolução); volume em unidade de venda');
+  push('');
+
+  secoes.forEach(([modo, titulo]) => {
+    const M = shrMotor(D, qual, modo);
+    /* percentual sai em pontos (58,3); valor e volume saem crus */
+    const casas = M.ehPct ? 1 : (modo === 'vol' ? 0 : 2);
+    const conv = (x) => x === null ? null : (M.ehPct ? x * 100 : x);
+    push(titulo);
+    push(...['Nível', 'Categoria', 'SKU'].concat(D.meses).concat(['Média']));
+    D.cats.forEach(c => {
+      push(...['Categoria', c, '']
+        .concat(D.meses.map(m => nx(conv(M.celula(D.cat[c], m)), casas)))
+        .concat([nx(conv(M.media(D.cat[c])), casas)]));
+      D.skusDaCat[c].forEach(s => {
+        push(...['SKU', c, prodName(s).replace(/^Dobro\s+/i, '')]
+          .concat(D.meses.map(m => nx(conv(M.celula(D.sku[s], m)), casas)))
+          .concat([nx(conv(M.media(D.sku[s])), casas)]));
+      });
+    });
+    /* total: no percentual é 100% por construção, igual à tela */
+    push(...['Total', '', '']
+      .concat(D.meses.map(m => nx(M.ehPct ? 100 : conv(M.celula(D.tot, m)), casas)))
+      .concat([nx(M.ehPct ? 100 : conv(M.media(D.tot)), casas)]));
+    push('');
+  });
+
+  const esc = v => {
+    const s = String(v == null ? '' : v);
+    return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const csv = '﻿' + linhas.map(l => l.map(esc).join(';')).join('\r\n');
+  const quem = String((typeof SESSION === 'object' && SESSION && SESSION.user)
+                      || 'dobro').replace(/[^A-Za-z0-9]+/g, '_');
+  const d = new Date();
+  const stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') +
+                String(d.getDate()).padStart(2, '0') + '_' +
+                String(d.getHours()).padStart(2, '0') +
+                String(d.getMinutes()).padStart(2, '0');
+  const nome = 'shares_' + (qual === 'pct' ? 'percentual' : 'valores') + '_' +
+               quem + '_' + stamp + '.csv';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
+  a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return {nome: nome, linhas: linhas.length, secoes: secoes.length};
 }
 
 function montarShares(){
@@ -4400,6 +4502,16 @@ function ligarShares(){
     if(!card || card.dataset.ligado) return;
     card.dataset.ligado = '1';
     card.addEventListener('click', ev => {
+      /* o botão de exportar vem ANTES do teste de modo: ele também é um
+         <button> dentro do cabeçalho, e o closest de modo não o pegaria, mas
+         deixar explícito evita que uma mudança futura no markup os confunda */
+      const xls = ev.target.closest('[data-shr-xls]');
+      if(xls){
+        try{ shrExtrair(xls.dataset.shrXls); }
+        catch(e){ console.error('extrair shares:', e);
+                  alert('Não consegui extrair: ' + e.message); }
+        return;
+      }
       const bt = ev.target.closest('[data-shr-modo]');
       if(bt){
         SHARE_MODO[qual] = bt.dataset.shrModo;
