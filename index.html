@@ -4396,12 +4396,21 @@ function shrCard(qual, titulo, dica){
    linha passa a ser autoexplicativa mesmo lida fora de contexto, e o arquivo
    vira base de tabela dinâmica em vez de três blocos empilhados.
 
+   O BOTÃO EXPORTA O QUE ESTÁ SELECIONADO (corrigido em 14/09/2026)
+   ----------------------------------------------------------------
+   A primeira versão exportava SEMPRE as três medidas, em ordem fixa começando
+   por faturamento - eu quis "levar tudo de uma vez". O Igor clicou em Volume,
+   extraiu, abriu o arquivo e viu faturamento. Duas vezes: na primeira ele
+   achou que o volume estava errado (eram reais lidos como unidades), e eu
+   tratei o caso como falta de rótulo. O rótulo tornou a confusão visível, mas
+   a causa era outra - o arquivo não obedecia ao botão.
+
+   Agora sai só a medida selecionada, e o nome do arquivo diz qual é
+   (shares_volume_...). Quem quiser as três clica três vezes; a coluna `Medida`
+   continua lá, então os arquivos empilham direto um embaixo do outro.
+
    AS OUTRAS ESCOLHAS
-   1. O botão exporta O CARTÃO INTEIRO, não só o modo que está na tela: o de
-      valores traz faturamento, volume e ticket; o de percentuais traz share de
-      faturamento e de volume. Exportar só a aba visível faria a pessoa clicar
-      três vezes e juntar à mão.
-   2. Vêm SEMPRE todos os SKUs, mesmo com a categoria fechada na tela. No Excel
+   1. Vêm SEMPRE todos os SKUs, mesmo com a categoria fechada na tela. No Excel
       o detalhe é o motivo de exportar. A coluna `Nível` diz se a linha é
       Categoria, SKU ou Total.
    3. Número vai CRU, com vírgula decimal - 1234,56 e não "R$ 1.234,56". O
@@ -4416,11 +4425,14 @@ function shrExtrair(qual){
   const D = shrDados();
   if(!D.meses.length || !D.cats.length){ alert('Sem dados no recorte atual.'); return null; }
 
-  /* O nome da medida carrega a unidade: lida solta, a linha ainda se explica. */
-  const medidas = (qual === 'pct')
-    ? [['fat', 'Share faturamento (%)'], ['vol', 'Share volume (%)']]
-    : [['fat', 'Faturamento (R$)'], ['vol', 'Volume (un)'],
-       ['tic', 'Ticket médio (R$)']];
+  /* SÓ a medida que está selecionada no cartão - ver o cabeçalho.
+     O nome carrega a unidade: lida solta, a linha ainda se explica. */
+  const ROTULO = (qual === 'pct')
+    ? {fat: 'Share faturamento (%)', vol: 'Share volume (%)'}
+    : {fat: 'Faturamento (R$)', vol: 'Volume (un)', tic: 'Ticket médio (R$)'};
+  let sel = SHARE_MODO[qual];
+  if(!ROTULO[sel]) sel = 'fat';           /* 'tic' não existe no de percentuais */
+  const medidas = [[sel, ROTULO[sel]]];
 
   const linhas = [];
   const push = (...cols) => linhas.push(cols);
@@ -4470,8 +4482,11 @@ function shrExtrair(qual){
                 String(d.getDate()).padStart(2, '0') + '_' +
                 String(d.getHours()).padStart(2, '0') +
                 String(d.getMinutes()).padStart(2, '0');
-  const nome = 'shares_' + (qual === 'pct' ? 'percentual' : 'valores') + '_' +
-               quem + '_' + stamp + '.csv';
+  /* o nome diz a MEDIDA, não o cartão: foi abrir um arquivo sem saber o que
+     tinha dentro que causou a confusão de 14/09 */
+  const APELIDO = {fat: 'faturamento', vol: 'volume', tic: 'ticket'};
+  const nome = 'shares_' + (qual === 'pct' ? 'share_' : '') +
+               (APELIDO[sel] || sel) + '_' + quem + '_' + stamp + '.csv';
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
   a.download = nome;
