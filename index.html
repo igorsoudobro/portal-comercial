@@ -4383,64 +4383,80 @@ function shrCard(qual, titulo, dica){
    ';' + CRLF, que é o que faz o Excel em português abrir com as colunas
    separadas e o acento certo. Sem o BOM, "Razão" vira "RazÃ£o".
 
-   TRÊS ESCOLHAS QUE MUDAM O QUE VEM NO ARQUIVO
+   TABELA ÚNICA, COM A MEDIDA EM TODA LINHA (refeito em 14/09/2026)
+   ---------------------------------------------------------------
+   A primeira versão empilhava as medidas em SEÇÕES, cada uma com o título
+   sozinho na coluna A. O Igor abriu o arquivo, rolou para a direita para ver os
+   meses - e com isso o título e as colunas Nível/Categoria saíram da tela.
+   Sobrou uma grade de números sem nada dizendo qual medida era, e ele leu
+   faturamento achando que era volume. O dado estava certo; o arquivo é que não
+   se explicava.
+
+   Agora é uma tabela só, com `Medida` na primeira coluna de CADA linha. Cada
+   linha passa a ser autoexplicativa mesmo lida fora de contexto, e o arquivo
+   vira base de tabela dinâmica em vez de três blocos empilhados.
+
+   AS OUTRAS ESCOLHAS
    1. O botão exporta O CARTÃO INTEIRO, não só o modo que está na tela: o de
       valores traz faturamento, volume e ticket; o de percentuais traz share de
-      faturamento e de volume. Uma seção cada. Exportar só a aba visível faria
-      a pessoa clicar três vezes e juntar à mão.
+      faturamento e de volume. Exportar só a aba visível faria a pessoa clicar
+      três vezes e juntar à mão.
    2. Vêm SEMPRE todos os SKUs, mesmo com a categoria fechada na tela. No Excel
-      o detalhe é o motivo de exportar; esconder o que está fechado seria levar
-      a limitação da tela para dentro do arquivo. A coluna `Nível` diz se a
-      linha é Categoria ou SKU, então dá para filtrar e fazer tabela dinâmica.
+      o detalhe é o motivo de exportar. A coluna `Nível` diz se a linha é
+      Categoria, SKU ou Total.
    3. Número vai CRU, com vírgula decimal - 1234,56 e não "R$ 1.234,56". O
       Excel soma o primeiro; o segundo é texto. Percentual vai em pontos
       percentuais (58,3), não em fração.
+   4. O cabeçalho é a LINHA 1, sem preâmbulo: é o que deixa "Formatar como
+      tabela" e os filtros do Excel funcionarem direto. A procedência
+      (extraído em, usuário, recorte) vai no rodapé.
 
    As contas saem do shrMotor, o MESMO da tabela - ver o comentário lá. */
 function shrExtrair(qual){
   const D = shrDados();
   if(!D.meses.length || !D.cats.length){ alert('Sem dados no recorte atual.'); return null; }
 
-  const secoes = (qual === 'pct')
-    ? [['fat', 'SHARE % DO FATURAMENTO LÍQUIDO'], ['vol', 'SHARE % DO VOLUME']]
-    : [['fat', 'FATURAMENTO LÍQUIDO (R$)'], ['vol', 'VOLUME (unidades)'],
-       ['tic', 'TICKET MÉDIO (R$)']];
+  /* O nome da medida carrega a unidade: lida solta, a linha ainda se explica. */
+  const medidas = (qual === 'pct')
+    ? [['fat', 'Share faturamento (%)'], ['vol', 'Share volume (%)']]
+    : [['fat', 'Faturamento (R$)'], ['vol', 'Volume (un)'],
+       ['tic', 'Ticket médio (R$)']];
 
   const linhas = [];
   const push = (...cols) => linhas.push(cols);
   const nx = (v, casas) => (v === null || v === undefined || !isFinite(v))
     ? '' : Number(v).toFixed(casas).replace('.', ',');
 
-  push('SHARES POR CATEGORIA');
-  push('Extraído em', new Date().toLocaleString('pt-BR'));
-  push('Usuário', (typeof SESSION === 'object' && SESSION && SESSION.user) || '');
-  push('Recorte', D.meses.join(', '));
-  push('Base', 'faturamento líquido (venda − devolução); volume em unidade de venda');
-  push('');
+  push(...['Medida', 'Nível', 'Categoria', 'SKU'].concat(D.meses).concat(['Média']));
 
-  secoes.forEach(([modo, titulo]) => {
+  medidas.forEach(([modo, rotulo]) => {
     const M = shrMotor(D, qual, modo);
     /* percentual sai em pontos (58,3); valor e volume saem crus */
     const casas = M.ehPct ? 1 : (modo === 'vol' ? 0 : 2);
     const conv = (x) => x === null ? null : (M.ehPct ? x * 100 : x);
-    push(titulo);
-    push(...['Nível', 'Categoria', 'SKU'].concat(D.meses).concat(['Média']));
     D.cats.forEach(c => {
-      push(...['Categoria', c, '']
+      push(...[rotulo, 'Categoria', c, '']
         .concat(D.meses.map(m => nx(conv(M.celula(D.cat[c], m)), casas)))
         .concat([nx(conv(M.media(D.cat[c])), casas)]));
       D.skusDaCat[c].forEach(s => {
-        push(...['SKU', c, prodName(s).replace(/^Dobro\s+/i, '')]
+        push(...[rotulo, 'SKU', c, prodName(s).replace(/^Dobro\s+/i, '')]
           .concat(D.meses.map(m => nx(conv(M.celula(D.sku[s], m)), casas)))
           .concat([nx(conv(M.media(D.sku[s])), casas)]));
       });
     });
     /* total: no percentual é 100% por construção, igual à tela */
-    push(...['Total', '', '']
+    push(...[rotulo, 'Total', '', '']
       .concat(D.meses.map(m => nx(M.ehPct ? 100 : conv(M.celula(D.tot, m)), casas)))
       .concat([nx(M.ehPct ? 100 : conv(M.media(D.tot)), casas)]));
-    push('');
   });
+
+  /* procedência no rodapé, para o cabeçalho poder ser a linha 1 */
+  push('');
+  push('Extraído em', new Date().toLocaleString('pt-BR'));
+  push('Usuário', (typeof SESSION === 'object' && SESSION && SESSION.user) || '');
+  push('Recorte', D.meses.join(', '));
+  push('Base', 'faturamento líquido (venda − devolução); volume em unidade de ' +
+       'venda (caixa e sachê contam 1 cada); ticket = faturamento ÷ volume');
 
   const esc = v => {
     const s = String(v == null ? '' : v);
