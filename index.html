@@ -7290,7 +7290,32 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-crm .pill.stuck{background:var(--warn-bg);color:var(--warn)}
 #v-crm .empty{padding:34px;text-align:center;color:var(--mute);font-size:13px}
 #v-crm .foot{color:var(--mute);font-size:11.5px;text-align:center;margin-top:26px;line-height:1.7}
-@media (max-width:920px){#v-crm .kpis{grid-template-columns:repeat(2,1fr)}#v-crm .execgrid{grid-template-columns:repeat(2,1fr)}#v-crm .qualitygrid{grid-template-columns:repeat(2,1fr)}#v-crm .grid2{grid-template-columns:1fr}#v-crm .stage{grid-template-columns:22px 84px 1fr 40px}#v-crm .casc-label{width:78px}#v-crm .casc-step{width:56px}}
+/* ---- acréscimos do Portal (17/09/2026), fora do CSS original ---- */
+/* Card clicável: o cursor e o realce existem porque, sem eles, ninguém
+   descobre que dá para clicar - e o clique é como se vê a lista de clientes. */
+#v-crm .kpi.clicavel{cursor:pointer;transition:box-shadow .12s,transform .12s}
+#v-crm .kpi.clicavel:hover{box-shadow:0 4px 14px rgba(45,55,125,.16);transform:translateY(-1px)}
+#v-crm .kpi.focado{outline:2px solid var(--navy);outline-offset:-2px}
+/* Funil detalhado: cinco colunas que roluam sozinhas. A altura fixa evita que
+   a coluna "Recebido", com centenas de linhas, empurre a página inteira. */
+#v-crm .funil-board{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+#v-crm .fb-col{background:var(--paper);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+#v-crm .fb-col.ganho{border-color:#1E9E62}
+#v-crm .fb-col.perdido{border-color:#C0392B}
+#v-crm .fb-col.perdido .fb-head{background:#C0392B}
+#v-crm .fb-head{display:flex;justify-content:space-between;align-items:center;
+  padding:8px 10px;background:var(--navy);color:#fff;font-size:12px;font-weight:600}
+#v-crm .fb-col.ganho .fb-head{background:#1E9E62}
+#v-crm .fb-head b{font-size:14px}
+#v-crm .fb-lista{max-height:360px;overflow-y:auto;padding:6px}
+#v-crm .fb-lead{background:#fff;border:1px solid var(--line);border-radius:6px;
+  padding:6px 8px;margin-bottom:6px}
+#v-crm .fb-emp{font-size:11.5px;font-weight:600;color:var(--navy-deep);line-height:1.25}
+#v-crm .fb-vend{font-size:10.5px;color:var(--mute);margin-top:2px}
+#v-crm .fb-vazio,#v-crm .fb-mais{font-size:11px;color:var(--mute);padding:8px;text-align:center}
+@media (max-width:920px){#v-crm .funil-board{grid-template-columns:1fr}
+#v-crm .fb-lista{max-height:220px}
+#v-crm .kpis{grid-template-columns:repeat(2,1fr)}#v-crm .execgrid{grid-template-columns:repeat(2,1fr)}#v-crm .qualitygrid{grid-template-columns:repeat(2,1fr)}#v-crm .grid2{grid-template-columns:1fr}#v-crm .stage{grid-template-columns:22px 84px 1fr 40px}#v-crm .casc-label{width:78px}#v-crm .casc-step{width:56px}}
 </style>
 <script>
 /* ============ DETALHE POR NF NO DRE (26/08/2026) ==========================
@@ -7516,7 +7541,7 @@ function crmDiasDesde(s){ if(!s) return null; return Math.floor((CRM_TODAY - crm
 function crmEsc(s){ return String(s==null?'':s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-const stateL = { orig:'', focusPipe:'', gran:'auto' };
+const stateL = { orig:'', foco:'', gran:'auto' };
 
 /* O ano do dado, não o do relógio: um Portal aberto em janeiro de 2027 com o
    pacote de 2026 continuaria montando o período certo. */
@@ -7573,10 +7598,8 @@ function leadsMetrics(cohort){
   const abertosArr = cohort.filter(r=>FUNIL_ABERTO.includes(r.fase));
   const valorGanho = ganhosArr.reduce((s,r)=>s+r.valor,0);
   const taxaConversao = recebidos ? ganhosArr.length/recebidos*100 : 0;
-  const decididos = ganhosArr.length + perdidosArr.length;
-  const winRate = decididos ? ganhosArr.length/decididos*100 : 0;
   return {recebidos, trabalhadosArr, ganhosArr, perdidosArr, abertosArr,
-          valorGanho, taxaConversao, winRate, decididos};
+          valorGanho, taxaConversao};
 }
 
 function slaMetrics(cohort){
@@ -7598,6 +7621,49 @@ function pipelineAtual(cohort){
   const b = {'Prospecção':0,'Apresentação':0,'Proposta':0,'Negociação':0,'Fechamento':0,'Perdido':0};
   cohort.forEach(r=>{ if(Object.prototype.hasOwnProperty.call(b, r.fase)) b[r.fase]++; });
   return b;
+}
+
+/* PIPELINE DETALHADO (17/09/2026). Quem são os leads de cada etapa, por nome.
+
+   É por FASE ATUAL: cada lead aparece numa coluna só, a de hoje. Essa é a
+   diferença para o funil de conversão logo acima, que é cumulativo (quem está
+   em Negociação também contou em Trabalhados, porque passou por lá).
+
+   As duas leituras estão certas e respondem a perguntas diferentes: o funil diz
+   onde o processo perde gente, o pipeline diz o que tem na mesa agora. Por isso
+   a soma deste quadro bate com "Recebidos" e a do funil não.
+
+   Eu tinha montado este quadro cumulativo primeiro; o Igor pediu por fase, que
+   é o que serve para trabalhar a lista. */
+const FUNIL_COLUNAS = [
+  {k:'Prospecção',  lab:'Prospecção'},
+  {k:'Apresentação',lab:'Apresentação'},
+  {k:'Proposta',    lab:'Proposta'},
+  {k:'Negociação',  lab:'Negociação'},
+  {k:'Fechamento',  lab:'Ganhos'},
+  {k:'Perdido',     lab:'Perdidos'},
+];
+
+function crmFunilBoard(cohort){
+  const box = el('funil-board');
+  if(!box) return;
+  box.innerHTML = FUNIL_COLUNAS.map(col=>{
+    const rows = cohort.filter(r=>r.fase===col.k)
+      .sort((a,b)=>(b.dProspeccao||'').localeCompare(a.dProspeccao||''));
+    const corpo = rows.length
+      ? rows.slice(0,200).map(r=>{
+          const emp = r.empresa || '(sem nome)';
+          return '<div class="fb-lead" title="'+crmEsc(emp)+'">'+
+                 '<div class="fb-emp">'+crmEsc(emp.length>34?emp.slice(0,34)+'…':emp)+'</div>'+
+                 '<div class="fb-vend">'+crmEsc(r.vend)+'</div></div>';
+        }).join('') + (rows.length>200
+          ? '<div class="fb-mais">+ '+(rows.length-200)+' não listados</div>' : '')
+      : '<div class="fb-vazio">nenhum</div>';
+    const cls = col.k==='Fechamento' ? ' ganho' : (col.k==='Perdido' ? ' perdido' : '');
+    return '<div class="fb-col'+cls+'">'+
+           '<div class="fb-head"><span>'+col.lab+'</span><b>'+rows.length+'</b></div>'+
+           '<div class="fb-lista">'+corpo+'</div></div>';
+  }).join('');
 }
 
 function funilConversao(cohort){
@@ -7622,9 +7688,7 @@ function vendorTableLeads(cohort){
     if(r.fase==='Perdido') o.perdidos++;
   });
   return Object.entries(map).map(([v,o])=>{
-    const dec=o.ganhos+o.perdidos;
-    return {vend:v, ...o, conv:o.recebidos?o.ganhos/o.recebidos*100:0,
-            winrate:dec?o.ganhos/dec*100:0};
+    return {vend:v, ...o, conv:o.recebidos?o.ganhos/o.recebidos*100:0};
   }).sort((a,b)=>b.recebidos-a.recebidos);
 }
 
@@ -7747,10 +7811,13 @@ function crmEsqueleto(){
       '<p class="sectionsub">Até onde os leads do período conseguiram avançar.</p>'+
       '<div class="cascade" id="cascade"></div><p class="casc-note" id="cascade-note"></p></div>'+
   '</div>'+
+  '<div class="section"><p class="eyebrow">Pipeline detalhado'+
+    '<span class="tag">cada lead aparece numa coluna só — a fase de hoje</span></p>'+
+    '<div class="card pane"><div class="funil-board" id="funil-board"></div></div></div>'+
   '<div class="section"><p class="eyebrow">Desempenho por vendedor</p>'+
     '<div class="card pane tablewrap"><table><thead><tr>'+
     '<th>Vendedor</th><th>Recebidos</th><th>Trabalhados</th><th>Abertos</th><th>Atrasados&nbsp;&gt;7d</th>'+
-    '<th>Ganhos</th><th>Perdidos</th><th>Conversão</th><th>Win Rate</th>'+
+    '<th>Ganhos</th><th>Perdidos</th><th>Conversão</th>'+
     '</tr></thead><tbody id="vend-body"></tbody></table></div></div>'+
   '<div class="section grid2">'+
     '<div class="card pane"><p class="eyebrow">Origem dos leads</p>'+
@@ -7807,13 +7874,34 @@ function crmLigar(){
   if(!box || box.dataset.ligado) return;
   box.dataset.ligado = '1';
   box.addEventListener('click', ev => {
+    /* Cards e etapas do pipeline escrevem no MESMO stateL.foco - a etapa com o
+       prefixo 'fase:'. Um campo só garante que escolher um desmarque o outro;
+       com dois campos dava para ficar com "ganhos" e "Perdido" ligados ao mesmo
+       tempo e a lista embaixo não corresponderia a nenhum dos dois. */
     const st = ev.target.closest && ev.target.closest('[data-pipe]');
-    if(st){ const k = st.getAttribute('data-pipe');
-            stateL.focusPipe = (stateL.focusPipe===k ? '' : k); renderLeads(); return; }
+    if(st){
+      const k = 'fase:' + st.getAttribute('data-pipe');
+      stateL.foco = (stateL.foco===k ? '' : k);
+      renderLeads();
+      const d0 = el('detail-body-leads');
+      if(d0 && stateL.foco) d0.scrollIntoView({block:'center', behavior:'smooth'});
+      return;
+    }
+    const card = ev.target.closest && ev.target.closest('[data-kpi]');
+    if(card){
+      const k = card.getAttribute('data-kpi');
+      stateL.foco = (stateL.foco===k ? '' : k);
+      renderLeads();
+      /* Levar a pessoa até a lista: o card fica no topo e a tabela no fim da
+         aba. Sem isso o clique parece não ter feito nada. */
+      const d = el('detail-body-leads');
+      if(d && stateL.foco) d.scrollIntoView({block:'center', behavior:'smooth'});
+      return;
+    }
     const g = ev.target.closest && ev.target.closest('#gran-leads .granbtn');
     if(g){ stateL.gran = g.dataset.g; renderLeads(); return; }
     if(ev.target && ev.target.id === 'clear-leads'){
-      stateL.orig=''; stateL.focusPipe=''; stateL.gran='auto'; renderLeads();
+      stateL.orig=''; stateL.foco=''; stateL.gran='auto'; renderLeads();
     }
   });
   box.addEventListener('change', ev => {
@@ -7859,18 +7947,24 @@ function renderLeads(){
     (per.de?crmBrDate(per.de):'início da base') + '</b> a <b>' +
     (per.ate?crmBrDate(per.ate):'hoje') + '</b>';
 
+  /* Quatro KPIs, os que o Igor pediu em 17/09. Saíram Oportunidades Abertas,
+     Perdidos, Valor Vendido e o Win Rate (este último some de toda a aba).
+     Cada card é CLICÁVEL: o `k` diz qual recorte ele joga na tabela de baixo,
+     que já mostra empresa e vendedor - era isso o "abrir quem são os clientes".
+     Clicar de novo desfaz. */
   const kpis = [
-    {l:'Recebidos', v:m.recebidos, s:'Novo Cliente · prospecção no período'},
-    {l:'Trabalhados', v:m.trabalhadosArr.length, s:crmPct(m.recebidos?m.trabalhadosArr.length/m.recebidos*100:0)+' dos recebidos'},
-    {l:'Oportunidades Abertas', v:m.abertosArr.length, s:'ainda em andamento no funil'},
-    {l:'Ganhos', v:m.ganhosArr.length, s:crmMoney(m.valorGanho), c:'win'},
-    {l:'Perdidos', v:m.perdidosArr.length, s:'encerrados como perda', c:'loss'},
-    {l:'Taxa de Conversão', v:crmPct(m.taxaConversao), s:'Ganhos ÷ Recebidos', c:'win'},
-    {l:'Win Rate', v:crmPct(m.winRate), s:'Ganhos ÷ (Ganhos+Perdidos)'},
-    {l:'Valor Vendido', v:crmMoney(m.valorGanho), s:'soma dos Ganhos'},
+    {k:'recebidos',  l:'Leads recebidos',   v:m.recebidos,
+     s:'Novo Cliente · prospecção no período'},
+    {k:'trabalhados',l:'Leads trabalhados', v:m.trabalhadosArr.length,
+     s:crmPct(m.recebidos?m.trabalhadosArr.length/m.recebidos*100:0)+' dos recebidos'},
+    {k:'ganhos',     l:'Ganhos',            v:m.ganhosArr.length,
+     s:crmMoney(m.valorGanho), c:'win'},
+    {k:'conversao',  l:'Taxa de Conversão', v:crmPct(m.taxaConversao),
+     s:'Ganhos ÷ Recebidos', c:'win'},
   ];
   el('kpis-leads').innerHTML = kpis.map(k=>
-    '<div class="kpi '+(k.c||'')+'"><div class="k-label">'+k.l+'</div>'+
+    '<div class="kpi clicavel '+(k.c||'')+(stateL.foco===k.k?' focado':'')+
+    '" data-kpi="'+k.k+'"><div class="k-label">'+k.l+'</div>'+
     '<div class="k-val">'+k.v+'</div><div class="k-sub">'+k.s+'</div></div>').join('');
 
   const exec = [
@@ -7889,13 +7983,15 @@ function renderLeads(){
   el('pipeline').innerHTML = order.map((k,i)=>{
     const w = Math.round(pipe[k]/maxP*100);
     const cls = k==='Fechamento'?'ganho':(k==='Perdido'?'perdido':'');
-    const on = stateL.focusPipe===k?' active':'';
+    const on = stateL.foco==='fase:'+k ? ' active' : '';
     return '<div class="stage '+cls+on+'" data-pipe="'+k+'">'+
       '<span class="idx">'+String(i+1).padStart(2,'0')+'</span>'+
       '<span class="nm">'+(k==='Fechamento'?'Ganhos':(k==='Perdido'?'Perdidos':k))+'</span>'+
       '<span class="track"><span class="bar" style="width:'+w+'%"></span></span>'+
       '<span class="ct">'+pipe[k]+'</span></div>';
   }).join('');
+  /* A conferência fica: ela pega Fase Atual com valor fora dos seis esperados,
+     que seria um lead sumindo do quadro sem ninguém notar. */
   const somaPipe = order.reduce((s,k)=>s+pipe[k],0);
   const pf = el('pipefoot');
   if(somaPipe===m.recebidos){
@@ -7905,6 +8001,8 @@ function renderLeads(){
     pf.className='pipefoot bad';
     pf.innerHTML='⚠ Soma do pipeline ('+somaPipe+') difere de Recebidos ('+m.recebidos+') — há Fase Atual fora do esperado.';
   }
+
+  crmFunilBoard(cohort);
 
   const casc = funilConversao(cohort);
   const base0 = casc[0].n || 1;
@@ -7935,8 +8033,8 @@ function renderLeads(){
     '<td>'+(r.atrasados>0?'<span class="riskbadge hi">'+r.atrasados+'</span>':'0')+'</td>'+
     '<td>'+r.ganhos+'</td><td>'+r.perdidos+'</td>'+
     '<td><span class="conv"><span class="cbar"><i style="width:'+Math.round(r.conv)+'%"></i></span><b>'+crmPct(r.conv)+'</b></span></td>'+
-    '<td>'+crmPct(r.winrate)+'</td></tr>').join('') :
-    '<tr><td colspan="9" style="color:var(--mute);padding:16px 0">Sem dados no recorte.</td></tr>';
+    '</tr>').join('') :
+    '<tr><td colspan="8" style="color:var(--mute);padding:16px 0">Sem dados no recorte.</td></tr>';
 
   const orows = origemTable(cohort);
   el('orig-body').innerHTML = orows.length? orows.map(r=>
@@ -7966,12 +8064,28 @@ function renderLeads(){
   renderDetailLeads(cohort);
 }
 
+/* O recorte de cada card. Mesma definição do leadsMetrics - se um dia mudar
+   lá, muda aqui junto, senão o card diria um número e a lista outro. */
+const CRM_FOCOS = {
+  recebidos:   {lab:'recebidos',           ok:r=>true},
+  trabalhados: {lab:'trabalhados',         ok:r=>!!r.dApresentacao},
+  ganhos:      {lab:'ganhos',              ok:r=>r.fase==='Fechamento'},
+  conversao:   {lab:'que converteram',     ok:r=>r.fase==='Fechamento'},
+};
+
 function renderDetailLeads(cohort){
   let rows = cohort.slice();
-  if(stateL.focusPipe) rows = rows.filter(r=>r.fase===stateL.focusPipe);
+  let rotulo = '';
+  if(stateL.foco.indexOf('fase:') === 0){
+    const f = stateL.foco.slice(5);
+    rows = rows.filter(r => r.fase === f);
+    rotulo = (f==='Fechamento' ? 'Ganhos' : (f==='Perdido' ? 'Perdidos' : f));
+  } else {
+    const foco = CRM_FOCOS[stateL.foco];
+    if(foco){ rows = rows.filter(foco.ok); rotulo = foco.lab; }
+  }
   rows.sort((a,b)=>(b.dProspeccao||'').localeCompare(a.dProspeccao||''));
-  el('focusTag').textContent = stateL.focusPipe?
-    '· '+(stateL.focusPipe==='Fechamento'?'Ganhos':(stateL.focusPipe==='Perdido'?'Perdidos':stateL.focusPipe)) : '';
+  el('focusTag').textContent = rotulo ? '· ' + rotulo : '';
   el('detailCountLeads').innerHTML = '<b>'+rows.length+'</b> lead'+(rows.length===1?'':'s');
   const body = el('detail-body-leads');
   if(!rows.length){
