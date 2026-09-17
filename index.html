@@ -7137,17 +7137,10 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
     --shadow:0 1px 2px rgba(32,38,79,.04), 0 10px 30px rgba(32,38,79,.06);
     --r:12px;}
 #v-crm *{box-sizing:border-box}
-#v-crm /* ---------- top band ---------- */
-  .band{background:linear-gradient(120deg,var(--navy-deep),var(--navy) 62%,var(--indigo));
-    color:#fff; border-radius:0 0 20px 20px;
-    padding:20px 26px 0; margin-bottom:16px;
-    box-shadow:0 12px 30px rgba(32,38,79,.18);}
 #v-crm .tabnav{max-width:1280px;margin:0 auto;display:flex;flex-wrap:wrap;gap:6px;border-top:1px solid rgba(255,255,255,.16);padding-top:2px}
-#v-crm /* ---------- período analisado (discreto) ---------- */
-  .periodline{font-size:12px;color:var(--mute);margin:2px 2px 12px;font-weight:600}
+#v-crm .periodline{font-size:12px;color:var(--mute);margin:2px 2px 12px;font-weight:600}
 #v-crm .periodline b{color:var(--navy)}
-#v-crm /* ---------- filters ---------- */
-  .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;
+#v-crm .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;
     background:var(--white);border:1px solid var(--line);border-radius:var(--r);
     padding:14px 16px;box-shadow:var(--shadow);margin-bottom:16px;}
 #v-crm .fld{display:flex;flex-direction:column;gap:5px}
@@ -7166,16 +7159,14 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
     background:var(--mist);border:1px solid var(--line);border-radius:8px;padding:9px 14px;height:37px;
     transition:background .15s;}
 #v-crm #clear-leads:hover, #v-crm #clear-cart:hover{background:#E1E5F5}
-#v-crm /* ---------- section frame ---------- */
-  .eyebrow{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;letter-spacing:.8px;
+#v-crm .eyebrow{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;letter-spacing:.8px;
     text-transform:uppercase;color:var(--mute);margin:0 0 4px}
 #v-crm .eyebrow::before{content:"";width:14px;height:2px;background:var(--navy);border-radius:2px}
 #v-crm .eyebrow .tag{margin-left:auto;font-size:10.5px;font-weight:600;color:var(--indigo);text-transform:none;letter-spacing:0}
 #v-crm .sectionsub{font-size:11.5px;color:var(--mute);margin:0 0 12px}
 #v-crm .card{background:var(--white);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
 #v-crm .section{margin-bottom:22px}
-#v-crm /* ---------- KPI grid ---------- */
-  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+#v-crm .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
 #v-crm .kpi{position:relative;background:#fff;border:1px solid var(--line);border-radius:var(--r);
     padding:15px 16px 14px;box-shadow:var(--shadow);overflow:hidden;cursor:default}
 #v-crm .kpi::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:var(--navy)}
@@ -7191,19 +7182,16 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-crm .kpi.warn .k-val{color:var(--warn)}
 #v-crm .kpi.loss .k-val{color:var(--loss)}
 #v-crm .kpi .k-sub{font-size:11px;color:var(--mute);margin-top:3px}
-#v-crm /* ---------- execution/SLA mini strip ---------- */
-  .execgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+#v-crm .execgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
 #v-crm .execcard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:var(--shadow)}
 #v-crm .execcard .e-label{font-size:10px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--mute)}
 #v-crm .execcard .e-val{font-size:22px;font-weight:700;color:var(--navy);margin-top:5px}
 #v-crm .execcard.warn .e-val{color:var(--warn)}
 #v-crm .execcard .e-sub{font-size:10.5px;color:var(--mute);margin-top:2px}
-#v-crm /* ---------- two-col grids ---------- */
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+#v-crm .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 #v-crm .grid2 > *{min-width:0}
 #v-crm .pane{padding:18px 18px 20px}
-#v-crm /* ---------- pipeline ---------- */
-  .stage{display:grid;grid-template-columns:26px 110px 1fr 46px;align-items:center;gap:10px;
+#v-crm .stage{display:grid;grid-template-columns:26px 110px 1fr 46px;align-items:center;gap:10px;
     padding:7px 0;cursor:pointer;border-radius:8px;transition:background .12s}
 #v-crm .stage:hover{background:var(--paper)}
 #v-crm .stage.active{background:var(--mist)}
@@ -7218,8 +7206,7 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-crm .pipefoot b{color:var(--navy)}
 #v-crm .pipefoot.ok b{color:var(--win)}
 #v-crm .pipefoot.bad b{color:var(--loss)}
-#v-crm /* ---------- funnel efficiency cascade ---------- */
-  .cascade{display:flex;flex-direction:column;gap:2px}
+#v-crm .cascade{display:flex;flex-direction:column;gap:2px}
 #v-crm .casc-row{display:flex;align-items:center;gap:12px;padding:9px 0}
 #v-crm .casc-label{width:104px;font-size:12.5px;font-weight:600;color:var(--ink);flex-shrink:0}
 #v-crm .casc-bar-wrap{flex:1;background:var(--mist);border-radius:8px;height:30px;position:relative;overflow:hidden}
@@ -7230,8 +7217,7 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-crm .casc-step b{display:block;font-size:13px;color:var(--win)}
 #v-crm .casc-step.drop b{color:var(--warn)}
 #v-crm .casc-note{margin-top:10px;font-size:11.5px;color:var(--mute)}
-#v-crm /* ---------- vendor table ---------- */
-  .tablewrap{overflow-x:auto}
+#v-crm .tablewrap{overflow-x:auto}
 #v-crm table{width:100%;border-collapse:collapse}
 #v-crm thead th{font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--mute);
     text-align:right;padding:0 8px 9px 0;border-bottom:1px solid var(--line);white-space:nowrap}
@@ -7248,16 +7234,14 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-crm .riskbadge.hi{color:var(--loss)}
 #v-crm .riskbadge.md{color:var(--warn)}
 #v-crm .riskbadge.lo{color:var(--win)}
-#v-crm /* ---------- simple hbars ---------- */
-  .hrow{display:grid;grid-template-columns:1fr 40px;gap:10px;align-items:center;padding:6px 0}
+#v-crm .hrow{display:grid;grid-template-columns:1fr 40px;gap:10px;align-items:center;padding:6px 0}
 #v-crm .hrow .hlab{font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #v-crm .hrow .htrack{grid-column:1/2;height:12px;background:var(--mist);border-radius:6px;overflow:hidden;margin-top:2px}
 #v-crm .hrow .hbar{height:100%;border-radius:6px;background:linear-gradient(90deg,var(--indigo-soft),var(--indigo))}
 #v-crm .hrow.loss .hbar{background:linear-gradient(90deg,#D89AA2,var(--loss))}
 #v-crm .hrow .hct{font-size:13px;font-weight:700;color:var(--navy);text-align:right}
 #v-crm .hitem{margin-bottom:2px}
-#v-crm /* ---------- health segmented bar ---------- */
-  .healthbar{display:flex;height:34px;border-radius:9px;overflow:hidden;margin-bottom:12px;box-shadow:inset 0 0 0 1px var(--line)}
+#v-crm .healthbar{display:flex;height:34px;border-radius:9px;overflow:hidden;margin-bottom:12px;box-shadow:inset 0 0 0 1px var(--line)}
 #v-crm .healthseg{display:flex;align-items:center;justify-content:center;color:#fff;font-size:12.5px;font-weight:700;
     cursor:pointer;transition:opacity .15s;min-width:2%}
 #v-crm .healthseg:hover{opacity:.88}
@@ -7272,24 +7256,20 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-crm .healthleg .atencao{background:var(--warn)}
 #v-crm .healthleg .risco{background:var(--loss)}
 #v-crm .provisional{font-size:10.5px;color:var(--warn);font-weight:600;margin-top:8px}
-#v-crm /* ---------- quality (secondary, #v-crm muted) ---------- */
-  .qualitybox{background:var(--paper);border:1px dashed var(--line);border-radius:10px;padding:14px 16px}
+#v-crm .qualitybox{background:var(--paper);border:1px dashed var(--line);border-radius:10px;padding:14px 16px}
 #v-crm .qualitygrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
 #v-crm .qitem .q-val{font-size:19px;font-weight:700;color:var(--mute)}
 #v-crm .qitem .q-label{font-size:10.5px;color:var(--mute);margin-top:2px}
-#v-crm /* ---------- granularity toggle ---------- */
-  .grantoggle{display:flex;gap:4px;background:var(--mist);border-radius:8px;padding:3px}
+#v-crm .grantoggle{display:flex;gap:4px;background:var(--mist);border-radius:8px;padding:3px}
 #v-crm .granbtn{font:inherit;font-size:11.5px;font-weight:600;color:var(--mute);background:transparent;border:none;
     border-radius:6px;padding:5px 11px;cursor:pointer}
 #v-crm .granbtn.active{background:#fff;color:var(--navy);box-shadow:var(--shadow)}
-#v-crm /* ---------- evolution chart ---------- */
-  .chartwrap{padding:18px 18px 12px}
+#v-crm .chartwrap{padding:18px 18px 12px}
 #v-crm svg{display:block;width:100%;height:auto}
 #v-crm .chartlegend{display:flex;gap:16px;font-size:11.5px;color:var(--mute);margin-top:6px}
 #v-crm .chartlegend span{display:inline-flex;align-items:center;gap:5px}
 #v-crm .chartlegend i{width:9px;height:9px;border-radius:2px;display:inline-block}
-#v-crm /* ---------- detail table ---------- */
-  .detail{padding:18px}
+#v-crm .detail{padding:18px}
 #v-crm .detail .dhead{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:8px}
 #v-crm .detail .count{font-size:12px;color:var(--mute)}
 #v-crm .detail .count b{color:var(--navy)}
@@ -7310,13 +7290,7 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-crm .pill.stuck{background:var(--warn-bg);color:var(--warn)}
 #v-crm .empty{padding:34px;text-align:center;color:var(--mute);font-size:13px}
 #v-crm .foot{color:var(--mute);font-size:11.5px;text-align:center;margin-top:26px;line-height:1.7}
-#v-crm .kpis{grid-template-columns:repeat(2,1fr)}
-#v-crm .execgrid{grid-template-columns:repeat(2,1fr)}
-#v-crm .qualitygrid{grid-template-columns:repeat(2,1fr)}
-#v-crm .grid2{grid-template-columns:1fr}
-#v-crm .stage{grid-template-columns:22px 84px 1fr 40px}
-#v-crm .casc-label{width:78px}
-#v-crm .casc-step{width:56px}
+@media (max-width:920px){#v-crm .kpis{grid-template-columns:repeat(2,1fr)}#v-crm .execgrid{grid-template-columns:repeat(2,1fr)}#v-crm .qualitygrid{grid-template-columns:repeat(2,1fr)}#v-crm .grid2{grid-template-columns:1fr}#v-crm .stage{grid-template-columns:22px 84px 1fr 40px}#v-crm .casc-label{width:78px}#v-crm .casc-step{width:56px}}
 </style>
 <script>
 /* ============ DETALHE POR NF NO DRE (26/08/2026) ==========================
