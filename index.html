@@ -7291,6 +7291,16 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-crm .empty{padding:34px;text-align:center;color:var(--mute);font-size:13px}
 #v-crm .foot{color:var(--mute);font-size:11.5px;text-align:center;margin-top:26px;line-height:1.7}
 /* ---- acréscimos do Portal (17/09/2026), fora do CSS original ---- */
+/* Tabela de leads: o título tem de ficar em cima da coluna.
+   O CSS original tem `thead th{text-align:right}` como regra geral e
+   `.dtable td{text-align:left}` para esta tabela - então os títulos saíam
+   encostados à direita e os dados à esquerda, e o desencontro crescia junto
+   com a largura da coluna (a "ORIGEM" aparecia quase em cima da PROSPECÇÃO).
+   Aqui o cabeçalho passa a seguir a célula: esquerda por padrão, direita só
+   nas colunas .r, que são as numéricas e de data. O padding também é o mesmo
+   do td, senão sobra 2px de deslocamento. */
+#v-crm .dtable thead th{text-align:left;padding:8px 10px 8px 0}
+#v-crm .dtable thead th.r{text-align:right}
 /* Card clicável: o cursor e o realce existem porque, sem eles, ninguém
    descobre que dá para clicar - e o clique é como se vê a lista de clientes. */
 #v-crm .kpi.clicavel{cursor:pointer;transition:box-shadow .12s,transform .12s}
