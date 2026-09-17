@@ -591,12 +591,18 @@ async function _loadData(){
      grafico diario simplesmente nao aparece. */
   const CI={}; FATO.cols.forEach((c,i)=>{CI[c]=i;});
   const _temDia = (CI.d!==undefined && Array.isArray(D.Dia));
+  /* A categoria de receita do OMIE. NÃO é filtro: ela é quem decide o bloco
+     Key Account, e isso já vem resolvido do Python (o Modelo chega promovido).
+     Fica no ROWS só para conferência — é por ela que se explica de onde saiu o
+     número quando ele diverge do financeiro. Com um JSON antigo fica ''. */
+  const _temCatOmie = (CI.co!==undefined && Array.isArray(D.CategoriaOMIE));
   ROWS=FATO.rows.map(r=>({
     v:D.Vendedor[r[CI.v]], mo:D.Modelo[r[CI.mo]], m:D.Mes[r[CI.m]],
     venda:r[CI.t]===1, tipo:r[CI.t], bonif:r[CI.t]===2, amostra:r[CI.t]===3,
     ca:D.CanalSeg[r[CI.ca]], cat:D.Categoria[r[CI.cat]], reg:D.Regiao[r[CI.r]],
     uf:D.Estado[r[CI.uf]], cn:D.CNPJ[r[CI.cn]], sk:D.SKU[r[CI.sk]],
     d:_temDia ? (D.Dia[r[CI.d]]||'') : '',
+    co:_temCatOmie ? (D.CategoriaOMIE[r[CI.co]]||'') : '',
     fat:r[CI.fat], cmv:r[CI.cmv], imp:r[CI.imp], fr:r[CI.fr], com:r[CI.com],
     q:r[CI.q], nfs:r[CI.nfs]
   }));
@@ -7117,6 +7123,200 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-dre tr[data-dre="imp"]:hover,
 #v-dre tr[data-dre="fr"]:hover,
 #v-dre tr[data-dre="boni"]:hover{ background:#f2f6fc; }
+
+/* ===== CRM de novos Leads: CSS do HTML avulso, ESCOPADO sob #v-crm.
+   Escopado porque o arquivo original usa nomes que o Portal ja tem
+   (.card, .section, .chip, .tag, .empty, .num, .pill). Solto, ele
+   repintaria o Portal inteiro; sob '#v-crm ' so alcanca a aba nova, e a
+   especificidade de id garante que ganhe da regra generica la dentro. */
+#v-crm{--navy:#2D377D; --navy-deep:#20264F; --indigo:#4A56A8; --indigo-soft:#8A93C9;
+    --mist:#EDEFF7; --paper:#F5F6FB; --line:#E4E7F2; --white:#fff;
+    --ink:#1E2233; --mute:#767C9B;
+    --win:#2E7D5B; --win-bg:#E7F2EC; --warn:#B9770C; --warn-bg:#FBF1DF;
+    --loss:#B23A48; --loss-bg:#F7E7E9;
+    --shadow:0 1px 2px rgba(32,38,79,.04), 0 10px 30px rgba(32,38,79,.06);
+    --r:12px;}
+#v-crm *{box-sizing:border-box}
+#v-crm /* ---------- top band ---------- */
+  .band{background:linear-gradient(120deg,var(--navy-deep),var(--navy) 62%,var(--indigo));
+    color:#fff; border-radius:0 0 20px 20px;
+    padding:20px 26px 0; margin-bottom:16px;
+    box-shadow:0 12px 30px rgba(32,38,79,.18);}
+#v-crm .tabnav{max-width:1280px;margin:0 auto;display:flex;flex-wrap:wrap;gap:6px;border-top:1px solid rgba(255,255,255,.16);padding-top:2px}
+#v-crm /* ---------- período analisado (discreto) ---------- */
+  .periodline{font-size:12px;color:var(--mute);margin:2px 2px 12px;font-weight:600}
+#v-crm .periodline b{color:var(--navy)}
+#v-crm /* ---------- filters ---------- */
+  .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;
+    background:var(--white);border:1px solid var(--line);border-radius:var(--r);
+    padding:14px 16px;box-shadow:var(--shadow);margin-bottom:16px;}
+#v-crm .fld{display:flex;flex-direction:column;gap:5px}
+#v-crm .fld label{font-size:10.5px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--mute)}
+#v-crm .fld select, #v-crm .fld input{font:inherit;font-size:13px;color:var(--ink);background:#fff;
+    border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:140px;
+    transition:border-color .15s,box-shadow .15s;}
+#v-crm .fld select:focus, #v-crm .fld input:focus{outline:none;border-color:var(--indigo);box-shadow:0 0 0 3px rgba(74,86,168,.15)}
+#v-crm .shortcuts{display:flex;gap:6px;flex-wrap:wrap}
+#v-crm .shortbtn{font:inherit;font-size:12px;font-weight:600;color:var(--navy);cursor:pointer;
+    background:var(--mist);border:1px solid var(--line);border-radius:7px;padding:7px 11px;
+    transition:background .15s;white-space:nowrap;}
+#v-crm .shortbtn:hover{background:#E1E5F5}
+#v-crm .shortbtn.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+#v-crm #clear-leads, #v-crm #clear-cart{font:inherit;font-size:12.5px;font-weight:600;color:var(--navy);cursor:pointer;
+    background:var(--mist);border:1px solid var(--line);border-radius:8px;padding:9px 14px;height:37px;
+    transition:background .15s;}
+#v-crm #clear-leads:hover, #v-crm #clear-cart:hover{background:#E1E5F5}
+#v-crm /* ---------- section frame ---------- */
+  .eyebrow{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;letter-spacing:.8px;
+    text-transform:uppercase;color:var(--mute);margin:0 0 4px}
+#v-crm .eyebrow::before{content:"";width:14px;height:2px;background:var(--navy);border-radius:2px}
+#v-crm .eyebrow .tag{margin-left:auto;font-size:10.5px;font-weight:600;color:var(--indigo);text-transform:none;letter-spacing:0}
+#v-crm .sectionsub{font-size:11.5px;color:var(--mute);margin:0 0 12px}
+#v-crm .card{background:var(--white);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+#v-crm .section{margin-bottom:22px}
+#v-crm /* ---------- KPI grid ---------- */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+#v-crm .kpi{position:relative;background:#fff;border:1px solid var(--line);border-radius:var(--r);
+    padding:15px 16px 14px;box-shadow:var(--shadow);overflow:hidden;cursor:default}
+#v-crm .kpi::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:var(--navy)}
+#v-crm .kpi.win::before{background:var(--win)}
+#v-crm .kpi.warn::before{background:var(--warn)}
+#v-crm .kpi.loss::before{background:var(--loss)}
+#v-crm .kpi.click{cursor:pointer;transition:transform .12s}
+#v-crm .kpi.click:hover{transform:translateY(-1px)}
+#v-crm .kpi.active{outline:2px solid var(--navy);outline-offset:-2px}
+#v-crm .kpi .k-label{font-size:10.5px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--mute)}
+#v-crm .kpi .k-val{font-size:27px;font-weight:700;color:var(--navy);line-height:1.1;margin-top:7px;letter-spacing:-.5px}
+#v-crm .kpi.win .k-val{color:var(--win)}
+#v-crm .kpi.warn .k-val{color:var(--warn)}
+#v-crm .kpi.loss .k-val{color:var(--loss)}
+#v-crm .kpi .k-sub{font-size:11px;color:var(--mute);margin-top:3px}
+#v-crm /* ---------- execution/SLA mini strip ---------- */
+  .execgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+#v-crm .execcard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:13px 14px;box-shadow:var(--shadow)}
+#v-crm .execcard .e-label{font-size:10px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--mute)}
+#v-crm .execcard .e-val{font-size:22px;font-weight:700;color:var(--navy);margin-top:5px}
+#v-crm .execcard.warn .e-val{color:var(--warn)}
+#v-crm .execcard .e-sub{font-size:10.5px;color:var(--mute);margin-top:2px}
+#v-crm /* ---------- two-col grids ---------- */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+#v-crm .grid2 > *{min-width:0}
+#v-crm .pane{padding:18px 18px 20px}
+#v-crm /* ---------- pipeline ---------- */
+  .stage{display:grid;grid-template-columns:26px 110px 1fr 46px;align-items:center;gap:10px;
+    padding:7px 0;cursor:pointer;border-radius:8px;transition:background .12s}
+#v-crm .stage:hover{background:var(--paper)}
+#v-crm .stage.active{background:var(--mist)}
+#v-crm .stage .idx{font-size:11px;font-weight:700;color:var(--indigo-soft);text-align:center}
+#v-crm .stage .nm{font-size:13px;font-weight:500;color:var(--ink)}
+#v-crm .stage .track{display:block;height:14px;background:var(--mist);border-radius:7px;overflow:hidden}
+#v-crm .stage .bar{display:block;height:100%;border-radius:7px;background:linear-gradient(90deg,var(--indigo),var(--navy));min-width:3px;transition:width .4s}
+#v-crm .stage.perdido .bar{background:linear-gradient(90deg,#D89AA2,var(--loss))}
+#v-crm .stage.ganho .bar{background:linear-gradient(90deg,#7FB79B,var(--win))}
+#v-crm .stage .ct{font-size:14px;font-weight:700;color:var(--navy);text-align:right}
+#v-crm .pipefoot{margin-top:10px;font-size:11px;color:var(--mute)}
+#v-crm .pipefoot b{color:var(--navy)}
+#v-crm .pipefoot.ok b{color:var(--win)}
+#v-crm .pipefoot.bad b{color:var(--loss)}
+#v-crm /* ---------- funnel efficiency cascade ---------- */
+  .cascade{display:flex;flex-direction:column;gap:2px}
+#v-crm .casc-row{display:flex;align-items:center;gap:12px;padding:9px 0}
+#v-crm .casc-label{width:104px;font-size:12.5px;font-weight:600;color:var(--ink);flex-shrink:0}
+#v-crm .casc-bar-wrap{flex:1;background:var(--mist);border-radius:8px;height:30px;position:relative;overflow:hidden}
+#v-crm .casc-bar{height:100%;border-radius:8px;background:linear-gradient(90deg,var(--indigo-soft),var(--navy));
+    display:flex;align-items:center;justify-content:flex-end;padding-right:10px;transition:width .4s;min-width:38px}
+#v-crm .casc-bar span{color:#fff;font-size:12.5px;font-weight:700}
+#v-crm .casc-step{width:74px;flex-shrink:0;text-align:center;font-size:11.5px;font-weight:700;color:var(--mute)}
+#v-crm .casc-step b{display:block;font-size:13px;color:var(--win)}
+#v-crm .casc-step.drop b{color:var(--warn)}
+#v-crm .casc-note{margin-top:10px;font-size:11.5px;color:var(--mute)}
+#v-crm /* ---------- vendor table ---------- */
+  .tablewrap{overflow-x:auto}
+#v-crm table{width:100%;border-collapse:collapse}
+#v-crm thead th{font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--mute);
+    text-align:right;padding:0 8px 9px 0;border-bottom:1px solid var(--line);white-space:nowrap}
+#v-crm thead th:first-child{text-align:left}
+#v-crm tbody td{padding:9px 8px 9px 0;border-bottom:1px solid var(--line);font-size:12.5px;text-align:right;white-space:nowrap}
+#v-crm tbody td:first-child{text-align:left;font-weight:500}
+#v-crm tbody tr:last-child td{border-bottom:none}
+#v-crm .num{font-weight:700;color:var(--navy)}
+#v-crm .conv{display:inline-flex;align-items:center;gap:7px;justify-content:flex-end}
+#v-crm .conv .cbar{width:38px;height:5px;border-radius:3px;background:var(--mist);overflow:hidden}
+#v-crm .conv .cbar i{display:block;height:100%;background:var(--win);border-radius:3px}
+#v-crm .conv b{font-weight:700;color:var(--win);min-width:34px;text-align:right}
+#v-crm .riskbadge{font-weight:700}
+#v-crm .riskbadge.hi{color:var(--loss)}
+#v-crm .riskbadge.md{color:var(--warn)}
+#v-crm .riskbadge.lo{color:var(--win)}
+#v-crm /* ---------- simple hbars ---------- */
+  .hrow{display:grid;grid-template-columns:1fr 40px;gap:10px;align-items:center;padding:6px 0}
+#v-crm .hrow .hlab{font-size:12.5px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#v-crm .hrow .htrack{grid-column:1/2;height:12px;background:var(--mist);border-radius:6px;overflow:hidden;margin-top:2px}
+#v-crm .hrow .hbar{height:100%;border-radius:6px;background:linear-gradient(90deg,var(--indigo-soft),var(--indigo))}
+#v-crm .hrow.loss .hbar{background:linear-gradient(90deg,#D89AA2,var(--loss))}
+#v-crm .hrow .hct{font-size:13px;font-weight:700;color:var(--navy);text-align:right}
+#v-crm .hitem{margin-bottom:2px}
+#v-crm /* ---------- health segmented bar ---------- */
+  .healthbar{display:flex;height:34px;border-radius:9px;overflow:hidden;margin-bottom:12px;box-shadow:inset 0 0 0 1px var(--line)}
+#v-crm .healthseg{display:flex;align-items:center;justify-content:center;color:#fff;font-size:12.5px;font-weight:700;
+    cursor:pointer;transition:opacity .15s;min-width:2%}
+#v-crm .healthseg:hover{opacity:.88}
+#v-crm .healthseg.dim{opacity:.4}
+#v-crm .healthseg.ciclo{background:var(--win)}
+#v-crm .healthseg.atencao{background:var(--warn)}
+#v-crm .healthseg.risco{background:var(--loss)}
+#v-crm .healthleg{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--mute)}
+#v-crm .healthleg span{display:inline-flex;align-items:center;gap:6px}
+#v-crm .healthleg i{width:9px;height:9px;border-radius:3px;display:inline-block}
+#v-crm .healthleg .ciclo{background:var(--win)}
+#v-crm .healthleg .atencao{background:var(--warn)}
+#v-crm .healthleg .risco{background:var(--loss)}
+#v-crm .provisional{font-size:10.5px;color:var(--warn);font-weight:600;margin-top:8px}
+#v-crm /* ---------- quality (secondary, #v-crm muted) ---------- */
+  .qualitybox{background:var(--paper);border:1px dashed var(--line);border-radius:10px;padding:14px 16px}
+#v-crm .qualitygrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+#v-crm .qitem .q-val{font-size:19px;font-weight:700;color:var(--mute)}
+#v-crm .qitem .q-label{font-size:10.5px;color:var(--mute);margin-top:2px}
+#v-crm /* ---------- granularity toggle ---------- */
+  .grantoggle{display:flex;gap:4px;background:var(--mist);border-radius:8px;padding:3px}
+#v-crm .granbtn{font:inherit;font-size:11.5px;font-weight:600;color:var(--mute);background:transparent;border:none;
+    border-radius:6px;padding:5px 11px;cursor:pointer}
+#v-crm .granbtn.active{background:#fff;color:var(--navy);box-shadow:var(--shadow)}
+#v-crm /* ---------- evolution chart ---------- */
+  .chartwrap{padding:18px 18px 12px}
+#v-crm svg{display:block;width:100%;height:auto}
+#v-crm .chartlegend{display:flex;gap:16px;font-size:11.5px;color:var(--mute);margin-top:6px}
+#v-crm .chartlegend span{display:inline-flex;align-items:center;gap:5px}
+#v-crm .chartlegend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+#v-crm /* ---------- detail table ---------- */
+  .detail{padding:18px}
+#v-crm .detail .dhead{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:8px}
+#v-crm .detail .count{font-size:12px;color:var(--mute)}
+#v-crm .detail .count b{color:var(--navy)}
+#v-crm .dtable-scroll{max-height:440px;overflow:auto;border-radius:8px}
+#v-crm .dtable{width:100%;border-collapse:collapse}
+#v-crm .dtable thead th{position:sticky;top:0;background:#fff;z-index:1}
+#v-crm .dtable td{text-align:left;font-size:12.5px;padding:8px 10px 8px 0}
+#v-crm .dtable td.r{text-align:right;font-variant-numeric:tabular-nums}
+#v-crm .chip{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;white-space:nowrap}
+#v-crm .chip.Prospecção, #v-crm .chip.Apresentação, #v-crm .chip.Proposta, #v-crm .chip.Negociação{background:var(--mist);color:var(--navy)}
+#v-crm .chip.Fechamento{background:var(--win-bg);color:var(--win)}
+#v-crm .chip.Perdido{background:var(--loss-bg);color:var(--loss)}
+#v-crm .chip.ciclo{background:var(--win-bg);color:var(--win)}
+#v-crm .chip.atencao{background:var(--warn-bg);color:var(--warn)}
+#v-crm .chip.risco{background:var(--loss-bg);color:var(--loss)}
+#v-crm .pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px}
+#v-crm .pill.ok{background:var(--win-bg);color:var(--win)}
+#v-crm .pill.stuck{background:var(--warn-bg);color:var(--warn)}
+#v-crm .empty{padding:34px;text-align:center;color:var(--mute);font-size:13px}
+#v-crm .foot{color:var(--mute);font-size:11.5px;text-align:center;margin-top:26px;line-height:1.7}
+#v-crm .kpis{grid-template-columns:repeat(2,1fr)}
+#v-crm .execgrid{grid-template-columns:repeat(2,1fr)}
+#v-crm .qualitygrid{grid-template-columns:repeat(2,1fr)}
+#v-crm .grid2{grid-template-columns:1fr}
+#v-crm .stage{grid-template-columns:22px 84px 1fr 40px}
+#v-crm .casc-label{width:78px}
+#v-crm .casc-step{width:56px}
 </style>
 <script>
 /* ============ DETALHE POR NF NO DRE (26/08/2026) ==========================
@@ -7281,6 +7481,574 @@ window.verNotasDoDRE = async function(chave){
     if(_DRE_NF[k]) verNotasDoDRE(k);
   });
 })();
+
+/* ==========================================================================
+   CRM DE NOVOS LEADS  (17/09/2026)
+   ==========================================================================
+   Vem do relatório "Acompanhamento oportunidades" do CRM do OMIE. Antes disso
+   alguém exportava a planilha todo dia e subia num HTML avulso
+   (CRM_Comercial_Dobro.html); agora o pipeline traz, o crm_extrair.py traduz e
+   o Portal mostra.
+
+   O MOTOR É O MESMO do HTML avulso — funções e nomes copiados ao pé da letra,
+   de propósito. Conferi antes que nenhum nome colide com o Portal (só `pct`,
+   que virou `crmPct`). Manter igual significa que, quando o time comparar as
+   duas telas, elas dão o mesmo número — e qualquer ajuste futuro acontece nos
+   dois lugares sem tradução mental.
+
+   TRÊS COISAS MUDARAM, e todas por causa do Portal:
+
+   1. QUEM VÊ O QUÊ. O HTML avulso tinha uma whitelist fixa de 6 vendedores.
+      Aqui quem manda é o VEND_VIS da sessão — cada um vê o que já vê no resto
+      do Portal, e o supervisor vê a equipe. A whitelist sumiu: ela escondia
+      Ana Paula, Julia Urban, Daniel, Geovana, Isabelle e Júlia Barros, que
+      juntas têm 154 dos 711 leads.
+
+   2. O PERÍODO vem do filtro global (escolha do Igor em 17/09). O HTML tinha
+      seletor próprio de datas. Consequência medida: dos 711 leads, 197 são de
+      2025 e o filtro global só tem meses de 2026 — então eles nunca entrariam
+      no recorte. Por isso existe o aviso do topo, que diz quantos ficaram de
+      fora. Esconder 28% da base em silêncio não é opção.
+
+   3. VENDEDOR DO CRM ≠ DONO DO CLIENTE. No CRM o "Vendedor" é quem trabalha a
+      oportunidade; na carteira é quem é dono do cliente. São diferentes de
+      verdade: os CNPJs que a Ana Paula trabalha pertencem, na carteira, à
+      Isabelle (245), ao João Vitor (79), ao Jonas (66). Por isso o recorte
+      desta aba é pelo vendedor do CRM — pelo da carteira, ela não veria nada.
+   ========================================================================== */
+let CRM = null;
+
+async function crmDados(){
+  if(CRM) return CRM;
+  const b = (typeof _Z === 'object' && _Z && _Z.CRM) ? _Z.CRM : null;
+  if(!b) return null;
+  try{ CRM = await _unz(b); }
+  catch(e){ console.error('CRM:', e); return null; }
+  return CRM;
+}
+
+const SLA_DIAS = 7;
+const FUNIL_ABERTO = ['Prospecção','Apresentação','Proposta','Negociação'];
+const CRM_TODAY = new Date();
+
+const crmMoney = n => 'R$ ' + Math.round(n).toLocaleString('pt-BR');
+const crmPct = n => (isFinite(n)?n:0).toLocaleString('pt-BR',
+  {minimumFractionDigits:1, maximumFractionDigits:1}) + '%';
+const crmBrDate = s => { if(!s) return '—'; const [y,m,d]=s.split('-'); return d+'/'+m+'/'+y; };
+function crmParseISO(s){ return s ? new Date(s+'T00:00:00') : null; }
+function crmDiasEntre(a,b){ if(!a||!b) return null; return Math.floor((crmParseISO(b)-crmParseISO(a))/86400000); }
+function crmDiasDesde(s){ if(!s) return null; return Math.floor((CRM_TODAY - crmParseISO(s))/86400000); }
+
+function crmEsc(s){ return String(s==null?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+const stateL = { orig:'', focusPipe:'', gran:'auto' };
+
+/* O ano do dado, não o do relógio: um Portal aberto em janeiro de 2027 com o
+   pacote de 2026 continuaria montando o período certo. */
+function crmAno(){
+  const g = (typeof _Z === 'object' && _Z && _Z.META) ? _Z.META.gerado_em : null;
+  const a = g ? parseInt(String(g).slice(0,4), 10) : NaN;
+  return isFinite(a) ? a : (new Date()).getFullYear();
+}
+
+/* O filtro global do Portal fala em nome de mês; o lead tem data. Aqui os dois
+   se encontram. O fim do intervalo nunca passa de hoje. */
+function crmPeriodo(){
+  const ativos = (typeof mesesAtivos === 'function') ? mesesAtivos() : [];
+  const ano = crmAno();
+  const idx = ativos.map(m => MESES_ORD.indexOf(m)).filter(i => i >= 0).sort((a,b)=>a-b);
+  if(!idx.length) return {de:null, ate:null, meses:[]};
+  const p = n => String(n).padStart(2,'0');
+  const de = ano + '-' + p(idx[0]+1) + '-01';
+  const ultimo = new Date(ano, idx[idx.length-1]+1, 0);
+  const hoje = new Date();
+  const fim = ultimo < hoje ? ultimo : hoje;
+  const ate = fim.getFullYear() + '-' + p(fim.getMonth()+1) + '-' + p(fim.getDate());
+  return {de, ate, meses:ativos};
+}
+
+/* Base visível: o recorte da sessão primeiro, os chips depois — a mesma ordem
+   do linhas() do Portal. O filtro nunca amplia o que a pessoa pode ver. */
+function crmBase(){
+  const L = (CRM && Array.isArray(CRM.leads)) ? CRM.leads : [];
+  const filtra = (typeof podeFiltrar === 'function') ? podeFiltrar() : true;
+  return L.filter(r => {
+    if(!SESSION.isAdmin && !(VEND_VIS && VEND_VIS.has(r.vend))) return false;
+    if(filtra && typeof multiOK === 'function' && !multiOK(FILTER.vend, r.vend)) return false;
+    return true;
+  });
+}
+
+function crmCohort(){
+  const {de, ate} = crmPeriodo();
+  return crmBase().filter(r => {
+    if(stateL.orig && r.orig !== stateL.orig) return false;
+    if(!r.dProspeccao) return false;
+    if(de && r.dProspeccao < de) return false;
+    if(ate && r.dProspeccao > ate) return false;
+    return true;
+  });
+}
+
+function leadsMetrics(cohort){
+  const recebidos = cohort.length;
+  const trabalhadosArr = cohort.filter(r=>!!r.dApresentacao);
+  const ganhosArr = cohort.filter(r=>r.fase==='Fechamento');
+  const perdidosArr = cohort.filter(r=>r.fase==='Perdido');
+  const abertosArr = cohort.filter(r=>FUNIL_ABERTO.includes(r.fase));
+  const valorGanho = ganhosArr.reduce((s,r)=>s+r.valor,0);
+  const taxaConversao = recebidos ? ganhosArr.length/recebidos*100 : 0;
+  const decididos = ganhosArr.length + perdidosArr.length;
+  const winRate = decididos ? ganhosArr.length/decididos*100 : 0;
+  return {recebidos, trabalhadosArr, ganhosArr, perdidosArr, abertosArr,
+          valorGanho, taxaConversao, winRate, decididos};
+}
+
+function slaMetrics(cohort){
+  const emProspeccao = cohort.filter(r=>r.fase==='Prospecção');
+  let aguardando=0, atrasado=0;
+  emProspeccao.forEach(r=>{ const d=crmDiasDesde(r.dProspeccao);
+    if(d!==null && d<=SLA_DIAS) aguardando++; else atrasado++; });
+  const trabalhados = cohort.filter(r=>!!r.dApresentacao);
+  let dentroPrazo=0;
+  trabalhados.forEach(r=>{ const gap=crmDiasEntre(r.dProspeccao,r.dApresentacao);
+    if(gap!==null && gap<=SLA_DIAS) dentroPrazo++; });
+  return {emProspeccaoN:emProspeccao.length, aguardando, atrasado,
+    pctTrabalhados: cohort.length? trabalhados.length/cohort.length*100:0,
+    pctDentroPrazo: trabalhados.length? dentroPrazo/trabalhados.length*100:0,
+    trabalhadosN: trabalhados.length};
+}
+
+function pipelineAtual(cohort){
+  const b = {'Prospecção':0,'Apresentação':0,'Proposta':0,'Negociação':0,'Fechamento':0,'Perdido':0};
+  cohort.forEach(r=>{ if(Object.prototype.hasOwnProperty.call(b, r.fase)) b[r.fase]++; });
+  return b;
+}
+
+function funilConversao(cohort){
+  return [
+    {label:'Recebidos',   n:cohort.length},
+    {label:'Trabalhados', n:cohort.filter(r=>!!r.dApresentacao).length},
+    {label:'Proposta',    n:cohort.filter(r=>!!r.dProposta).length},
+    {label:'Negociação',  n:cohort.filter(r=>!!r.dNegociacao).length},
+    {label:'Ganhos',      n:cohort.filter(r=>r.fase==='Fechamento').length},
+  ];
+}
+
+function vendorTableLeads(cohort){
+  const map={};
+  cohort.forEach(r=>{
+    const o = map[r.vend] = map[r.vend] || {recebidos:0,trabalhados:0,abertos:0,atrasados:0,ganhos:0,perdidos:0};
+    o.recebidos++;
+    if(r.dApresentacao) o.trabalhados++;
+    if(FUNIL_ABERTO.includes(r.fase)) o.abertos++;
+    if(r.fase==='Prospecção'){ const d=crmDiasDesde(r.dProspeccao); if(d!==null && d>SLA_DIAS) o.atrasados++; }
+    if(r.fase==='Fechamento') o.ganhos++;
+    if(r.fase==='Perdido') o.perdidos++;
+  });
+  return Object.entries(map).map(([v,o])=>{
+    const dec=o.ganhos+o.perdidos;
+    return {vend:v, ...o, conv:o.recebidos?o.ganhos/o.recebidos*100:0,
+            winrate:dec?o.ganhos/dec*100:0};
+  }).sort((a,b)=>b.recebidos-a.recebidos);
+}
+
+function origemTable(cohort){
+  const map={};
+  cohort.forEach(r=>{ const o = map[r.orig] = map[r.orig] || {recebidos:0,ganhos:0};
+    o.recebidos++; if(r.fase==='Fechamento') o.ganhos++; });
+  return Object.entries(map).map(([o,v])=>({orig:o, recebidos:v.recebidos, ganhos:v.ganhos,
+      conv:v.recebidos?v.ganhos/v.recebidos*100:0}))
+    .sort((a,b)=>b.recebidos-a.recebidos);
+}
+
+function motivosPerda(cohort){
+  const perdidos = cohort.filter(r=>r.fase==='Perdido');
+  const map={};
+  perdidos.forEach(r=>{ const m=r.motivo||'Não informado'; map[m]=(map[m]||0)+1; });
+  const comMotivo = perdidos.filter(r=>r.motivo).length;
+  return {rows:Object.entries(map).sort((a,b)=>b[1]-a[1]), total:perdidos.length,
+          comMotivo, pct: perdidos.length? comMotivo/perdidos.length*100:0};
+}
+
+function qualidadeLeads(cohort){
+  const total = cohort.length;
+  const origPreenchida = cohort.filter(r=>r.orig && r.orig!=='Não informado').length;
+  const perdidos = cohort.filter(r=>r.fase==='Perdido');
+  const perdaComMotivo = perdidos.filter(r=>r.motivo).length;
+  const trabalhados = cohort.filter(r=>!!r.dApresentacao);
+  const registroOk = trabalhados.filter(r=>r.contato && (r.fone||r.email)).length;
+  const mov = cohort.filter(r=>r.dApresentacao||r.dProposta||r.dNegociacao||r.dPerdido||r.dFechamento).length;
+  return {pctOrigem: total? origPreenchida/total*100:0,
+    pctMotivoPerda: perdidos.length? perdaComMotivo/perdidos.length*100:0, perdidosN:perdidos.length,
+    pctRegistroOk: trabalhados.length? registroOk/trabalhados.length*100:0, trabalhadosN:trabalhados.length,
+    pctMovimentacao: total? mov/total*100:0};
+}
+
+function autoGranularity(de, ate){
+  if(!de || !ate) return 'mes';
+  const span = crmDiasEntre(de, ate);
+  if(span<=21) return 'dia';
+  if(span<=120) return 'semana';
+  return 'mes';
+}
+function isoMonday(s){
+  const d = crmParseISO(s), day = d.getDay();
+  d.setDate(d.getDate() + (day===0? -6 : 1-day));
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function bucketKey(s, gran){
+  if(gran==='dia') return s;
+  if(gran==='mes') return s.slice(0,7);
+  return isoMonday(s);
+}
+function evolucaoLeads(cohort, gran){
+  const map={};
+  cohort.forEach(r=>{ if(r.dProspeccao){ const k=bucketKey(r.dProspeccao,gran); map[k]=(map[k]||0)+1; } });
+  return Object.keys(map).sort().map(k=>({k, n:map[k]}));
+}
+
+const CRM_MNAMES={'01':'Jan','02':'Fev','03':'Mar','04':'Abr','05':'Mai','06':'Jun',
+                  '07':'Jul','08':'Ago','09':'Set','10':'Out','11':'Nov','12':'Dez'};
+function labelForKey(k){
+  if(/^\d{4}-\d{2}-\d{2}$/.test(k)) return k.slice(8,10)+'/'+k.slice(5,7);
+  if(/^\d{4}-\d{2}$/.test(k)) return CRM_MNAMES[k.slice(5,7)]||k.slice(5,7);
+  return k;
+}
+
+function hbars(elx, rows, lossStyle){
+  if(!rows.length){ elx.innerHTML='<div class="empty">Sem dados no recorte.</div>'; return; }
+  const max=Math.max(1,...rows.map(r=>r[1]));
+  elx.innerHTML = rows.map(([lab,n])=>
+    '<div class="hitem"><div class="hrow'+(lossStyle?' loss':'')+'"><div class="hlab">'+crmEsc(lab)+'</div><div class="hct">'+n+'</div></div>'+
+    '<div class="htrack"><div class="hbar" style="width:'+Math.round(n/max*100)+'%"></div></div></div>').join('');
+}
+
+function drawBarChart(elx, rows, seriesKey, colorFrom, colorTo, labelFn){
+  const W=1180, H=220, padL=34, padR=12, padB=28, padT=12;
+  if(!rows.length){ elx.innerHTML='<div class="empty">Sem dados no recorte.</div>'; return; }
+  const max=Math.max(...rows.map(r=>r[seriesKey]));
+  const nice=Math.ceil(max/10)*10 || 10;
+  const cw=(W-padL-padR)/rows.length, bw=Math.min(46, cw*0.5);
+  const y=v=> padT+(H-padT-padB)*(1-v/nice);
+  let g='';
+  for(let t=0;t<=nice;t+=Math.ceil(nice/4)){
+    const yy=y(t);
+    g+='<line x1="'+padL+'" y1="'+yy+'" x2="'+(W-padR)+'" y2="'+yy+'" stroke="#E4E7F2" stroke-width="1"/>';
+    g+='<text x="'+(padL-8)+'" y="'+(yy+4)+'" text-anchor="end" font-size="11" fill="#767C9B">'+t+'</text>';
+  }
+  const gid = 'gb'+Math.random().toString(36).slice(2,8);
+  rows.forEach((r,i)=>{
+    const v=r[seriesKey], cx=padL+cw*i+cw/2, bx=cx-bw/2, by=y(v), bh=(H-padB)-by;
+    g+='<rect x="'+bx+'" y="'+by+'" width="'+bw+'" height="'+bh+'" rx="4" fill="url(#'+gid+')"/>';
+    g+='<text x="'+cx+'" y="'+(by-6)+'" text-anchor="middle" font-size="12" font-weight="700" fill="#2D377D">'+v+'</text>';
+    g+='<text x="'+cx+'" y="'+(H-8)+'" text-anchor="middle" font-size="10.5" fill="#767C9B">'+labelFn(r.k)+'</text>';
+  });
+  elx.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet">'+
+    '<defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1">'+
+    '<stop offset="0" stop-color="'+colorFrom+'"/><stop offset="1" stop-color="'+colorTo+'"/></linearGradient></defs>'+g+'</svg>';
+}
+
+/* ------------------------------------------------------------------ markup */
+function crmEsqueleto(){
+  return ''+
+  '<div class="crm-aviso" id="crm-aviso"></div>'+
+  '<p class="periodline" id="periodline-leads"></p>'+
+  '<div class="filters">'+
+    '<div class="fld"><label>Origem</label><select id="fl-orig"></select></div>'+
+    '<button id="clear-leads">Limpar</button>'+
+    '<span class="crm-dica">Vendedor e período vêm dos filtros do topo.</span>'+
+  '</div>'+
+  '<div class="section"><p class="eyebrow">KPIs executivos</p>'+
+    '<div class="kpis" id="kpis-leads"></div></div>'+
+  '<div class="section"><p class="eyebrow">Execução comercial (SLA de 1º contato)'+
+    '<span class="tag">7 dias a partir da Data de Prospecção</span></p>'+
+    '<div class="execgrid" id="exec-leads"></div></div>'+
+  '<div class="section grid2">'+
+    '<div class="card pane"><p class="eyebrow">Pipeline atual<span class="tag">posição de hoje</span></p>'+
+      '<p class="sectionsub">Onde os leads recebidos no período estão agora.</p>'+
+      '<div id="pipeline"></div><p class="pipefoot" id="pipefoot"></p></div>'+
+    '<div class="card pane"><p class="eyebrow">Funil de conversão<span class="tag">% sobre a etapa anterior</span></p>'+
+      '<p class="sectionsub">Até onde os leads do período conseguiram avançar.</p>'+
+      '<div class="cascade" id="cascade"></div><p class="casc-note" id="cascade-note"></p></div>'+
+  '</div>'+
+  '<div class="section"><p class="eyebrow">Desempenho por vendedor</p>'+
+    '<div class="card pane tablewrap"><table><thead><tr>'+
+    '<th>Vendedor</th><th>Recebidos</th><th>Trabalhados</th><th>Abertos</th><th>Atrasados&nbsp;&gt;7d</th>'+
+    '<th>Ganhos</th><th>Perdidos</th><th>Conversão</th><th>Win Rate</th>'+
+    '</tr></thead><tbody id="vend-body"></tbody></table></div></div>'+
+  '<div class="section grid2">'+
+    '<div class="card pane"><p class="eyebrow">Origem dos leads</p>'+
+      '<div class="tablewrap"><table><thead><tr><th>Origem</th><th>Recebidos</th><th>Ganhos</th><th>Conversão</th></tr></thead>'+
+      '<tbody id="orig-body"></tbody></table></div></div>'+
+    '<div class="card pane"><p class="eyebrow">Motivos de perda<span class="tag" id="motivo-tag"></span></p>'+
+      '<div id="motivos"></div></div>'+
+  '</div>'+
+  '<div class="section card chartwrap"><p class="eyebrow">Evolução temporal</p>'+
+    '<div class="grantoggle" id="gran-leads" style="margin-bottom:10px">'+
+    '<button class="granbtn" data-g="dia">Dia</button>'+
+    '<button class="granbtn" data-g="semana">Semana</button>'+
+    '<button class="granbtn" data-g="mes">Mês</button></div>'+
+    '<div id="evol-leads"></div></div>'+
+  '<div class="section"><p class="eyebrow">Qualidade de preenchimento'+
+    '<span class="tag">análise secundária — não é performance comercial</span></p>'+
+    '<div class="qualitybox"><div class="qualitygrid" id="quality-leads"></div></div></div>'+
+  '<div class="card detail"><div class="dhead">'+
+    '<p class="eyebrow" style="margin:0">Leads <span id="focusTag" style="color:var(--navy)"></span></p>'+
+    '<span class="count" id="detailCountLeads"></span></div>'+
+    '<div class="dtable-scroll"><table class="dtable"><thead><tr>'+
+    '<th>Empresa</th><th>Vendedor</th><th>Fase</th><th>Origem</th>'+
+    '<th class="r" style="text-align:right">Prospecção</th>'+
+    '<th class="r" style="text-align:right">Contato</th>'+
+    '<th class="r" style="text-align:right">Valor</th>'+
+    '</tr></thead><tbody id="detail-body-leads"></tbody></table></div></div>';
+}
+
+/* ------------------------------------------------------------------- render */
+function vCRM(){
+  const box = el('v-crm');
+  if(!box) return;
+  box.innerHTML = '<div class="empty">Carregando o CRM…</div>';
+  crmDados().then(C => {
+    if(!C || !Array.isArray(C.leads)){
+      box.innerHTML = '<div class="empty">Este pacote de dados não tem o CRM. ' +
+        'Para gerar: <code>python crm_extrair.py --planilha &lt;xlsx&gt;</code> e depois o gerador.</div>';
+      return;
+    }
+    box.innerHTML = crmEsqueleto();
+    crmLigar();
+    renderLeads();
+  }).catch(e => {
+    console.error('CRM:', e);
+    box.innerHTML = '<div class="empty">Não consegui carregar o CRM.</div>';
+  });
+}
+
+/* Ouvintes no CONTÊINER, não nos elementos: o renderLeads reescreve o innerHTML
+   de #pipeline a cada refresh, e um handler pendurado no filho morreria junto —
+   foi exatamente esse o bug da Calculadora em 08/09. */
+function crmLigar(){
+  const box = el('v-crm');
+  if(!box || box.dataset.ligado) return;
+  box.dataset.ligado = '1';
+  box.addEventListener('click', ev => {
+    const st = ev.target.closest && ev.target.closest('[data-pipe]');
+    if(st){ const k = st.getAttribute('data-pipe');
+            stateL.focusPipe = (stateL.focusPipe===k ? '' : k); renderLeads(); return; }
+    const g = ev.target.closest && ev.target.closest('#gran-leads .granbtn');
+    if(g){ stateL.gran = g.dataset.g; renderLeads(); return; }
+    if(ev.target && ev.target.id === 'clear-leads'){
+      stateL.orig=''; stateL.focusPipe=''; stateL.gran='auto'; renderLeads();
+    }
+  });
+  box.addEventListener('change', ev => {
+    if(ev.target && ev.target.id === 'fl-orig'){ stateL.orig = ev.target.value; renderLeads(); }
+  });
+}
+
+function renderLeads(){
+  if(!el('v-crm') || !el('kpis-leads')) return;
+  const cohort = crmCohort();
+  const m = leadsMetrics(cohort);
+  const sla = slaMetrics(cohort);
+  const per = crmPeriodo();
+
+  /* O aviso existe porque o filtro global só conhece meses do ano corrente:
+     sem ele, 197 leads de 2025 sumiriam sem nenhum sinal na tela. */
+  const base = crmBase();
+  const fora = base.length - cohort.length;
+  const deOutroAno = base.filter(r => r.dProspeccao &&
+                      r.dProspeccao.slice(0,4) !== String(crmAno())).length;
+  const av = el('crm-aviso');
+  if(av){
+    av.innerHTML = fora > 0
+      ? '<b>' + cohort.length + '</b> lead(s) no recorte · <b>' + fora +
+        '</b> fora do filtro de período' +
+        (deOutroAno ? ' (' + deOutroAno + ' de anos anteriores, que o filtro de mês não alcança)' : '') +
+        ' · use <b>Ano</b> no topo para ver tudo.'
+      : '<b>' + cohort.length + '</b> lead(s) — todo o histórico visível está no recorte.';
+  }
+
+  /* As opções de Origem saem da BASE e não da coorte: se saíssem da coorte, a
+     opção escolhida desapareceria da lista assim que filtrasse por ela. */
+  const sel = el('fl-orig');
+  if(sel){
+    const ors = [...new Set(base.map(r=>r.orig).filter(Boolean))].sort();
+    const cur = stateL.orig;
+    sel.innerHTML = '<option value="">Todas as origens</option>' +
+      ors.map(v=>'<option value="'+crmEsc(v)+'">'+crmEsc(v)+'</option>').join('');
+    if(ors.includes(cur)) sel.value = cur; else stateL.orig = '';
+  }
+
+  el('periodline-leads').innerHTML = 'Período analisado: <b>' +
+    (per.de?crmBrDate(per.de):'início da base') + '</b> a <b>' +
+    (per.ate?crmBrDate(per.ate):'hoje') + '</b>';
+
+  const kpis = [
+    {l:'Recebidos', v:m.recebidos, s:'Novo Cliente · prospecção no período'},
+    {l:'Trabalhados', v:m.trabalhadosArr.length, s:crmPct(m.recebidos?m.trabalhadosArr.length/m.recebidos*100:0)+' dos recebidos'},
+    {l:'Oportunidades Abertas', v:m.abertosArr.length, s:'ainda em andamento no funil'},
+    {l:'Ganhos', v:m.ganhosArr.length, s:crmMoney(m.valorGanho), c:'win'},
+    {l:'Perdidos', v:m.perdidosArr.length, s:'encerrados como perda', c:'loss'},
+    {l:'Taxa de Conversão', v:crmPct(m.taxaConversao), s:'Ganhos ÷ Recebidos', c:'win'},
+    {l:'Win Rate', v:crmPct(m.winRate), s:'Ganhos ÷ (Ganhos+Perdidos)'},
+    {l:'Valor Vendido', v:crmMoney(m.valorGanho), s:'soma dos Ganhos'},
+  ];
+  el('kpis-leads').innerHTML = kpis.map(k=>
+    '<div class="kpi '+(k.c||'')+'"><div class="k-label">'+k.l+'</div>'+
+    '<div class="k-val">'+k.v+'</div><div class="k-sub">'+k.s+'</div></div>').join('');
+
+  const exec = [
+    {l:'Aguardando 1º contato', v:sla.aguardando, s:'em Prospecção, dentro de 7d'},
+    {l:'1º contato atrasado', v:sla.atrasado, s:'em Prospecção, além de 7d', c:'warn'},
+    {l:'% trabalhados', v:crmPct(sla.pctTrabalhados), s:sla.trabalhadosN+' de '+m.recebidos+' recebidos'},
+    {l:'% trabalhados no prazo', v:crmPct(sla.pctDentroPrazo), s:'1º contato em até 7 dias'},
+  ];
+  el('exec-leads').innerHTML = exec.map(e=>
+    '<div class="execcard '+(e.c||'')+'"><div class="e-label">'+e.l+'</div>'+
+    '<div class="e-val">'+e.v+'</div><div class="e-sub">'+e.s+'</div></div>').join('');
+
+  const pipe = pipelineAtual(cohort);
+  const order = ['Prospecção','Apresentação','Proposta','Negociação','Fechamento','Perdido'];
+  const maxP = Math.max(1,...order.map(k=>pipe[k]));
+  el('pipeline').innerHTML = order.map((k,i)=>{
+    const w = Math.round(pipe[k]/maxP*100);
+    const cls = k==='Fechamento'?'ganho':(k==='Perdido'?'perdido':'');
+    const on = stateL.focusPipe===k?' active':'';
+    return '<div class="stage '+cls+on+'" data-pipe="'+k+'">'+
+      '<span class="idx">'+String(i+1).padStart(2,'0')+'</span>'+
+      '<span class="nm">'+(k==='Fechamento'?'Ganhos':(k==='Perdido'?'Perdidos':k))+'</span>'+
+      '<span class="track"><span class="bar" style="width:'+w+'%"></span></span>'+
+      '<span class="ct">'+pipe[k]+'</span></div>';
+  }).join('');
+  const somaPipe = order.reduce((s,k)=>s+pipe[k],0);
+  const pf = el('pipefoot');
+  if(somaPipe===m.recebidos){
+    pf.className='pipefoot ok';
+    pf.innerHTML='Soma do pipeline: <b>'+somaPipe+'</b> = Recebidos (<b>'+m.recebidos+'</b>) ✓';
+  } else {
+    pf.className='pipefoot bad';
+    pf.innerHTML='⚠ Soma do pipeline ('+somaPipe+') difere de Recebidos ('+m.recebidos+') — há Fase Atual fora do esperado.';
+  }
+
+  const casc = funilConversao(cohort);
+  const base0 = casc[0].n || 1;
+  let cascHtml='';
+  casc.forEach((s,i)=>{
+    const w = Math.max(8, Math.round(s.n/base0*100));
+    let stepHtml;
+    if(i>0){
+      const prev=casc[i-1].n, stepPct = prev? (s.n/prev*100) : 0;
+      stepHtml = '<div class="casc-step'+(stepPct<60?' drop':'')+'">→<b>'+crmPct(stepPct)+'</b></div>';
+    } else stepHtml = '<div class="casc-step">base<b>100%</b></div>';
+    cascHtml += '<div class="casc-row"><div class="casc-label">'+s.label+'</div>'+
+      '<div class="casc-bar-wrap"><div class="casc-bar" style="width:'+w+'%"><span>'+s.n+'</span></div></div>'+stepHtml+'</div>';
+  });
+  el('cascade').innerHTML = cascHtml;
+  let worstIdx=1, worstVal=999;
+  for(let i=1;i<casc.length;i++){
+    const st=casc[i-1].n? casc[i].n/casc[i-1].n*100:100;
+    if(st<worstVal){worstVal=st; worstIdx=i;}
+  }
+  el('cascade-note').textContent = casc[0].n?
+    'Maior gargalo: '+casc[worstIdx-1].label+' → '+casc[worstIdx].label+' ('+crmPct(worstVal)+' de conversão).'
+    : 'Sem leads no recorte selecionado.';
+
+  const vrows = vendorTableLeads(cohort);
+  el('vend-body').innerHTML = vrows.length? vrows.map(r=>
+    '<tr><td>'+crmEsc(r.vend)+'</td><td class="num">'+r.recebidos+'</td><td>'+r.trabalhados+'</td><td>'+r.abertos+'</td>'+
+    '<td>'+(r.atrasados>0?'<span class="riskbadge hi">'+r.atrasados+'</span>':'0')+'</td>'+
+    '<td>'+r.ganhos+'</td><td>'+r.perdidos+'</td>'+
+    '<td><span class="conv"><span class="cbar"><i style="width:'+Math.round(r.conv)+'%"></i></span><b>'+crmPct(r.conv)+'</b></span></td>'+
+    '<td>'+crmPct(r.winrate)+'</td></tr>').join('') :
+    '<tr><td colspan="9" style="color:var(--mute);padding:16px 0">Sem dados no recorte.</td></tr>';
+
+  const orows = origemTable(cohort);
+  el('orig-body').innerHTML = orows.length? orows.map(r=>
+    '<tr><td>'+crmEsc(r.orig)+'</td><td class="num">'+r.recebidos+'</td><td>'+r.ganhos+'</td><td>'+crmPct(r.conv)+'</td></tr>').join('') :
+    '<tr><td colspan="4" style="color:var(--mute);padding:16px 0">Sem dados no recorte.</td></tr>';
+
+  const mot = motivosPerda(cohort);
+  el('motivo-tag').textContent = mot.total? crmPct(mot.pct)+' com motivo informado' : '';
+  if(!mot.rows.length) el('motivos').innerHTML = '<div class="empty">Nenhuma perda no recorte.</div>';
+  else hbars(el('motivos'), mot.rows, true);
+
+  const primeira = cohort.map(r=>r.dProspeccao).sort()[0];
+  const gran = stateL.gran==='auto'
+    ? autoGranularity(per.de||primeira, per.ate||primeira) : stateL.gran;
+  el('v-crm').querySelectorAll('#gran-leads .granbtn')
+    .forEach(b=>b.classList.toggle('active', b.dataset.g===gran));
+  drawBarChart(el('evol-leads'), evolucaoLeads(cohort,gran), 'n', '#4A56A8', '#2D377D', labelForKey);
+
+  const q = qualidadeLeads(cohort);
+  el('quality-leads').innerHTML = [
+    {v:crmPct(q.pctOrigem), l:'Origem preenchida'},
+    {v:crmPct(q.pctMotivoPerda), l:'Perdas com motivo ('+q.perdidosN+')'},
+    {v:crmPct(q.pctRegistroOk), l:'Trabalhados com registro ok ('+q.trabalhadosN+')'},
+    {v:crmPct(q.pctMovimentacao), l:'Oportunidades com movimentação'},
+  ].map(x=>'<div class="qitem"><div class="q-val">'+x.v+'</div><div class="q-label">'+x.l+'</div></div>').join('');
+
+  renderDetailLeads(cohort);
+}
+
+function renderDetailLeads(cohort){
+  let rows = cohort.slice();
+  if(stateL.focusPipe) rows = rows.filter(r=>r.fase===stateL.focusPipe);
+  rows.sort((a,b)=>(b.dProspeccao||'').localeCompare(a.dProspeccao||''));
+  el('focusTag').textContent = stateL.focusPipe?
+    '· '+(stateL.focusPipe==='Fechamento'?'Ganhos':(stateL.focusPipe==='Perdido'?'Perdidos':stateL.focusPipe)) : '';
+  el('detailCountLeads').innerHTML = '<b>'+rows.length+'</b> lead'+(rows.length===1?'':'s');
+  const body = el('detail-body-leads');
+  if(!rows.length){
+    body.innerHTML='<tr><td colspan="7"><div class="empty">Nenhum lead encontrado com esses filtros.</div></td></tr>';
+    return;
+  }
+  body.innerHTML = rows.slice(0,300).map(r=>{
+    let contato='—';
+    if(r.fase==='Prospecção'){
+      const d=crmDiasDesde(r.dProspeccao);
+      contato = d>SLA_DIAS? '<span class="pill stuck">'+d+'d atrasado</span>'
+                          : '<span class="pill ok">há '+d+'d</span>';
+    } else if(r.dApresentacao){ contato = crmBrDate(r.dApresentacao)+' (trabalhado)'; }
+    const emp = r.empresa || '';
+    return '<tr><td title="'+crmEsc(emp)+'">'+crmEsc(emp.length>32?emp.slice(0,32)+'…':emp)+'</td>'+
+      '<td>'+crmEsc(r.vend)+'</td><td><span class="chip '+crmEsc(r.fase)+'">'+
+      crmEsc(r.fase==='Fechamento'?'Ganho':r.fase)+'</span></td>'+
+      '<td>'+crmEsc(r.orig)+'</td><td class="r">'+crmBrDate(r.dProspeccao)+'</td>'+
+      '<td class="r">'+contato+'</td>'+
+      '<td class="r">'+(r.valor>0?crmMoney(r.valor):'—')+'</td></tr>';
+  }).join('') + (rows.length>300?
+    '<tr><td colspan="7" style="color:var(--mute);padding:10px 0">Mostrando 300 de '+rows.length+' leads.</td></tr>':'');
+}
+
+/* Registro da aba - mesmo padrão do SLA: se o HTML já tiver o <div>, aproveita;
+   senão cria. Sem o <div>, o showView estoura em classList of null. */
+if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
+  if(!VIEWS.some(v => v.id === 'crm')){
+    const nova = {id:'crm', lab:'CRM de novos Leads', fn:vCRM};
+    const i = VIEWS.findIndex(v => v.id === 'sla');
+    const j = VIEWS.findIndex(v => v.id === 'calc');
+    const onde = i >= 0 ? i : (j >= 0 ? j : VIEWS.length);
+    VIEWS.splice(onde, 0, nova);
+  }
+  if(!document.getElementById('v-crm')){
+    const irmao = document.getElementById('v-sla') ||
+                  document.getElementById('v-calc') ||
+                  document.querySelector('.view');
+    if(irmao && irmao.parentNode){
+      const d = document.createElement('div');
+      d.className = 'view';
+      d.id = 'v-crm';
+      irmao.parentNode.insertBefore(d, irmao);
+    }
+  }
+  if(typeof buildNav === 'function' && document.getElementById('nav') &&
+     document.getElementById('nav').children.length){
+    try{ buildNav(); }catch(e){}
+  }
+}
+
 </script>
 </body>
 </html>
