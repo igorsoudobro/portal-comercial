@@ -562,6 +562,7 @@ async function _baixarOsDados(){
   return JSON.parse(texto);
 }
 let FATO,CALC,BR_SVG,CARTEIRA,CART_MET,CART_DATAS;
+let METAS_D=null;   /* metas por vendedor; null quando o pacote nao tem o bloco */
 let D,ROWS,CNPJ_CLI={},MESES,DATA_READY=false;
 async function _unz(b64){
   const bin=atob(b64), bytes=new Uint8Array(bin.length);
@@ -608,6 +609,11 @@ async function _loadData(){
   }));
   CNPJ_CLI={}; if(FATO.cnpjCli){ D.CNPJ.forEach((cn,i)=>{const ci=FATO.cnpjCli[i]; if(ci>=0)CNPJ_CLI[cn]=D.Cliente[ci];}); }
   MESES=MESES_ORD.filter(m=>D.Mes.includes(m));
+  /* Metas descompactadas JUNTO com o resto, e nao sob demanda como o CRM.
+     Motivo: o Resumo monta os KPIs de forma sincrona, e uma promessa ali dentro
+     faria os dois blocos de meta aparecerem meio segundo depois dos outros -
+     ou nao aparecerem, se a aba fosse trocada no meio. Sao 1 KB; nao pesa. */
+  METAS_D = _Z.METAS ? await _unz(_Z.METAS) : null;
   DATA_READY=true;
 }
 let USERS={};   /* vem de Parametros!AM:AO via JSON */
@@ -833,6 +839,7 @@ function vResumo(){
   const admExtra = SESSION.isAdmin ? `<div class="kpi sens"><div class="lab">Lucro final ${SENS}</div><div class="val">${brl(d.lucro)}</div><div class="sub">Rentab. ${pct(d.rent)}</div></div>` : '';
   let kpis=`<div class="kpirow">
     <div class="kpi accent"><div class="lab">Faturamento líquido</div><div class="val">${brl(d.fatLiq)}</div><div class="sub">${mesesAtivos().length} mês(es)</div></div>
+    ${typeof metasResumoKPIs==='function'?metasResumoKPIs():''}
     <div class="kpi"><div class="lab">Ticket médio</div><div class="val">${brl(d.ticket)}</div><div class="sub">${n0(d.nfs)} pedidos</div></div>
     <div class="kpi"><div class="lab">Clientes ativos</div><div class="val">${ativos.size}</div><div class="sub">CNPJs com venda</div></div>
     <div class="kpi"><div class="lab">Novos clientes</div><div class="val">${novos}</div><div class="sub">1ª compra no período</div></div>
@@ -7381,6 +7388,28 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-metas .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--indigo);border-radius:4px}
 #v-metas .bar i.ok{background:var(--pos)}
 #v-metas .semmeta{color:var(--mute);font-style:italic}
+/* Linha de modelo clicavel. A 'lupa' e um rotulo, nao um icone: icone sozinho
+   ninguem descobre que e clicavel. */
+#v-metas tr.clicavel{cursor:pointer}
+#v-metas tr.clicavel .lupa{margin-left:8px;font-size:10.5px;font-weight:600;
+  color:var(--indigo);opacity:0;transition:opacity .12s;white-space:nowrap}
+#v-metas tr.clicavel:hover .lupa{opacity:1}
+#v-metas tr.clicavel.aceso{background:#EEF1FB}
+#v-metas tr.clicavel.aceso td:first-child{box-shadow:inset 3px 0 0 var(--indigo)}
+#v-metas tr.clicavel.aceso .lupa{opacity:1}
+/* Cabecalho ordenavel */
+#v-metas th.ord{cursor:pointer;user-select:none}
+#v-metas th.ord:hover{color:var(--navy)}
+#v-metas th.ord.ativa{color:var(--navy)}
+#v-metas th .seta{margin-left:4px;font-size:9px;vertical-align:1px}
+/* Etiqueta do modelo em foco, com o X para limpar */
+#v-metas .focochip{display:inline-flex;align-items:center;gap:6px;margin-left:6px;
+  background:var(--navy);color:#fff;border-radius:20px;padding:3px 6px 3px 11px;
+  font-size:11px;font-weight:700}
+#v-metas .focochip button{border:0;background:rgba(255,255,255,.22);color:#fff;
+  cursor:pointer;font:inherit;font-size:12px;line-height:1;border-radius:50%;
+  width:16px;height:16px;padding:0}
+#v-metas .focochip button:hover{background:rgba(255,255,255,.4)}
 /* O aviso de indisponibilidade. Ele existe para NUNCA aparecer um 0% ou um
    100% inventado quando o filtro ou o mes nao permitem a comparacao. */
 #v-metas .avisobox{background:var(--mist);border:1px solid var(--line);border-radius:var(--r);
@@ -8244,8 +8273,6 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 
    O recorte de quem ve o que continua sendo o VEND_VIS, igual ao resto.
    ========================================================================== */
-let METAS_D = null;
-
 async function metasDados(){
   if(METAS_D) return METAS_D;
   const b = (typeof _Z === 'object' && _Z && _Z.METAS) ? _Z.METAS : null;
@@ -8272,25 +8299,43 @@ function metasChave(mesNome){
 
 /* Filtros que invalidam a comparacao. Nao-admin nem chega aqui: o linhas() so
    aplica FILTER para admin. */
+/* Um filtro esta LIGADO? Nao da para testar com '!== (todos)': desde os filtros
+   acumulativos o valor pode ser ARRAY, e [] ou ['(todos)'] significam 'todos'. */
+function metasFiltroLigado(f){
+  if(f === null || f === undefined || f === '(todos)') return false;
+  if(Array.isArray(f)) return f.length > 0 && f.indexOf('(todos)') < 0;
+  return true;
+}
+
 function metasFiltroQuebra(){
-  if(typeof SESSION === 'undefined' || !SESSION.isAdmin) return null;
   if(typeof FILTER === 'undefined') return null;
+  /* podeFiltrar e nao isAdmin: o supervisor tambem tem os filtros. */
+  if(typeof podeFiltrar === 'function' && !podeFiltrar()) return null;
   const maus = [['uf','UF'], ['canal','canal'], ['reg','regiao']];
   for(let i=0;i<maus.length;i++){
-    const k = maus[i][0];
-    if(FILTER[k] && FILTER[k] !== '(todos)') return maus[i][1];
+    if(metasFiltroLigado(FILTER[maus[i][0]])) return maus[i][1];
   }
   return null;
 }
 
 /* Uma linha entra no calculo? Mesmo recorte do linhas(), menos o mes - que aqui
    e tratado a parte, porque a meta e por mes. */
-function metasPassa(r){
+function metasPassa(r, ignorarCarteira){
   if(r.tipo !== 0 && r.tipo !== 1) return false;   /* 0=Devolucao 1=Venda */
-  if(!SESSION.isAdmin) return VEND_VIS.has(r.v);
-  if(FILTER.vend !== '(todos)' && r.v !== FILTER.vend) return false;
-  if(FILTER.mod  !== '(todos)' && r.mo !== FILTER.mod) return false;
-  return true;
+  /* ignorarCarteira serve a UMA coisa so: o total do MODELO do proprio
+     vendedor. O Igor autorizou em 21/09/2026 - "cada vendedor pode ver apenas a
+     sua e a do seu modelo". E um agregado, nunca a linha do colega: a tabela de
+     vendedores continua presa ao VEND_VIS.
+
+     A ordem e a mesma do linhas() do Portal: o recorte de permissao vem antes e
+     o filtro so recorta DENTRO dele - filtro nunca amplia o que a pessoa ve. */
+  if(!SESSION.isAdmin && !ignorarCarteira && !VEND_VIS.has(r.v)) return false;
+  if(typeof podeFiltrar === 'function' && !podeFiltrar()) return true;
+  /* multiOK, e nao '!==': FILTER.vend e FILTER.mod aceitam ARRAY desde que os
+     filtros viraram acumulativos. Comparar array com string nunca da igual, e o
+     resultado era a aba INTEIRA zerada assim que alguem filtrava um Modelo, sem
+     erro nenhum na tela. O Igor pegou isso em 21/09/2026. */
+  return multiOK(FILTER.vend, r.v) && multiOK(FILTER.mod, r.mo);
 }
 
 /* Realizado por vendedor nos meses escolhidos.
@@ -8300,9 +8345,14 @@ function metasPassa(r){
    setembro sobre venda de agosto tem r.d em agosto e r.m em setembro. Para meta
    vale o r.m: e assim que o financeiro conta. */
 function metasRealizado(meses){
-  const ms = new Set(meses), out = {}, porModelo = {}, modDoVend = {};
+  const ms = new Set(meses), out = {}, porModelo = {}, modDoVend = {},
+        porModeloCheio = {};
   ROWS.forEach(r => {
-    if(!ms.has(r.m) || !metasPassa(r)) return;
+    if(!ms.has(r.m)) return;
+    /* O total CHEIO do modelo ignora a carteira de quem olha; para admin nao
+       muda nada, porque o ramo de admin nem consulta o VEND_VIS. */
+    if(metasPassa(r, true)) porModeloCheio[r.mo] = (porModeloCheio[r.mo] || 0) + r.fat;
+    if(!metasPassa(r)) return;
     out[r.v] = (out[r.v] || 0) + r.fat;
     porModelo[r.mo] = (porModelo[r.mo] || 0) + r.fat;
     if(!modDoVend[r.v]) modDoVend[r.v] = {};
@@ -8317,7 +8367,8 @@ function metasRealizado(meses){
     dominante[v] = Object.keys(m).reduce((a, b) =>
       Math.abs(m[b]) > Math.abs(m[a]) ? b : a);
   });
-  return {vend: out, modelo: porModelo, modVend: dominante};
+  return {vend: out, modelo: porModelo, modeloCheio: porModeloCheio,
+          modVend: dominante};
 }
 
 /* Vendido DENTRO do mes ate o dia N. Aqui e r.d de proposito: ritmo e sobre o
@@ -8386,6 +8437,47 @@ function metasPctTxt(pct){
                       : (pct*100).toFixed(1).replace('.', ',') + '%';
 }
 
+/* Estado da aba. `foco` e o Modelo clicado; `ord`/`dir` sao a ordenacao da
+   tabela de vendedores. Vive fora das funcoes de desenho porque sobrevive ao
+   redesenho - e o redesenho e o que acontece a cada clique. */
+const stateM = {foco: '', ord: 'pct', dir: -1};
+
+/* Ouvintes no CONTEINER, nunca nos <tr> e <th>: o innerHTML da aba e reescrito
+   inteiro a cada clique, e um handler presos num filho morreria junto. Foi esse
+   o bug da Calculadora em 08/09 e do CRM depois. */
+function metasLigar(){
+  const box = el('v-metas');
+  if(!box || box.dataset.ligado) return;
+  box.dataset.ligado = '1';
+  box.addEventListener('click', ev => {
+    const alvo = ev.target;
+    if(alvo && alvo.id === 'metas-limpar'){ stateM.foco = ''; metasPinta(); return; }
+    const th = alvo.closest && alvo.closest('th[data-ord]');
+    if(th){
+      const c = th.getAttribute('data-ord');
+      /* Mesma coluna inverte; coluna nova comeca decrescente para numero e
+         crescente para texto, que e o que a pessoa espera dos dois. */
+      if(stateM.ord === c) stateM.dir = -stateM.dir;
+      else { stateM.ord = c; stateM.dir = (c === 'v' || c === 'mo') ? 1 : -1; }
+      metasPinta();
+      return;
+    }
+    const tr = alvo.closest && alvo.closest('tr[data-modelo]');
+    if(tr){
+      const mo = tr.getAttribute('data-modelo');
+      stateM.foco = (stateM.foco === mo ? '' : mo);
+      metasPinta();
+      const t = el('metas-vendedores');
+      if(t && stateM.foco) t.scrollIntoView({block: 'start', behavior: 'smooth'});
+    }
+  });
+}
+
+function metasPinta(){
+  const box = el('v-metas');
+  if(box) box.innerHTML = metasRender(METAS_D);
+}
+
 function metasAvisoBox(titulo, motivo){
   return '<div class="avisobox"><b>' + metasEsc(titulo) + '</b><span>' +
          metasEsc(motivo) + '</span></div>';
@@ -8394,28 +8486,31 @@ function metasAvisoBox(titulo, motivo){
 function vMetas(){
   const box = el('v-metas');
   if(!box) return;
-  box.innerHTML = '<div class="empty">Carregando as metas...</div>';
-  metasDados().then(M => {
-    if(!M || !M.vend){
-      box.innerHTML = '<div class="empty">Este pacote de dados nao tem metas. ' +
-        'Preencha a planilha de metas e rode o gerador.</div>';
-      return;
-    }
-    box.innerHTML = metasRender(M);
-  }).catch(e => {
-    console.error('METAS:', e);
-    box.innerHTML = '<div class="empty">Nao consegui carregar as metas.</div>';
-  });
+  /* Sincrono: o METAS_D ja vem descompactado do _loadData, junto com o FATO.
+     Enquanto era promessa, trocar de aba no meio deixava a tela em branco. */
+  if(!METAS_D || !METAS_D.vend){
+    box.innerHTML = '<div class="empty">Este pacote de dados nao tem metas. ' +
+      'Preencha a planilha de metas e rode o gerador.</div>';
+    return;
+  }
+  metasLigar();
+  metasPinta();
 }
 
-function metasRender(M){
+/* A APURACAO, separada do desenho.
+
+   Existe porque a mesma conta aparece em dois lugares: na aba Metas e nos dois
+   blocos do Resumo (pedido do Igor em 21/09/2026). Duas copias da conta seria
+   garantir que um dia elas divergissem - e quem olha o Resumo nunca saberia
+   qual das duas esta certa. */
+function metasApurar(M){
+  if(!M || !M.vend) return {erro: 'Este pacote de dados nao tem metas.'};
   const quebra = metasFiltroQuebra();
   if(quebra){
-    return metasAvisoBox('Meta nao disponivel no filtro vigente',
-      'O filtro por ' + quebra + ' nao permite comparacao: a meta e por vendedor ' +
-      'e mes, entao o faturamento encolhe com o filtro e a meta continua inteira.');
+    return {erro: 'O filtro por ' + quebra + ' nao permite comparacao: a meta e ' +
+            'por vendedor e mes, entao o faturamento encolhe com o filtro e a ' +
+            'meta continua inteira.'};
   }
-
   const meses = mesesAtivos();
   const comMeta = meses.filter(m => {
     const ch = metasChave(m);
@@ -8425,8 +8520,8 @@ function metasRender(M){
     const primeiro = M.meses.length ? M.meses[0] : null;
     const nome = primeiro ? (MESES_ORD[parseInt(primeiro.slice(5,7),10)-1] + '/' +
                              primeiro.slice(0,4)) : 'nenhum mes';
-    return metasAvisoBox('Meta nao disponivel no filtro vigente',
-      'Ha metas a partir de ' + nome + '. O periodo escolhido nao tem nenhuma.');
+    return {erro: 'Ha metas a partir de ' + nome +
+            '. O periodo escolhido nao tem nenhuma.'};
   }
 
   const real = metasRealizado(comMeta);
@@ -8435,9 +8530,11 @@ function metasRender(M){
      infla o atingimento geral, e a conferencia do pipeline ja grita sobre ele. */
   const perm = new Set();
   Object.keys(M.vend).forEach(v => {
-    if(!SESSION.isAdmin){ if(VEND_VIS.has(v)) perm.add(v); return; }
-    if(FILTER.vend !== '(todos)' && v !== FILTER.vend) return;
-    if(FILTER.mod !== '(todos)' && M.modelo[v] !== FILTER.mod) return;
+    if(!SESSION.isAdmin && !VEND_VIS.has(v)) return;
+    if(typeof podeFiltrar === 'function' && podeFiltrar()){
+      if(!multiOK(FILTER.vend, v)) return;
+      if(!multiOK(FILTER.mod, M.modelo[v])) return;
+    }
     perm.add(v);
   });
   Object.keys(real.vend).forEach(v => perm.add(v));
@@ -8464,6 +8561,19 @@ function metasRender(M){
   const aberto = umMes && metasMesAberto(mes);
   const diaCorte = umMes ? metasUltimoDia(mes) : 0;
   const pctGeral = metasPct(somaReal, temMeta ? somaMeta : 0);
+  return {comMeta: comMeta, real: real, linhasT: linhasT, temMeta: temMeta,
+          somaMeta: somaMeta, somaReal: somaReal, pct: pctGeral, umMes: umMes,
+          mes: mes, aberto: aberto, diaCorte: diaCorte,
+          dias: umMes ? metasDiasNoMes(mes) : 0};
+}
+
+function metasRender(M){
+  const A = metasApurar(M);
+  if(A.erro) return metasAvisoBox('Meta nao disponivel no filtro vigente', A.erro);
+  const comMeta = A.comMeta, real = A.real, linhasT = A.linhasT,
+        temMeta = A.temMeta, somaMeta = A.somaMeta, somaReal = A.somaReal,
+        pctGeral = A.pct, umMes = A.umMes, mes = A.mes, aberto = A.aberto,
+        diaCorte = A.diaCorte;
 
   /* --- cartao de ritmo: o mesmo dia do mes anterior --- */
   let ritmoHtml = '<div class="kpi"><div class="lab">Ritmo</div>' +
@@ -8487,7 +8597,7 @@ function metasRender(M){
   }
 
   /* --- cartao de atingimento: apagado enquanto o mes nao fecha --- */
-  const dias = umMes ? metasDiasNoMes(mes) : 0;
+  const dias = A.dias;
   const atingCls = aberto ? 'kpi apagado' : 'kpi';
   const atingSub = aberto
     ? ('mes em aberto - ' + diaCorte + ' de ' + dias + ' dias')
@@ -8504,71 +8614,164 @@ function metasRender(M){
         metasPctTxt(pctGeral) + '</div><div class="sub">' + atingSub + '</div></div>' +
     '</div>';
 
-  /* --- tabela por vendedor --- */
-  const trs = linhasT.map(l =>
+  /* --- tabela por Modelo: vem PRIMEIRO (pedido do Igor em 21/09/2026) ---
+     A meta do Modelo e a soma das metas dos vendedores DECLARADOS nele; o
+     realizado vem do Modelo da LINHA, que e como o resto do Portal e o
+     financeiro contam. Os dois so divergem quando a categoria da nota move
+     faturamento de um Modelo para outro - e a conferencia do pipeline avisa por
+     e-mail quando isso acontece. */
+  const metaMod = {}, realMod = {};
+  const cheio = !SESSION.isAdmin;   /* vendedor ve o modelo INTEIRO; admin ve o recorte do filtro */
+  if(cheio){
+    const meus = new Set();
+    linhasT.forEach(l => { if(l.mo && l.mo !== '-') meus.add(l.mo); });
+    Object.keys(M.vend).forEach(v => {
+      const mo = M.modelo[v];
+      if(!meus.has(mo)) return;
+      const mt = metasDoVendedor(M, v, comMeta);
+      if(mt !== null) metaMod[mo] = (metaMod[mo] || 0) + mt;
+    });
+    meus.forEach(mo => { realMod[mo] = real.modeloCheio[mo] || 0; });
+  }else{
+    linhasT.forEach(l => {
+      if(l.meta !== null) metaMod[l.mo] = (metaMod[l.mo] || 0) + l.meta;
+    });
+    Object.keys(real.modelo).forEach(mo => { realMod[mo] = real.modelo[mo]; });
+  }
+  const mods = Array.from(new Set(Object.keys(metaMod).concat(Object.keys(realMod))));
+  /* Nao ofereco clique num modelo sem ninguem para mostrar: clicar e nao
+     acontecer nada e pior do que nao poder clicar. */
+  const temGente = {};
+  linhasT.forEach(l => { temGente[l.mo] = true; });
+  const trsMod = mods.map(mo => {
+    const mt = metaMod[mo] === undefined ? null : metaMod[mo];
+    const rz = realMod[mo] || 0;
+    return {mo: mo, mt: mt, rz: rz, pc: metasPct(rz, mt)};
+  }).sort((a, b) => b.rz - a.rz).map(o => {
+    const clicavel = !!temGente[o.mo];
+    const aceso = stateM.foco === o.mo;
+    return '<tr' + (clicavel ? ' data-modelo="' + metasEsc(o.mo) + '" class="clicavel' +
+        (aceso ? ' aceso' : '') + '"' : '') + '>' +
+      '<td>' + metasEsc(o.mo) + (clicavel ? '<span class="lupa">' +
+        (aceso ? 'mostrando abaixo' : 'ver vendedores') + '</span>' : '') + '</td>' +
+      '<td class="r">' + (o.mt === null ? '<span class="semmeta">-</span>' : brl(o.mt)) + '</td>' +
+      '<td class="r">' + brl(o.rz) + '</td>' +
+      '<td class="r">' + metasPctTxt(o.pc) + '</td>' +
+      '<td>' + metasBarra(o.pc) + '</td></tr>';
+  }).join('');
+  const tabMod =
+    '<div class="section"><div class="eyebrow">Por modelo</div>' +
+    '<div class="sectionsub">Meta = soma dos vendedores declarados no modelo. ' +
+    'Realizado = modelo da nota, igual ao resto do Portal.' +
+    (cheio ? ' Aqui e o modelo INTEIRO, somando os demais vendedores dele - ' +
+             'por isso nao fecha com a tabela de baixo.' : '') +
+    ' Clique num modelo para ver os vendedores dele.</div>' +
+    '<div class="card"><table><thead><tr><th>Modelo</th><th class="r">Meta</th>' +
+    '<th class="r">Realizado</th><th class="r">Atingimento</th><th></th></tr></thead>' +
+    '<tbody>' + trsMod + '</tbody></table></div></div>';
+
+  /* --- tabela por vendedor: embaixo, ordenavel por qualquer coluna ---
+     O foco vindo do clique no modelo filtra SO esta tabela. Os cartoes de cima
+     continuam falando do periodo inteiro - se o clique mudasse tambem os
+     cartoes, a tela inteira trocaria de significado sem avisar. */
+  let visiveis = linhasT;
+  if(stateM.foco) visiveis = linhasT.filter(l => l.mo === stateM.foco);
+  const ordenado = visiveis.slice().sort((a, b) => {
+    const k = stateM.ord, d = stateM.dir;
+    const x = a[k], y = b[k];
+    /* Sem meta vai SEMPRE para o fim, nos dois sentidos: ausencia de dado nao
+       compete por posicao no ranking. */
+    if(x === null && y === null) return b.real - a.real;
+    if(x === null) return 1;
+    if(y === null) return -1;
+    const c = (typeof x === 'string') ? d * x.localeCompare(y, 'pt-BR') : d * (x - y);
+    /* Desempate SEMPRE pelo realizado, maior primeiro. Sem isso, ordenar por
+       Modelo deixava os cinco RCAs numa ordem que ninguem pediu e que mudava
+       sozinha - a tabela parecia embaralhar a cada clique. */
+    return c !== 0 ? c : (b.real - a.real);
+  });
+  const trs = ordenado.map(l =>
     '<tr><td>' + metasEsc(l.v) + '</td><td>' + metasEsc(l.mo) + '</td>' +
     '<td class="r">' + (l.meta === null ? '<span class="semmeta">-</span>' : brl(l.meta)) + '</td>' +
     '<td class="r">' + brl(l.real) + '</td>' +
     '<td class="r">' + metasPctTxt(l.pct) + '</td>' +
     '<td>' + metasBarra(l.pct) + '</td></tr>').join('');
-  const tabVend =
-    '<div class="section"><div class="eyebrow">Por vendedor</div>' +
-    '<div class="sectionsub">Ordenado por atingimento. Quem nao tem meta no ' +
-    'periodo aparece no fim, com o faturamento a mostra.</div>' +
-    '<div class="card"><div class="tabwrap"><table><thead><tr>' +
-    '<th>Vendedor</th><th>Modelo</th><th class="r">Meta</th>' +
-    '<th class="r">Realizado</th><th class="r">Atingimento</th><th></th>' +
-    '</tr></thead><tbody>' + trs + '</tbody><tfoot><tr>' +
-    '<td>TOTAL</td><td></td><td class="r">' + (temMeta ? brl(somaMeta) : '-') + '</td>' +
-    '<td class="r">' + brl(somaReal) + '</td>' +
-    '<td class="r">' + metasPctTxt(pctGeral) + '</td><td></td>' +
-    '</tr></tfoot></table></div></div></div>';
-
-  /* --- tabela por Modelo ---
-     A meta do Modelo e a soma das metas dos vendedores DECLARADOS nele; o
-     realizado vem do Modelo da LINHA, que e como o resto do Portal e o
-     financeiro contam. Os dois so divergem quando a categoria da nota move
-     faturamento de um Modelo para outro - e quando isso acontecer, a conferencia
-     do pipeline avisa por e-mail. */
-  const metaMod = {}, realMod = {};
-  linhasT.forEach(l => {
-    if(l.meta !== null) metaMod[l.mo] = (metaMod[l.mo] || 0) + l.meta;
+  /* O rodape acompanha o que esta NA TELA: com um modelo focado, soma aquele
+     modelo. Um TOTAL que ignorasse o foco visivel seria mentira. */
+  let subMeta = 0, subReal = 0, subTem = false;
+  visiveis.forEach(l => {
+    if(l.meta !== null){ subMeta += l.meta; subTem = true; }
+    subReal += l.real;
   });
-  Object.keys(real.modelo).forEach(mo => { realMod[mo] = real.modelo[mo]; });
-  const mods = Array.from(new Set(Object.keys(metaMod).concat(Object.keys(realMod))));
-  const trsMod = mods.map(mo => {
-    const mt = metaMod[mo] === undefined ? null : metaMod[mo];
-    const rz = realMod[mo] || 0;
-    return {mo: mo, mt: mt, rz: rz, pc: metasPct(rz, mt)};
-  }).sort((a,b) => b.rz - a.rz).map(o =>
-    '<tr><td>' + metasEsc(o.mo) + '</td>' +
-    '<td class="r">' + (o.mt === null ? '<span class="semmeta">-</span>' : brl(o.mt)) + '</td>' +
-    '<td class="r">' + brl(o.rz) + '</td>' +
-    '<td class="r">' + metasPctTxt(o.pc) + '</td>' +
-    '<td>' + metasBarra(o.pc) + '</td></tr>').join('');
-  const tabMod =
-    '<div class="section"><div class="eyebrow">Por modelo</div>' +
-    '<div class="sectionsub">Meta = soma dos vendedores declarados no modelo. ' +
-    'Realizado = modelo da nota, igual ao resto do Portal.</div>' +
-    '<div class="card"><table><thead><tr><th>Modelo</th><th class="r">Meta</th>' +
-    '<th class="r">Realizado</th><th class="r">Atingimento</th><th></th></tr></thead>' +
-    '<tbody>' + trsMod + '</tbody></table></div></div>';
+  const seta = c => stateM.ord === c ? '<span class="seta">' +
+        (stateM.dir > 0 ? '\u25B2' : '\u25BC') + '</span>' : '';
+  const th = (c, rot, dir) => '<th data-ord="' + c + '" class="ord' +
+        (dir ? ' r' : '') + (stateM.ord === c ? ' ativa' : '') + '">' +
+        rot + seta(c) + '</th>';
+  const chip = stateM.foco
+    ? ' <span class="focochip">' + metasEsc(stateM.foco) +
+      '<button id="metas-limpar" title="mostrar todos">&times;</button></span>'
+    : '';
+  const tabVend =
+    '<div class="section" id="metas-vendedores"><div class="eyebrow">Por vendedor</div>' +
+    '<div class="sectionsub">Clique no titulo de qualquer coluna para ordenar. ' +
+    'Quem nao tem meta no periodo fica sempre no fim, com o faturamento a mostra.' +
+    chip + '</div>' +
+    '<div class="card"><div class="tabwrap"><table><thead><tr>' +
+    th('v', 'Vendedor', false) + th('mo', 'Modelo', false) +
+    th('meta', 'Meta', true) + th('real', 'Realizado', true) +
+    th('pct', 'Atingimento', true) + '<th></th>' +
+    '</tr></thead><tbody>' + trs + '</tbody><tfoot><tr>' +
+    '<td>' + (stateM.foco ? 'TOTAL ' + metasEsc(stateM.foco) : 'TOTAL') + '</td><td></td>' +
+    '<td class="r">' + (subTem ? brl(subMeta) : '-') + '</td>' +
+    '<td class="r">' + brl(subReal) + '</td>' +
+    '<td class="r">' + metasPctTxt(metasPct(subReal, subTem ? subMeta : 0)) + '</td><td></td>' +
+    '</tr></tfoot></table></div></div></div>';
 
   const fonte = '<div class="fonte">Metas de <b>' + metasEsc(M.arquivo || 'metas.xlsx') +
     '</b>, lidas em ' + metasEsc(String(M.lido_em || '').replace('T', ' ')) +
     '. Meta = faturamento liquido (venda menos devolucao).</div>';
 
-  return kpis + tabVend + tabMod + fonte;
+  return kpis + tabMod + tabVend + fonte;
+}
+
+/* Os dois blocos do Resumo (pedido do Igor em 21/09/2026).
+
+   Usam as classes GLOBAIS .kpi/.lab/.val/.sub, nao as de #v-metas: eles moram
+   dentro da .kpirow do Resumo, fora do escopo da aba.
+
+   Devolve '' quando nao ha metas no pacote - assim o Resumo de quem ainda nao
+   tem planilha fica exatamente como era. Quando ha metas mas a comparacao nao
+   vale, os blocos APARECEM dizendo isso: sumir calado seria pior, porque quem
+   viu o bloco ontem e nao ve hoje pensa que quebrou. */
+function metasResumoKPIs(){
+  if(!METAS_D || !METAS_D.vend) return '';
+  const A = metasApurar(METAS_D);
+  if(A.erro){
+    return '<div class="kpi"><div class="lab">Meta do periodo</div>' +
+           '<div class="val" style="font-size:15px">Nao disponivel</div>' +
+           '<div class="sub">' + metasEsc(A.erro.slice(0, 90)) + '</div></div>';
+  }
+  const apagado = A.aberto ? ' style="opacity:.55"' : '';
+  const sub = A.aberto ? ('mes em aberto - ' + A.diaCorte + ' de ' + A.dias + ' dias')
+                       : (A.comMeta.length + ' mes(es) fechado(s)');
+  return '<div class="kpi"><div class="lab">Meta do periodo</div><div class="val">' +
+           (A.temMeta ? brl(A.somaMeta) : '-') + '</div>' +
+           '<div class="sub">' + metasEsc(A.comMeta.join(', ')) + '</div></div>' +
+         '<div class="kpi"' + apagado + '><div class="lab">Atingimento</div>' +
+           '<div class="val">' + metasPctTxt(A.pct) + '</div>' +
+           '<div class="sub">' + sub + '</div></div>';
 }
 
 /* Registro da aba - mesmo padrao do CRM e do SLA. */
 if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
   if(!VIEWS.some(v => v.id === 'metas')){
     const nova = {id:'metas', lab:'Metas', fn:vMetas};
-    const i = VIEWS.findIndex(v => v.id === 'ranking');
-    const j = VIEWS.findIndex(v => v.id === 'carteira');
-    const onde = i >= 0 ? i : (j >= 0 ? j : VIEWS.length);
-    VIEWS.splice(onde, 0, nova);
+    /* Logo DEPOIS do Resumo (pedido do Igor em 21/09/2026): e a segunda coisa
+       que o gestor abre. Ancoro no 'resumo' e nao numa posicao fixa porque a
+       lista de abas ainda cresce. */
+    const i = VIEWS.findIndex(v => v.id === 'resumo');
+    VIEWS.splice(i >= 0 ? i + 1 : 0, 0, nova);
   }
   if(!document.getElementById('v-metas')){
     const irmao = document.getElementById('v-crm') ||
