@@ -7392,9 +7392,19 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-metas .bar i.ok{background:var(--pos)}
 #v-metas .semmeta{color:var(--mute);font-style:italic}
 /* Unica regra deste bloco que NAO e escopada: o cartao de atingimento do Resumo
-   vive na .kpirow, fora do #v-metas. Nome proprio para nao colidir com nada. */
-.kpi.metaparcial{opacity:.6}
-.kpi.metaparcial .val{color:var(--muted)}
+   vive na .kpirow, fora do #v-metas. Nome proprio para nao colidir com nada.
+
+   NADA DE `opacity` AQUI. Opacidade menor que 1 cria um contexto de
+   empilhamento, e o balaozinho de explicacao (.kpi[data-dica]::after, z-index
+   60) fica preso DENTRO do cartao - resultado: ele sumia atras da barra de
+   filtros, que e sticky com z-index 40. O Igor viu isso em 21/09/2026.
+   O mesmo cinza, feito com cor, nao cria contexto nenhum. */
+/* Cores literais, NAO variaveis: --line e --mute sao declaradas em #v-metas e
+   aqui fora nao resolvem - a borda saiu preta em vez de cinza. */
+.kpi.metaparcial{background:#F7F8FC;border-left-color:#D7DCEC}
+.kpi.metaparcial .lab{color:#9aa1bb}
+.kpi.metaparcial .val{color:#8c93ae}
+.kpi.metaparcial .sub{color:#9aa1bb}
 /* Linha de modelo clicavel. A 'lupa' e um rotulo, nao um icone: icone sozinho
    ninguem descobre que e clicavel. */
 #v-metas tr.clicavel{cursor:pointer}
