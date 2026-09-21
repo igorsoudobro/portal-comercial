@@ -7327,6 +7327,72 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-crm .fb-lista{max-height:220px}
 #v-crm .kpis{grid-template-columns:repeat(2,1fr)}#v-crm .execgrid{grid-template-columns:repeat(2,1fr)}#v-crm .qualitygrid{grid-template-columns:repeat(2,1fr)}#v-crm .grid2{grid-template-columns:1fr}#v-crm .stage{grid-template-columns:22px 84px 1fr 40px}#v-crm .casc-label{width:78px}#v-crm .casc-step{width:56px}}
 </style>
+<style>
+/* ===== Metas por vendedor (21/09/2026), ESCOPADO sob #v-metas.
+   Mesmo motivo do #v-crm: .card, .kpi e .empty ja existem no Portal, e uma
+   regra solta aqui repintaria as outras onze abas. */
+#v-metas{--navy:#2D377D;--indigo:#4A56A8;--line:#E3E7F3;--mist:#F4F6FC;
+  --mute:#7A83A8;--white:#fff;--r:12px;--pos:#1F8A5B;--neg:#C0392B;
+  --shadow:0 1px 3px rgba(20,28,64,.08)}
+#v-metas .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+#v-metas .kpi{background:var(--white);border:1px solid var(--line);border-radius:var(--r);
+  padding:15px 17px;box-shadow:var(--shadow);border-left:4px solid var(--indigo)}
+/* O cartao 'apagado' e o coracao da opcao 3: com o mes em aberto, o percentual
+   de atingimento NAO pode competir visualmente com o resto. */
+#v-metas .kpi.apagado{border-left-color:var(--line);background:var(--mist)}
+#v-metas .kpi.apagado .val{color:var(--mute)}
+#v-metas .kpi .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--mute);font-weight:700}
+#v-metas .kpi .val{font-size:25px;font-weight:800;color:var(--navy);
+  font-variant-numeric:tabular-nums;margin-top:3px}
+#v-metas .kpi .val.pos{color:var(--pos)}
+#v-metas .kpi .val.neg{color:var(--neg)}
+#v-metas .kpi .sub{font-size:12px;color:var(--mute);margin-top:2px;line-height:1.35}
+#v-metas .section{margin-bottom:22px}
+#v-metas .eyebrow{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;
+  letter-spacing:.8px;text-transform:uppercase;color:var(--mute);margin:0 0 4px}
+#v-metas .eyebrow::before{content:"";width:14px;height:2px;background:var(--navy);border-radius:2px}
+#v-metas .sectionsub{font-size:11.5px;color:var(--mute);margin:0 0 12px}
+/* overflow:hidden nao e enfeite: a regra .card do Portal ja tinha, e a minha
+   sobrescreveu sem repor. Sem ele, a tabela rolavel de dentro pinta para fora
+   do cartao em quem renderiza o recorte com menos rigor. */
+#v-metas .card{background:var(--white);border:1px solid var(--line);
+  border-radius:var(--r);box-shadow:var(--shadow);padding:14px 18px 6px;
+  overflow:hidden}
+/* Sem rolagem interna de proposito. Sao ~24 vendedores: um contêiner rolavel
+   dentro do cartao so acrescentava um cabecalho grudento, um segundo eixo de
+   rolagem e um recorte a mais para dar errado. A pagina ja rola. */
+#v-metas .tabwrap{}
+#v-metas table{width:100%;border-collapse:collapse}
+#v-metas thead th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--mute);font-weight:700;padding:9px 10px 9px 0;border-bottom:1px solid var(--line);
+  background:#fff;white-space:nowrap}
+#v-metas thead th.r{text-align:right}
+#v-metas td{font-size:12.5px;padding:8px 10px 8px 0;border-bottom:1px solid var(--mist);
+  text-align:left;color:#1d2440}
+/* nowrap: 'R$ 1.000.000' quebrava em duas linhas na coluna Meta e desalinhava
+   a linha inteira da Julia Barros. */
+#v-metas td.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+#v-metas tbody tr:hover{background:var(--mist)}
+#v-metas tfoot td{font-weight:800;color:var(--navy);border-top:2px solid var(--line);
+  border-bottom:none;padding-top:10px}
+#v-metas .bar{position:relative;height:7px;border-radius:4px;background:#E8EBF5;
+  overflow:hidden;min-width:64px}
+#v-metas .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--indigo);border-radius:4px}
+#v-metas .bar i.ok{background:var(--pos)}
+#v-metas .semmeta{color:var(--mute);font-style:italic}
+/* O aviso de indisponibilidade. Ele existe para NUNCA aparecer um 0% ou um
+   100% inventado quando o filtro ou o mes nao permitem a comparacao. */
+#v-metas .avisobox{background:var(--mist);border:1px solid var(--line);border-radius:var(--r);
+  padding:26px 24px;text-align:center;color:var(--navy)}
+#v-metas .avisobox b{display:block;font-size:15px;margin-bottom:5px}
+#v-metas .avisobox span{font-size:12.5px;color:var(--mute)}
+#v-metas .fonte{font-size:11px;color:var(--mute);margin-top:14px}
+@media (max-width:920px){
+  #v-metas .kpis{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+
 <script>
 /* ============ DETALHE POR NF NO DRE (26/08/2026) ==========================
    Pedido do Igor: clicar em Impostos, Frete e Bonificação e ver quanto foi de
@@ -8138,6 +8204,381 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
       const d = document.createElement('div');
       d.className = 'view';
       d.id = 'v-crm';
+      irmao.parentNode.insertBefore(d, irmao);
+    }
+  }
+  if(typeof buildNav === 'function' && document.getElementById('nav') &&
+     document.getElementById('nav').children.length){
+    try{ buildNav(); }catch(e){}
+  }
+}
+
+
+/* ============================================================================
+   METAS POR VENDEDOR  (21/09/2026)
+
+   A meta vem do bloco METAS do JSON, que sai de uma planilha que o Igor
+   preenche a mao (Rentabilidade Dobro/metas/metas.xlsx). O REALIZADO nao vem de
+   la: sai do FATO que esta aqui do lado. Guardar o realizado duas vezes seria
+   pedir para um dia os dois discordarem.
+
+   TRES REGRAS QUE NAO PODEM SER RELAXADAS
+   ---------------------------------------
+   1. Mes sem meta nunca vira 0% nem 100%. Vira 'Meta nao disponivel no filtro
+      vigente', com o motivo escrito embaixo. Antes de agosto/2026 nao existe
+      meta nenhuma, e um zero inventado aqui viraria um grafico despencando que
+      ninguem sabe explicar.
+
+   2. Filtro que quebra a comparacao apaga o bloco inteiro. A meta tem duas
+      dimensoes (vendedor x mes) e o Portal tem doze. Com 'UF = SP' ligado, o
+      faturamento cai pela metade e a meta continua inteira: o atingimento
+      viraria um numero errado com cara de certo. Vendedor, Modelo e mes podem;
+      UF, canal e regiao nao.
+
+   3. Percentual no meio do mes nao ganha destaque. Medido em 21/09/2026: agosto
+      tinha so 14% do mes feito no dia 18, porque a Julia Barros fez R$ 761 mil
+      dos R$ 875 mil dela nos dias 25 e 31. Quem olhasse o atingimento no dia 18
+      leria 'mes perdido' sobre um mes que fechou em 55%. Por isso o cartao de
+      atingimento fica cinza enquanto o mes estiver aberto, e quem fala no lugar
+      dele e o cartao de ritmo, que compara com o MESMO DIA do mes anterior.
+
+   O recorte de quem ve o que continua sendo o VEND_VIS, igual ao resto.
+   ========================================================================== */
+let METAS_D = null;
+
+async function metasDados(){
+  if(METAS_D) return METAS_D;
+  const b = (typeof _Z === 'object' && _Z && _Z.METAS) ? _Z.METAS : null;
+  if(!b) return null;
+  try{ METAS_D = await _unz(b); }
+  catch(e){ console.error('METAS:', e); return null; }
+  return METAS_D;
+}
+
+function metasEsc(s){ return String(s==null?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+/* O ano do DADO, nao o do relogio - mesma licao do CRM. */
+function metasAno(){
+  const g = (typeof _Z === 'object' && _Z && _Z.META) ? _Z.META.gerado_em : null;
+  const a = g ? parseInt(String(g).slice(0,4), 10) : NaN;
+  return isFinite(a) ? a : (new Date()).getFullYear();
+}
+function metasChave(mesNome){
+  const i = MESES_ORD.indexOf(mesNome);
+  if(i < 0) return null;
+  return metasAno() + '-' + String(i+1).padStart(2,'0');
+}
+
+/* Filtros que invalidam a comparacao. Nao-admin nem chega aqui: o linhas() so
+   aplica FILTER para admin. */
+function metasFiltroQuebra(){
+  if(typeof SESSION === 'undefined' || !SESSION.isAdmin) return null;
+  if(typeof FILTER === 'undefined') return null;
+  const maus = [['uf','UF'], ['canal','canal'], ['reg','regiao']];
+  for(let i=0;i<maus.length;i++){
+    const k = maus[i][0];
+    if(FILTER[k] && FILTER[k] !== '(todos)') return maus[i][1];
+  }
+  return null;
+}
+
+/* Uma linha entra no calculo? Mesmo recorte do linhas(), menos o mes - que aqui
+   e tratado a parte, porque a meta e por mes. */
+function metasPassa(r){
+  if(r.tipo !== 0 && r.tipo !== 1) return false;   /* 0=Devolucao 1=Venda */
+  if(!SESSION.isAdmin) return VEND_VIS.has(r.v);
+  if(FILTER.vend !== '(todos)' && r.v !== FILTER.vend) return false;
+  if(FILTER.mod  !== '(todos)' && r.mo !== FILTER.mod) return false;
+  return true;
+}
+
+/* Realizado por vendedor nos meses escolhidos.
+
+   O mes vem de r.m - onde a linha e CONTABILIZADA - e nao da data de r.d. Uma
+   devolucao carrega a data da nota de origem, entao uma devolucao feita em
+   setembro sobre venda de agosto tem r.d em agosto e r.m em setembro. Para meta
+   vale o r.m: e assim que o financeiro conta. */
+function metasRealizado(meses){
+  const ms = new Set(meses), out = {}, porModelo = {}, modDoVend = {};
+  ROWS.forEach(r => {
+    if(!ms.has(r.m) || !metasPassa(r)) return;
+    out[r.v] = (out[r.v] || 0) + r.fat;
+    porModelo[r.mo] = (porModelo[r.mo] || 0) + r.fat;
+    if(!modDoVend[r.v]) modDoVend[r.v] = {};
+    modDoVend[r.v][r.mo] = (modDoVend[r.v][r.mo] || 0) + r.fat;
+  });
+  /* Onde o faturamento de cada um caiu de fato. Serve de reserva para quem nao
+     esta na planilha de metas: mostrar '-' esconderia que o Pedro e o Thiago
+     Frade aparecem aqui por causa de devolucao classificada como Key Account. */
+  const dominante = {};
+  Object.keys(modDoVend).forEach(v => {
+    const m = modDoVend[v];
+    dominante[v] = Object.keys(m).reduce((a, b) =>
+      Math.abs(m[b]) > Math.abs(m[a]) ? b : a);
+  });
+  return {vend: out, modelo: porModelo, modVend: dominante};
+}
+
+/* Vendido DENTRO do mes ate o dia N. Aqui e r.d de proposito: ritmo e sobre o
+   que saiu no mes, dia a dia. E uma medida diferente do realizado acima, e por
+   isso ela nunca aparece sozinha - so como comparacao contra o mesmo recorte do
+   mes anterior. */
+function metasVendidoAteDia(mesNome, dia){
+  const pref = metasChave(mesNome);
+  if(!pref) return 0;
+  let t = 0;
+  ROWS.forEach(r => {
+    if(!r.d || r.d.slice(0,7) !== pref || !metasPassa(r)) return;
+    if(parseInt(r.d.slice(8,10), 10) > dia) return;
+    t += r.fat;
+  });
+  return t;
+}
+function metasUltimoDia(mesNome){
+  const pref = metasChave(mesNome);
+  if(!pref) return 0;
+  let d = 0;
+  ROWS.forEach(r => {
+    if(r.d && r.d.slice(0,7) === pref){
+      const x = parseInt(r.d.slice(8,10), 10);
+      if(x > d) d = x;
+    }
+  });
+  return d;
+}
+function metasMesAberto(mesNome){
+  const g = (typeof _Z === 'object' && _Z && _Z.META) ? _Z.META.gerado_em : null;
+  const ch = metasChave(mesNome);
+  return !!(g && ch && String(g).slice(0,7) === ch);
+}
+function metasDiasNoMes(mesNome){
+  const i = MESES_ORD.indexOf(mesNome);
+  return i < 0 ? 30 : new Date(metasAno(), i+1, 0).getDate();
+}
+
+/* Meta de um vendedor somando os meses escolhidos. Devolve null quando NENHUM
+   dos meses tem meta - o que e diferente de meta zero. */
+function metasDoVendedor(M, v, meses){
+  let t = null;
+  meses.forEach(m => {
+    const ch = metasChave(m);
+    const x = M.vend[v] ? M.vend[v][ch] : undefined;
+    if(x !== undefined && x !== null) t = (t || 0) + x;
+  });
+  return t;
+}
+
+function metasPct(real, meta){
+  if(meta === null || meta === undefined || !meta) return null;  /* 0 -> sem meta */
+  return real / meta;
+}
+function metasBarra(pct){
+  /* Vazio, e nao 'sem meta' de novo: a coluna de atingimento, aqui do lado, ja
+     disse isso. Repetir na mesma linha so tira o olho do que importa. */
+  if(pct === null) return '';
+  const w = Math.max(0, Math.min(100, pct*100));
+  return '<div class="bar"><i class="' + (pct >= 1 ? 'ok' : '') +
+         '" style="width:' + w.toFixed(1) + '%"></i></div>';
+}
+function metasPctTxt(pct){
+  return pct === null ? '<span class="semmeta">sem meta</span>'
+                      : (pct*100).toFixed(1).replace('.', ',') + '%';
+}
+
+function metasAvisoBox(titulo, motivo){
+  return '<div class="avisobox"><b>' + metasEsc(titulo) + '</b><span>' +
+         metasEsc(motivo) + '</span></div>';
+}
+
+function vMetas(){
+  const box = el('v-metas');
+  if(!box) return;
+  box.innerHTML = '<div class="empty">Carregando as metas...</div>';
+  metasDados().then(M => {
+    if(!M || !M.vend){
+      box.innerHTML = '<div class="empty">Este pacote de dados nao tem metas. ' +
+        'Preencha a planilha de metas e rode o gerador.</div>';
+      return;
+    }
+    box.innerHTML = metasRender(M);
+  }).catch(e => {
+    console.error('METAS:', e);
+    box.innerHTML = '<div class="empty">Nao consegui carregar as metas.</div>';
+  });
+}
+
+function metasRender(M){
+  const quebra = metasFiltroQuebra();
+  if(quebra){
+    return metasAvisoBox('Meta nao disponivel no filtro vigente',
+      'O filtro por ' + quebra + ' nao permite comparacao: a meta e por vendedor ' +
+      'e mes, entao o faturamento encolhe com o filtro e a meta continua inteira.');
+  }
+
+  const meses = mesesAtivos();
+  const comMeta = meses.filter(m => {
+    const ch = metasChave(m);
+    return ch && M.meses.indexOf(ch) >= 0;
+  });
+  if(!comMeta.length){
+    const primeiro = M.meses.length ? M.meses[0] : null;
+    const nome = primeiro ? (MESES_ORD[parseInt(primeiro.slice(5,7),10)-1] + '/' +
+                             primeiro.slice(0,4)) : 'nenhum mes';
+    return metasAvisoBox('Meta nao disponivel no filtro vigente',
+      'Ha metas a partir de ' + nome + '. O periodo escolhido nao tem nenhuma.');
+  }
+
+  const real = metasRealizado(comMeta);
+  /* Quem entra na conta: quem tem meta OU quem faturou. Os dois lados importam -
+     vendedor com meta e sem venda e um problema; vendedor com venda e sem meta
+     infla o atingimento geral, e a conferencia do pipeline ja grita sobre ele. */
+  const perm = new Set();
+  Object.keys(M.vend).forEach(v => {
+    if(!SESSION.isAdmin){ if(VEND_VIS.has(v)) perm.add(v); return; }
+    if(FILTER.vend !== '(todos)' && v !== FILTER.vend) return;
+    if(FILTER.mod !== '(todos)' && M.modelo[v] !== FILTER.mod) return;
+    perm.add(v);
+  });
+  Object.keys(real.vend).forEach(v => perm.add(v));
+
+  const linhasT = [];
+  let somaMeta = 0, somaReal = 0, temMeta = false;
+  perm.forEach(v => {
+    const meta = metasDoVendedor(M, v, comMeta);
+    const rz = real.vend[v] || 0;
+    if(meta !== null){ somaMeta += meta; temMeta = true; }
+    somaReal += rz;
+    linhasT.push({v: v, mo: (M.modelo[v] || real.modVend[v] || '-'),
+                  meta: meta, real: rz, pct: metasPct(rz, meta)});
+  });
+  linhasT.sort((a,b) => {
+    if(a.pct === null && b.pct === null) return b.real - a.real;
+    if(a.pct === null) return 1;
+    if(b.pct === null) return -1;
+    return b.pct - a.pct;
+  });
+
+  const umMes = comMeta.length === 1;
+  const mes = comMeta[0];
+  const aberto = umMes && metasMesAberto(mes);
+  const diaCorte = umMes ? metasUltimoDia(mes) : 0;
+  const pctGeral = metasPct(somaReal, temMeta ? somaMeta : 0);
+
+  /* --- cartao de ritmo: o mesmo dia do mes anterior --- */
+  let ritmoHtml = '<div class="kpi"><div class="lab">Ritmo</div>' +
+    '<div class="val">-</div><div class="sub">so com um mes selecionado</div></div>';
+  if(umMes && diaCorte > 0){
+    const iAtual = MESES_ORD.indexOf(mes);
+    const anterior = iAtual > 0 ? MESES_ORD[iAtual-1] : null;
+    const temAnterior = anterior && MESES.indexOf(anterior) >= 0;
+    if(temAnterior){
+      const agora = metasVendidoAteDia(mes, diaCorte);
+      const antes = metasVendidoAteDia(anterior, diaCorte);
+      const dif = antes ? (agora/antes - 1) : null;
+      const cls = dif === null ? '' : (dif >= 0 ? 'pos' : 'neg');
+      const txt = dif === null ? '-' :
+        (dif >= 0 ? '+' : '') + (dif*100).toFixed(0) + '%';
+      ritmoHtml = '<div class="kpi"><div class="lab">Ritmo vs ' + metasEsc(anterior) +
+        '</div><div class="val ' + cls + '">' + txt + '</div>' +
+        '<div class="sub">vendas ate o dia ' + diaCorte + ': ' + brl(agora) +
+        ' contra ' + brl(antes) + '</div></div>';
+    }
+  }
+
+  /* --- cartao de atingimento: apagado enquanto o mes nao fecha --- */
+  const dias = umMes ? metasDiasNoMes(mes) : 0;
+  const atingCls = aberto ? 'kpi apagado' : 'kpi';
+  const atingSub = aberto
+    ? ('mes em aberto - ' + diaCorte + ' de ' + dias + ' dias')
+    : (comMeta.length + ' mes(es) fechado(s)');
+  const kpis =
+    '<div class="kpis">' +
+      '<div class="kpi"><div class="lab">Meta do periodo</div><div class="val">' +
+        (temMeta ? brl(somaMeta) : '<span class="semmeta">sem meta</span>') +
+        '</div><div class="sub">' + metasEsc(comMeta.join(', ')) + '</div></div>' +
+      '<div class="kpi"><div class="lab">Realizado</div><div class="val">' +
+        brl(somaReal) + '</div><div class="sub">faturamento liquido</div></div>' +
+      ritmoHtml +
+      '<div class="' + atingCls + '"><div class="lab">Atingimento</div><div class="val">' +
+        metasPctTxt(pctGeral) + '</div><div class="sub">' + atingSub + '</div></div>' +
+    '</div>';
+
+  /* --- tabela por vendedor --- */
+  const trs = linhasT.map(l =>
+    '<tr><td>' + metasEsc(l.v) + '</td><td>' + metasEsc(l.mo) + '</td>' +
+    '<td class="r">' + (l.meta === null ? '<span class="semmeta">-</span>' : brl(l.meta)) + '</td>' +
+    '<td class="r">' + brl(l.real) + '</td>' +
+    '<td class="r">' + metasPctTxt(l.pct) + '</td>' +
+    '<td>' + metasBarra(l.pct) + '</td></tr>').join('');
+  const tabVend =
+    '<div class="section"><div class="eyebrow">Por vendedor</div>' +
+    '<div class="sectionsub">Ordenado por atingimento. Quem nao tem meta no ' +
+    'periodo aparece no fim, com o faturamento a mostra.</div>' +
+    '<div class="card"><div class="tabwrap"><table><thead><tr>' +
+    '<th>Vendedor</th><th>Modelo</th><th class="r">Meta</th>' +
+    '<th class="r">Realizado</th><th class="r">Atingimento</th><th></th>' +
+    '</tr></thead><tbody>' + trs + '</tbody><tfoot><tr>' +
+    '<td>TOTAL</td><td></td><td class="r">' + (temMeta ? brl(somaMeta) : '-') + '</td>' +
+    '<td class="r">' + brl(somaReal) + '</td>' +
+    '<td class="r">' + metasPctTxt(pctGeral) + '</td><td></td>' +
+    '</tr></tfoot></table></div></div></div>';
+
+  /* --- tabela por Modelo ---
+     A meta do Modelo e a soma das metas dos vendedores DECLARADOS nele; o
+     realizado vem do Modelo da LINHA, que e como o resto do Portal e o
+     financeiro contam. Os dois so divergem quando a categoria da nota move
+     faturamento de um Modelo para outro - e quando isso acontecer, a conferencia
+     do pipeline avisa por e-mail. */
+  const metaMod = {}, realMod = {};
+  linhasT.forEach(l => {
+    if(l.meta !== null) metaMod[l.mo] = (metaMod[l.mo] || 0) + l.meta;
+  });
+  Object.keys(real.modelo).forEach(mo => { realMod[mo] = real.modelo[mo]; });
+  const mods = Array.from(new Set(Object.keys(metaMod).concat(Object.keys(realMod))));
+  const trsMod = mods.map(mo => {
+    const mt = metaMod[mo] === undefined ? null : metaMod[mo];
+    const rz = realMod[mo] || 0;
+    return {mo: mo, mt: mt, rz: rz, pc: metasPct(rz, mt)};
+  }).sort((a,b) => b.rz - a.rz).map(o =>
+    '<tr><td>' + metasEsc(o.mo) + '</td>' +
+    '<td class="r">' + (o.mt === null ? '<span class="semmeta">-</span>' : brl(o.mt)) + '</td>' +
+    '<td class="r">' + brl(o.rz) + '</td>' +
+    '<td class="r">' + metasPctTxt(o.pc) + '</td>' +
+    '<td>' + metasBarra(o.pc) + '</td></tr>').join('');
+  const tabMod =
+    '<div class="section"><div class="eyebrow">Por modelo</div>' +
+    '<div class="sectionsub">Meta = soma dos vendedores declarados no modelo. ' +
+    'Realizado = modelo da nota, igual ao resto do Portal.</div>' +
+    '<div class="card"><table><thead><tr><th>Modelo</th><th class="r">Meta</th>' +
+    '<th class="r">Realizado</th><th class="r">Atingimento</th><th></th></tr></thead>' +
+    '<tbody>' + trsMod + '</tbody></table></div></div>';
+
+  const fonte = '<div class="fonte">Metas de <b>' + metasEsc(M.arquivo || 'metas.xlsx') +
+    '</b>, lidas em ' + metasEsc(String(M.lido_em || '').replace('T', ' ')) +
+    '. Meta = faturamento liquido (venda menos devolucao).</div>';
+
+  return kpis + tabVend + tabMod + fonte;
+}
+
+/* Registro da aba - mesmo padrao do CRM e do SLA. */
+if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
+  if(!VIEWS.some(v => v.id === 'metas')){
+    const nova = {id:'metas', lab:'Metas', fn:vMetas};
+    const i = VIEWS.findIndex(v => v.id === 'ranking');
+    const j = VIEWS.findIndex(v => v.id === 'carteira');
+    const onde = i >= 0 ? i : (j >= 0 ? j : VIEWS.length);
+    VIEWS.splice(onde, 0, nova);
+  }
+  if(!document.getElementById('v-metas')){
+    const irmao = document.getElementById('v-crm') ||
+                  document.getElementById('v-sla') ||
+                  document.getElementById('v-calc') ||
+                  document.querySelector('.view');
+    if(irmao && irmao.parentNode){
+      const d = document.createElement('div');
+      d.className = 'view';
+      d.id = 'v-metas';
       irmao.parentNode.insertBefore(d, irmao);
     }
   }
