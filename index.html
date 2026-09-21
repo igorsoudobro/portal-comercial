@@ -839,7 +839,6 @@ function vResumo(){
   const admExtra = SESSION.isAdmin ? `<div class="kpi sens"><div class="lab">Lucro final ${SENS}</div><div class="val">${brl(d.lucro)}</div><div class="sub">Rentab. ${pct(d.rent)}</div></div>` : '';
   let kpis=`<div class="kpirow">
     <div class="kpi accent"><div class="lab">Faturamento líquido</div><div class="val">${brl(d.fatLiq)}</div><div class="sub">${mesesAtivos().length} mês(es)</div></div>
-    ${typeof metasResumoKPIs==='function'?metasResumoKPIs():''}
     <div class="kpi"><div class="lab">Ticket médio</div><div class="val">${brl(d.ticket)}</div><div class="sub">${n0(d.nfs)} pedidos</div></div>
     <div class="kpi"><div class="lab">Clientes ativos</div><div class="val">${ativos.size}</div><div class="sub">CNPJs com venda</div></div>
     <div class="kpi"><div class="lab">Novos clientes</div><div class="val">${novos}</div><div class="sub">1ª compra no período</div></div>
@@ -2783,6 +2782,10 @@ function ajustarKpisResumo(){
     {lab: 'Faturamento líquido', val: brl(d.fatLiq), cls: 'accent',
      sub: mesesAtivos().length + ' mês(es)',
      dica: 'Faturamento bruto menos devoluções. É a base de todas as margens.'},
+    /* Meta e atingimento (21/09/2026). Entram AQUI e nao no vResumo original
+       porque esta funcao reescreve a .kpirow INTEIRA - o que estivesse la antes
+       some. Sem planilha de metas devolve [] e o Resumo fica como sempre foi. */
+    ...(typeof metasResumoItens === 'function' ? metasResumoItens() : []),
     {lab: 'Margem bruta', val: verNum ? pct(d.margem) : farol(d.margem, false),
      cls: '', sub: verNum ? brl(d.lucroBruto) : 'antes das despesas',
      dica: 'Margem bruta = (faturamento líquido − CMV) ÷ faturamento líquido. ' +
@@ -7388,6 +7391,10 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-metas .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--indigo);border-radius:4px}
 #v-metas .bar i.ok{background:var(--pos)}
 #v-metas .semmeta{color:var(--mute);font-style:italic}
+/* Unica regra deste bloco que NAO e escopada: o cartao de atingimento do Resumo
+   vive na .kpirow, fora do #v-metas. Nome proprio para nao colidir com nada. */
+.kpi.metaparcial{opacity:.6}
+.kpi.metaparcial .val{color:var(--muted)}
 /* Linha de modelo clicavel. A 'lupa' e um rotulo, nao um icone: icone sozinho
    ninguem descobre que e clicavel. */
 #v-metas tr.clicavel{cursor:pointer}
@@ -8744,23 +8751,33 @@ function metasRender(M){
    tem planilha fica exatamente como era. Quando ha metas mas a comparacao nao
    vale, os blocos APARECEM dizendo isso: sumir calado seria pior, porque quem
    viu o bloco ontem e nao ve hoje pensa que quebrou. */
-function metasResumoKPIs(){
-  if(!METAS_D || !METAS_D.vend) return '';
+function metasResumoItens(){
+  if(!METAS_D || !METAS_D.vend) return [];
   const A = metasApurar(METAS_D);
   if(A.erro){
-    return '<div class="kpi"><div class="lab">Meta do periodo</div>' +
-           '<div class="val" style="font-size:15px">Nao disponivel</div>' +
-           '<div class="sub">' + metasEsc(A.erro.slice(0, 90)) + '</div></div>';
+    /* Um bloco so, dizendo por que nao da. Sumir calado seria pior: quem viu a
+       meta ontem e nao ve hoje acha que quebrou. */
+    return [{lab: 'Meta do período', val: '<span style="font-size:15px">—</span>',
+             cls: 'metaparcial', sub: 'não disponível no filtro vigente',
+             dica: A.erro}];
   }
-  const apagado = A.aberto ? ' style="opacity:.55"' : '';
-  const sub = A.aberto ? ('mes em aberto - ' + A.diaCorte + ' de ' + A.dias + ' dias')
-                       : (A.comMeta.length + ' mes(es) fechado(s)');
-  return '<div class="kpi"><div class="lab">Meta do periodo</div><div class="val">' +
-           (A.temMeta ? brl(A.somaMeta) : '-') + '</div>' +
-           '<div class="sub">' + metasEsc(A.comMeta.join(', ')) + '</div></div>' +
-         '<div class="kpi"' + apagado + '><div class="lab">Atingimento</div>' +
-           '<div class="val">' + metasPctTxt(A.pct) + '</div>' +
-           '<div class="sub">' + sub + '</div></div>';
+  const sub = A.aberto ? ('mês em aberto — ' + A.diaCorte + ' de ' + A.dias + ' dias')
+                       : (A.comMeta.length + ' mês(es) fechado(s)');
+  return [
+    {lab: 'Meta do período', val: (A.temMeta ? brl(A.somaMeta) : '—'), cls: '',
+     sub: A.comMeta.join(', '),
+     dica: 'Meta de faturamento líquido, somando os vendedores visíveis no ' +
+           'filtro. Vem da planilha de metas, preenchida à mão.'},
+    /* metaparcial e o cinza do mes em aberto: no dia 18, agosto tinha so 14% do
+       mes feito. Um percentual em destaque ali diria 'mes perdido' sobre um mes
+       que fechou em 55%. */
+    {lab: 'Atingimento', val: metasPctTxt(A.pct),
+     cls: A.aberto ? 'metaparcial' : '', sub: sub,
+     dica: A.aberto
+       ? 'O mês ainda não fechou, então este percentual não se compara com um ' +
+         'mês inteiro. A aba Metas mostra o ritmo contra o mesmo dia do mês anterior.'
+       : 'Realizado ÷ meta, com o mês já fechado.'}
+  ];
 }
 
 /* Registro da aba - mesmo padrao do CRM e do SLA. */
