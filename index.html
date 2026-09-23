@@ -1362,9 +1362,40 @@ function vCarteira(){
     naoMapeados.push({cn, rz:cliName(cn), v:'A definir', mo:'A definir'});
   });
   const universo=CARTEIRA.concat(naoMapeados);
+
+  /* OS FILTROS DA BARRA RECORTAM A LISTA (23/09/2026).
+     O Igor filtrou CANAL = Digital e continuou vendo supermercado: ate aqui a
+     barra so mexia no DINHEIRO (o linhas(), que alimenta as colunas de venda) e
+     nunca em QUEM aparece. A lista vinha inteira, e os clientes de outro canal
+     ficavam com "—" nas vendas.
+
+     O recorte usa o CADASTRO do cliente (c.ca, c.uf, c.mo, c.v), nao as notas
+     dele. Isso e o que preserva a razao de existir da aba: cliente que NAO
+     comprou no periodo continua aparecendo - e e justamente ele que a coluna
+     Oportunidade existe para achar. Filtrar pelas notas esconderia exatamente
+     quem se quer ver.
+
+     Regiao a carteira nao tem; deduzo pela UF a partir do proprio FATO, que tem
+     as duas colunas. Sem isso o filtro de regiao seria o unico a nao funcionar,
+     o que e pior do que nao ter. */
+  const _regDaUf = (() => {
+    const m = {};
+    try{ ROWS.forEach(r => { if(r.uf && r.reg && !m[r.uf]) m[r.uf] = r.reg; }); }
+    catch(e){}
+    return m;
+  })();
+  const _filtraBarra = (typeof podeFiltrar === 'function') ? podeFiltrar()
+                                                           : !!SESSION.isAdmin;
   let base=universo.filter(c=>{
-    if(SESSION.isAdmin){ return CART_VEND==='(todos)' || c.v===CART_VEND; }
-    return VEND_VIS.has(c.v);
+    if(SESSION.isAdmin){ if(!(CART_VEND==='(todos)' || c.v===CART_VEND)) return false; }
+    else if(!VEND_VIS.has(c.v)) return false;
+    if(!_filtraBarra) return true;
+    if(!multiOK(FILTER.vend,  c.v))  return false;
+    if(!multiOK(FILTER.mod,   c.mo)) return false;
+    if(!multiOK(FILTER.canal, c.ca)) return false;
+    if(!multiOK(FILTER.uf,    c.uf)) return false;
+    if(!multiOK(FILTER.reg,   _regDaUf[c.uf] || '')) return false;
+    return true;
   });
   const meses=MESES;   // meses presentes nos dados
   // monta linhas com métricas reais (CART_MET: datas/DRE do consolidado)
