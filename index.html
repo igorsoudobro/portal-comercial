@@ -2118,6 +2118,12 @@ const VIEWS=[
 ];
 let CURRENT='resumo';
 
+/* O moderador ve TODAS as abas (decidido em 23/09/2026, depois de o Igor
+   detalhar as quatro que faltavam): DRE como vendedor, Canais com as margens em
+   farol, SLA igual a todo mundo, Orcamento igual ao vendedor. Nenhuma delas
+   precisa sumir - cada uma ja se ajusta sozinha pelo veSensivel/verNumeroRent.
+   Por isso nao ha mais lista branca de abas: ela existiu por menos de uma hora
+   e teria virado uma peneira para manter. */
 function buildNav(){
   el('nav').innerHTML=VIEWS.map(v=>`<button data-v="${v.id}" class="${v.id===CURRENT?'on':''}">${v.lab}</button>`).join('');
   el('nav').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{CURRENT=b.dataset.v;showView();}));
@@ -2195,15 +2201,23 @@ function doLogin(){
                       ? ehSupervisorDe(user) : (user==='Fellipe Argentati');
   // ve NUMERO sensivel: subconjunto dos supervisores, declarado a parte
   const veNum=(typeof veNumerosDe==='function') ? veNumerosDe(user) : ehSupervisor;
-  SESSION.isRCA = (!admin && modeloUser==='RCA' && !ehSupervisor);
+  const moder = (typeof ehModeradorDe==='function') ? ehModeradorDe(user) : false;
+  SESSION.ehModerador = moder;
+  SESSION.isRCA = (!admin && !moder && modeloUser==='RCA' && !ehSupervisor);
   SESSION.verNumeros = admin || veNum;          // quem vê rentab/margem/lucro em número
-  SESSION.veLucroFinal = admin || veNum || (!admin && !SESSION.isRCA); // RCA não vê lucro final
+  /* LUCRO FINAL SO PARA QUEM VE NUMERO SENSIVEL (23/09/2026, pedido do Igor).
+     Antes, vendedor que nao fosse RCA via a coluna de lucro no Ranking - uma
+     brecha que ninguem tinha pedido, so sobrou da regra antiga que mirava o RCA.
+     Agora o criterio e o mesmo do resto: quem nao ve custo nao ve lucro. */
+  SESSION.veLucroFinal = admin || veNum;
   VEND_VIS=vendedoresVisiveis()||new Set();
   el('loginScreen').style.display='none';
   el('app').style.display='block';
   el('whoName').textContent=user;
-  el('whoBadge').textContent=admin?'Admin':'Vendedor';
-  el('roleLabel').textContent=admin?'Visão completa':'Minha carteira';
+  el('whoBadge').textContent = admin ? 'Admin' : (moder ? 'Moderador' : 'Vendedor');
+  el('roleLabel').textContent = admin ? 'Visão completa'
+                              : (moder ? 'Todos os vendedores, sem custos'
+                                       : 'Minha carteira');
   buildFilters(); buildNav(); showView();
 }
 function doLogout(){
@@ -2454,6 +2468,45 @@ const EQUIPES = {
    carona seria eu decidindo exposicao no lugar dele. */
 const SUPERVISOR_VE_NUMERO = ['Fellipe Argentati'];
 
+/* ===================== MODERADOR (23/09/2026) =============================
+   Um terceiro perfil, entre o admin e o vendedor. Em uma frase: VE OS DADOS DE
+   TODO MUNDO, COM A VISAO FINANCEIRA DE UM VENDEDOR.
+
+   Por que ele cabe nos mecanismos que ja existiam: as duas perguntas do Portal
+   sempre foram separadas - QUAIS dados (VEND_VIS) e QUANTO detalhe financeiro
+   (veSensivel). O admin responde "todos" e "tudo"; o vendedor, "os meus" e
+   "farol". O moderador e a combinacao que faltava: "todos" e "farol".
+
+   A senha continua vindo de Parametros!AM:AO como USER comum - esta lista NAO
+   cria acesso, so muda o que a pessoa ve depois de entrar. Nome tem de bater
+   exatamente com o da planilha.
+
+   Um aviso honesto, o mesmo que ja esta escrito na Calculadora: isto melhora a
+   TELA, nao e sigilo. O JSON inteiro chega ao navegador de quem loga. Sigilo de
+   verdade exigiria um JSON reduzido por perfil, que e outro assunto. */
+/* QUEM E MODERADOR VEM DA PLANILHA, nao daqui (ideia do Igor, 23/09/2026).
+   Em Parametros!AO, a mesma coluna do 'SIM' de admin, escreva MODERADOR. O
+   gerar_dados_dashboard separa em tres baldes e publica a lista no bloco LOGIN.
+
+   Melhor que uma lista em codigo por um motivo pratico: cadastrar uma pessoa
+   nova passa a ser uma celula, e nao uma alteracao de HTML que depende de mim e
+   de um novo upload.
+
+   A lista abaixo e so a RESERVA, para o caso de o Portal novo ser aberto com um
+   JSON antigo (gerado antes desta mudanca). Quando o JSON trouxer a lista, ela
+   manda. */
+const MODERADORES_RESERVA = ['Geovana Carvalho', 'Stephany', 'Camille Rodrigues'];
+window.MODERADORES_JSON = null;      // preenchido ao ler o bloco LOGIN
+
+window.ehModeradorDe = function(u){
+  const doJson = window.MODERADORES_JSON;
+  if(Array.isArray(doJson)) return doJson.indexOf(u) >= 0;
+  return MODERADORES_RESERVA.indexOf(u) >= 0;
+};
+window.ehModerador = function(){
+  return !!(SESSION && !SESSION.isAdmin && SESSION.ehModerador);
+};
+
 function equipeDe(u){
   if(!(u in EQUIPES)) return null;
   const set = new Set([u]);
@@ -2471,7 +2524,11 @@ function equipeDe(u){
 }
 
 function ehSupervisor(){ return !SESSION.isAdmin && (SESSION.user in EQUIPES); }
-function podeFiltrar(){ return SESSION.isAdmin || ehSupervisor(); }
+/* Moderador tambem filtra: sem os filtros ele veria todo mundo somado e nunca
+   conseguiria olhar um vendedor de cada vez, que e o trabalho dele. */
+function podeFiltrar(){
+  return SESSION.isAdmin || ehSupervisor() || !!SESSION.ehModerador;
+}
 window.ehSupervisor = ehSupervisor;
 window.podeFiltrar = podeFiltrar;
 /* Usadas pelo doLogin do Portal-base, via transformacao do montar_portal_graph. */
@@ -2480,6 +2537,9 @@ window.veNumerosDe = function(u){ return SUPERVISOR_VE_NUMERO.indexOf(u) >= 0; }
 
 window.vendedoresVisiveis = function(){
   if(SESSION.isAdmin) return null;
+  /* Moderador ve TODOS os vendedores. Devolvo o conjunto cheio, e nao null,
+     porque o linhas() so trata null como "tudo" quando isAdmin - e ele nao e. */
+  if(SESSION.ehModerador) return new Set(D.Vendedor);
   const eq = equipeDe(SESSION.user);
   return eq || new Set([SESSION.user]);
 };
@@ -2771,7 +2831,7 @@ function ajustarKpisResumo(){
     primeira[cn] >= minSel && ms.has(MESES_ORD[primeira[cn]])).length;
 
   const pctDev = d.fat ? Math.abs(d.dev) / d.fat : 0;
-  const itens = [
+  let itens = [
     {lab: 'Faturamento bruto', val: brl(d.fat), cls: '',
      sub: 'antes das devoluções',
      dica: 'Tudo o que foi faturado no período, sem descontar devolução.'},
@@ -2832,6 +2892,42 @@ function ajustarKpisResumo(){
     {lab: 'Novos clientes', val: n0(novos), cls: '',
      sub: '1ª compra no período'},
   ];
+
+  /* ---- MODERADOR: o recorte financeiro do Resumo (23/09/2026) ------------
+     Ele ve o faturamento de todo mundo, mas o custo nao. Item a item, como o
+     Igor pediu:
+        margem bruta  -> sai da tela
+        comissao      -> sai da tela
+        frete         -> so o percentual sobre o liquido, sem o R$
+        contratos     -> so o percentual, sem o R$
+        lucro final   -> semaforo, sem o R$
+        rentabilidade -> semaforo (ja era: verNumeroRent() e false para ele)
+     Faco por TRANSFORMACAO da lista, e nao com um segundo layout: um segundo
+     layout garantiria que um dia os dois discordassem, e o que discordasse
+     seria justamente o que esconde numero sensivel. */
+  const moder = (typeof ehModerador === 'function') && ehModerador();
+  if(moder){
+    const soPct = i => { i.val = '<span style="font-size:18px">' + (i.sub || '—') +
+                                 '</span>'; i.sub = 'apenas percentual'; i.sens = false;
+                         return i; };
+    itens = itens.filter(i => {
+      const lab = String(i.lab || '');
+      if(lab.indexOf('Margem bruta') === 0) return false;
+      if(lab.indexOf('Comissão') === 0) return false;
+      return true;
+    }).map(i => {
+      const lab = String(i.lab || '');
+      if(lab.indexOf('Frete') === 0) return soPct(i);
+      if(lab.indexOf('Contratos') === 0) return soPct(i);
+      if(lab.indexOf('Lucro final') === 0){
+        i.lab = 'Lucro final'; i.val = farol(d.rent, false);
+        i.sub = 'semáforo'; i.sens = false;
+        i.dica = 'Cor pela régua de rentabilidade. O valor em reais não aparece ' +
+                 'neste perfil.';
+      }
+      return i;
+    });
+  }
 
   row.innerHTML = itens.filter(i => !i.sens || sens).map(i => {
     const dica = i.dica ? ' data-dica="' + i.dica.replace(/"/g, '&quot;') + '"' : '';
@@ -3202,6 +3298,11 @@ function vCanaisNovo(){
   const tf = arr.reduce((a, r) => a + r.fat, 0);
 
   const adm = veSensivel();
+  /* Moderador VE as colunas de margem, mas em farol - pedido do Igor em
+     23/09/2026 ("de todos, porem com margens em farol"). Sem isto elas nem
+     apareciam para ele, porque o `adm` acima e veSensivel(). */
+  const moderCanais = (typeof ehModerador === 'function') && ehModerador();
+  const verMargem = adm || moderCanais;
   const porCanal = {};
   L.forEach(r => { const k = r.ca || '(vazio)';
                    (porCanal[k] = porCanal[k] || []).push(r); });
@@ -3209,11 +3310,13 @@ function vCanaisNovo(){
   Object.keys(porCanal).forEach(k => { dCanal[k] = dre(porCanal[k]); });
   const dTot = dre(L);
 
-  const thExtra = adm ? '<th>Margem bruta</th><th>Margem líquida</th>' : '';
+  const thExtra = verMargem ? '<th>Margem bruta</th><th>Margem líquida</th>' : '';
   const tdExtra = (k) => {
-    if(!adm) return '';
+    if(!verMargem) return '';
     const d = dCanal[k];
     if(!d || !d.fatLiq) return '<td class="mono">—</td><td class="mono">—</td>';
+    if(!adm) return '<td>' + farol(d.margem, false) + '</td>' +
+                    '<td>' + farol(d.rent, false) + '</td>';
     return '<td class="mono" style="color:' + farolCor(d.margem) + ';font-weight:700">'
          + pct(d.margem) + '</td>'
          + '<td class="mono" style="color:' + farolCor(d.rent) + ';font-weight:700">'
@@ -3306,8 +3409,10 @@ function vRankingNovo(){
     cols = [['fat', '% do faturamento'], ['ticket', 'Ticket médio'],
             ['rent', 'Rentabilidade']];
   } else if(!isAdm){
+    /* Sem 'Lucro final' desde 23/09/2026: quem nao ve custo nao ve lucro. Ver
+       SESSION.veLucroFinal no doLogin. */
     cols = [['fat', 'Faturamento líq.'], ['ticket', 'Ticket médio'],
-            ['lucro', 'Lucro final'], ['rent', 'Rentabilidade']];
+            ['rent', 'Rentabilidade']];
   } else {
     cols = [['fat', 'Faturamento líq.'], ['ticket', 'Ticket médio'],
             ['boni', 'Bonif.+Amostra'], ['lucro', 'Lucro final'],
@@ -4812,6 +4917,9 @@ window.aplicarLoginDoJson = async function(){
         console.warn('LOGIN do JSON sem nenhum admin.');
       }else{
         USERS = L.users; ADMINS = L.admins;
+        /* Lista de moderadores publicada pelo gerador a partir de Parametros!AO.
+           Ausente num JSON antigo - ai vale a reserva em MODERADORES_RESERVA. */
+        if(Array.isArray(L.moderadores)) window.MODERADORES_JSON = L.moderadores;
         buildLogin();      // o <select> foi montado no load, com a lista velha
         console.info('Login do Excel: ' + Object.keys(ADMINS).length +
                      ' admin(s) + ' + Object.keys(USERS).length + ' vendedor(es).');
@@ -8842,6 +8950,9 @@ function metasRender(M){
     '</b>, lidas em ' + metasEsc(String(M.lido_em || '').replace('T', ' ')) +
     '. Meta = faturamento liquido (venda menos devolucao).</div>';
 
+  /* Moderador ve a meta POR MODELO, nao por vendedor (pedido do Igor em
+     23/09/2026). A tabela de cima ja e a do modelo - a de vendedor sai. */
+  if(typeof ehModerador === 'function' && ehModerador()) return kpis + tabMod + fonte;
   return kpis + tabMod + tabVend + fonte;
 }
 
