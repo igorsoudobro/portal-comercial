@@ -9406,31 +9406,53 @@ function vAcessos(){
     return;
   }
   box.innerHTML = '<div class="empty">Consultando o registro de entradas…</div>';
-  /* As duas fontes em paralelo. O historico nao pode derrubar a aba, entao ele
-     ja vem com catch proprio; o do Entra continua propagando, porque 403 ali e
-     justamente o que o usuario precisa ler. */
-  Promise.all([acessosBuscar(), acessosHistorico()]).then(([ev, hist]) => {
-    if(ev === null) return;               /* foi para o Entra pedir o token */
+  /* AS DUAS FONTES, E NENHUMA DEPENDE DA OUTRA (23/09/2026).
+
+     O Enzo e o Pedro sao admin do Portal mas nao tem papel de diretorio no
+     Entra, entao a consulta ao vivo devolve 403 para eles - e a aba inteira
+     ficava vazia, mostrando so o aviso de permissao. Isso era desperdicio: o
+     historico que o pipeline guarda no SharePoint eles LEEM sem problema
+     nenhum, porque ele sai pelo Files.Read.All que todo mundo ja tem.
+
+     Entao o 403 deixou de ser fatal. Cada fonte vem com o proprio resultado, e
+     a aba so desiste quando NAO HA NADA para mostrar. Para quem cai no
+     historico o que falta e pouco: o IP, e as horas entre a ultima coleta e
+     agora. O rodape diz as duas coisas em vez de deixar parecer que a lista
+     esta completa. */
+  Promise.all([
+    acessosBuscar().then(ev => ({ev: ev}), erro => ({erro: erro})),
+    acessosHistorico()
+  ]).then(([vivo, hist]) => {
+    if(vivo.ev === null) return;          /* foi para o Entra pedir o token */
+    const doArquivo = acessosDoHistorico(hist);
+    if(vivo.erro && !doArquivo.length){
+      const e = vivo.erro;
+      console.error('ACESSOS:', e);
+      const dica = e.status === 403
+        ? 'O Entra recusou (403). A permissão <b>AuditLog.Read.All</b> existe ' +
+          'no app, mas quem está logado precisa também de um papel de diretório ' +
+          'que permita ler relatórios de entrada. O histórico guardado pelo ' +
+          'pipeline também não está disponível — por isso não há o que mostrar.'
+        : (e.status === 401
+           ? 'Sessão expirada (401). Saia e entre de novo.'
+           : 'Erro ao consultar o Entra: ' + (e.message || e));
+      box.innerHTML = '<div class="avisobox"><b>Não consegui ler o registro</b>' +
+        '<span>' + dica + '</span></div>';
+      return;
+    }
+    if(vivo.erro) console.warn('ACESSOS: sem o ao vivo, usando o histórico -',
+                               vivo.erro);
     acessosLigar();
     ACESSOS_HIST = hist;
-    ACESSOS_EVENTOS = acessosJuntar(ev, acessosDoHistorico(hist));
+    ACESSOS_SEM_AOVIVO = vivo.erro || null;
+    ACESSOS_EVENTOS = acessosJuntar(vivo.ev || [], doArquivo);
     acessosPinta();
-  }).catch(e => {
-    console.error('ACESSOS:', e);
-    const dica = e.status === 403
-      ? 'O Entra recusou (403). A permissão <b>AuditLog.Read.All</b> existe no ' +
-        'app, mas quem está logado precisa também de um papel de diretório que ' +
-        'permita ler relatórios de entrada.'
-      : (e.status === 401
-         ? 'Sessão expirada (401). Saia e entre de novo.'
-         : 'Erro ao consultar o Entra: ' + (e.message || e));
-    box.innerHTML = '<div class="avisobox"><b>Não consegui ler o registro</b>' +
-      '<span>' + dica + '</span></div>';
   });
 }
 
 let ACESSOS_EVENTOS = [];
 let ACESSOS_HIST = null;
+let ACESSOS_SEM_AOVIVO = null;   /* erro do Entra quando caimos so no historico */
 
 /* Ouvinte no CONTEINER: a tabela e reescrita a cada ordenacao. */
 function acessosLigar(){
@@ -9528,7 +9550,13 @@ function acessosPinta(){
   const fonte = '<div class="fonte">Fonte: log de entradas do Microsoft Entra, ' +
     'aplicativo do Portal. Período: <b>' + acessosData(de) + '</b> a <b>' +
     acessosData(ate) + '</b>. ' +
-    (temHist
+    (ACESSOS_SEM_AOVIVO
+      ? 'Esta lista vem do <b>histórico guardado pelo pipeline</b>. A consulta ' +
+        'ao vivo ao Microsoft Entra não está disponível para a sua conta — ' +
+        'ela pede um papel de diretório que você não tem. Na prática faltam ' +
+        'duas coisas: o <b>IP</b>, e os acessos feitos depois da última coleta.' +
+        ultimaColeta
+      : temHist
       ? 'O Entra guarda só os últimos 7 dias; o pipeline copia essa janela todo ' +
         'dia, então o histórico acima vai além disso e não some mais.' + ultimaColeta +
         ' O <b>IP</b> só existe para os últimos 7 dias — o histórico guardado não ' +
