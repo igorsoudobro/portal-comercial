@@ -1389,7 +1389,7 @@ function vCarteira(){
       // oportunidade = atraso vs. recorrência habitual, MAS nunca se já faturou no mês filtrado
       if(rec!==null && diasUlt!==null && diasUlt>rec && !faturouNoFiltro) oport=true;
     }
-    return {cn:c.cn, rz:c.rz, v:c.v, ci:c.ci||'', uf:c.uf||'',
+    return {cn:c.cn, rz:c.rz, v:c.v, ci:c.ci||'', uf:c.uf||'', ca:c.ca||'',
             ytd:vendaYTD[c.cn]||0, meses:porMes,
             rent, ticket, rec, diasUlt, oport, status};
   });
@@ -1401,6 +1401,7 @@ function vCarteira(){
        achar nada seria o comportamento surpreendente. */
     rows=rows.filter(r=> (qd && r.cn.includes(qd))
                       || r.rz.toLowerCase().includes(q)
+                      || (r.ca||'').toLowerCase().includes(q)
                       || (r.ci && r.ci.toLowerCase().includes(q))
                       || (r.uf && r.uf.toLowerCase() === q));
   }
@@ -1442,6 +1443,7 @@ function vCarteira(){
     <th style="text-align:left">Razão Social</th>
     <th style="text-align:left">Cidade</th>
     <th style="text-align:left">UF</th>
+    <th style="text-align:left">Canal</th>
     <th style="text-align:left">Vendedor</th>
     ${thS('ytd','Vendas líq. YTD')}
     ${thS('rent','Rentab.')}
@@ -1459,6 +1461,7 @@ function vCarteira(){
     <td class="rowlab" title="${r.rz}">${r.rz.substring(0,36)}</td>
     <td class="rowlab" title="${r.ci}">${r.ci?r.ci.substring(0,22):'<span style="color:var(--line)">—</span>'}</td>
     <td class="mono" style="text-align:center">${r.uf||'<span style="color:var(--line)">—</span>'}</td>
+    <td class="rowlab" title="${r.ca}">${r.ca?r.ca.substring(0,18):'<span style="color:var(--line)">—</span>'}</td>
     <td class="rowlab">${r.v}</td>
     <td class="mono" style="text-align:right;font-weight:700">${r.ytd?brl(r.ytd):'—'}</td>
     <td style="text-align:right">${cellRent(r)}</td>
@@ -1495,6 +1498,7 @@ function vCarteira(){
     <td>${totalRows} ${totalRows===1?'razão social':'razões sociais'}</td>
     <td>${new Set(rows.map(r=>r.ci).filter(Boolean)).size} cidade(s)</td>
     <td style="text-align:center">${new Set(rows.map(r=>r.uf).filter(Boolean)).size} UF</td>
+    <td>${new Set(rows.map(r=>r.ca).filter(Boolean)).size} canal(is)</td>
     <td>—</td>
     <td class="mono" style="text-align:right">${brl(ytdTot)}</td>
     <td style="text-align:right">${rentTotCell}</td>
@@ -2495,7 +2499,7 @@ const SUPERVISOR_VE_NUMERO = ['Fellipe Argentati'];
    A lista abaixo e so a RESERVA, para o caso de o Portal novo ser aberto com um
    JSON antigo (gerado antes desta mudanca). Quando o JSON trouxer a lista, ela
    manda. */
-const MODERADORES_RESERVA = ['Geovana Carvalho', 'Stephany', 'Camille Rodrigues'];
+const MODERADORES_RESERVA = ['Geovanna Carvalho', 'Stephany Ferreira', 'Camille Rodrigues'];
 window.MODERADORES_JSON = null;      // preenchido ao ler o bloco LOGIN
 
 window.ehModeradorDe = function(u){
@@ -5722,6 +5726,31 @@ function ligarCliquesExtras(){
       if(b) b.addEventListener('click', extrairCarteira);
     }
   }
+}
+
+/* O BOTAO DE EXTRAIR QUE SUMIA (23/09/2026).
+
+   O Igor viu assim: na Carteira, filtrar por um vendedor fazia o "Extrair
+   carteira" desaparecer.
+
+   A causa: o ligarCliquesExtras() so rodava depois do showView(), e os controles
+   DA PROPRIA ABA - o seletor de vendedor, a busca e a paginacao - chamam
+   vCarteira() direto, sem passar por ele. O vCarteira reescreve o .card-h, que e
+   onde o botao mora; ninguem o recolocava.
+
+   Nao valia caçar os quatro pontos de chamada: o proximo controle novo teria o
+   mesmo problema e ninguem lembraria. Embrulho o vCarteira, e a partir daqui
+   QUALQUER caminho que redesenhe a aba devolve o botao.
+
+   O `!document.getElementById('btnExtrairCarteira')` la dentro ja garante que
+   nao nasca botao duplicado. */
+if(typeof vCarteira === 'function'){
+  const _vCartOrig = vCarteira;      // captura ANTES da troca, regra da casa
+  window.vCarteira = function(){
+    const r = _vCartOrig.apply(this, arguments);
+    try{ ligarCliquesExtras(); }catch(e){ console.error('cliques extras:', e); }
+    return r;
+  };
 }
 
 /* Roda depois de QUALQUER troca de view: os KPIs e a aba Carteira sao
