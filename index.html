@@ -3417,7 +3417,8 @@ function vPenetracaoNovo(){
       '. ' +
       '<b>Preço médio</b> = faturamento ÷ quantidade (o praticado na nota, já ' +
       'com desconto — não é o preço de tabela). <b>Share do fat.</b> = fatia ' +
-      'do SKU no faturamento do recorte.</div>' +
+      'do SKU no faturamento do recorte.' +
+      ' <button id="penCsv" class="btn-csv">Extrair para Excel</button></div>' +
       '<table><thead><tr><th>#</th><th>Produto</th><th>Categoria</th>' +
       '<th>Pedidos c/ SKU</th><th>Penetração</th><th></th><th>Faturamento</th>' +
       '<th>Preço médio</th><th>Share do fat.</th></tr></thead><tbody>' +
@@ -3434,6 +3435,19 @@ function vPenetracaoNovo(){
         '<td class="mono" style="color:var(--muted)">' + pct(r.share) +
         '</td></tr>').join('') +
       '</tbody></table>';
+
+    const bt = out.querySelector('#penCsv');
+    if(bt) bt.onclick = () => {
+      const num = v => String((Math.round(v * 100) / 100).toFixed(2)).replace('.', ',');
+      const p2 = v => String((Math.round(v * 1000) / 10).toFixed(1)).replace('.', ',') + '%';
+      baixarCSV(
+        ['#', 'Produto', 'SKU', 'Categoria', 'Pedidos c/ SKU', 'Penetracao',
+         'Faturamento', 'Quantidade', 'Preco medio', 'Share do faturamento'],
+        arr.map((r, i) => [i + 1, prodName(r.k), r.k, r.cat, r.peds, p2(r.pen),
+                           num(r.fat), num(r.q), r.q ? num(r.preco) : '',
+                           p2(r.share)]),
+        'penetracao_por_sku');
+    };
   }
 
   // Trocar o <select> por um CLONE: o clone nao carrega o listener que a view
@@ -4032,6 +4046,7 @@ function vMixNovo(){
     o.vend[r.v] = (o.vend[r.v] || 0) + r.fat;
   });
   const cnpjList = Object.keys(byCnpj);
+  const liqAno = (typeof mixLiquidoDoAno === 'function') ? mixLiquidoDoAno() : {};
 
   // SKUs vendidos por categoria, do maior faturamento para o menor
   const fatSku = {}, catDoSku = {};
@@ -4067,14 +4082,34 @@ function vMixNovo(){
       const catset = new Set(Object.keys(o.cats));
       const ped = o.meses.size;
       return {cn, cats: catset, skus: o.skus, sc: scorePositivacao(catset),
-              fat: o.fat, ticket: ped ? o.fat / ped : 0,
+              fat: o.fat, liq: liqAno[cn] || 0, ticket: ped ? o.fat / ped : 0,
               vend: Object.entries(o.vend).sort((a, b) => b[1] - a[1])[0]?.[0] || '—'};
     }).filter(r => !qtext || r.cn.includes(q) ||
                    cliName(r.cn).toLowerCase().includes(qtext));
-    rows.sort((a, b) => ord === 'fat' ? b.fat - a.fat
-                      : ord === 'ticket' ? b.ticket - a.ticket
-                      : (a.sc - b.sc || b.fat - a.fat));
+    /* O clique no cabecalho tem precedencia sobre o <select> da barra: quem
+       acabou de clicar na coluna espera ver aquela ordem, nao a anterior.
+       Trocar o <select> zera o clique (ver o listener mais abaixo). */
+    if(MIX_SORT.col){
+      const k = MIX_SORT.col, d = MIX_SORT.dir;
+      rows.sort((a, b) => d * (a[k] - b[k]) || b.fat - a.fat);
+    }else{
+      rows.sort((a, b) => ord === 'fat' ? b.fat - a.fat
+                        : ord === 'ticket' ? b.ticket - a.ticket
+                        : (a.sc - b.sc || b.fat - a.fat));
+    }
     rows = rows.slice(0, 80);
+
+    /* Cabecalho clicavel. A seta mostra o sentido atual - sem ela ninguem
+       descobre que a coluna ordena, e menos ainda que o segundo clique inverte. */
+    const thOrd = (col, rot) => {
+      const on = MIX_SORT.col === col;
+      return '<th class="mix-fix mix-ord' + (on ? ' on' : '') +
+        '" data-ord="' + col + '" style="text-align:right;cursor:pointer" ' +
+        'title="ordenar por ' + rot + ' (clique de novo para inverter)">' +
+        rot + (on ? '<span class="mix-seta">' +
+               (MIX_SORT.dir > 0 ? '\u25B2' : '\u25BC') + '</span>' : '') +
+        '</th>';
+    };
 
     const curto = (sk) => {
       const n = prodName(sk).replace(/^Dobro\s+/i, '');
@@ -4119,24 +4154,44 @@ function vMixNovo(){
         '<td class="mono mix-fix2">' + r.cn + '</td>' +
         '<td class="mix-fix2" style="color:var(--muted)">' + r.vend + '</td>' +
         '<td class="mono mix-fix2" style="text-align:right;color:var(--pos);' +
-        'font-weight:700">' + brl(r.ticket) + '</td>' + cells + '</tr>';
+        'font-weight:700">' + brl(r.ticket) + '</td>' +
+        '<td class="mono mix-fix2" style="text-align:right">' + brl(r.liq) +
+        '</td>' + cells + '</tr>';
     }).join('');
 
     out.innerHTML =
       '<table class="mix-tbl"><thead>' +
       '<tr class="mix-h1"><th class="mix-fix">Cliente</th>' +
       '<th class="mix-fix">CNPJ</th><th class="mix-fix">Vendedor</th>' +
-      '<th class="mix-fix" style="text-align:right">Ticket médio</th>' +
+      thOrd('ticket', 'Ticket médio') +
+      thOrd('liq', 'Líquido no ano') +
       headCat + '</tr>' +
       '<tr class="mix-h2"><th class="mix-fix">% com ✓</th>' +
       '<th class="mix-fix"></th><th class="mix-fix"></th>' +
-      '<th class="mix-fix"></th>' + headPen + '</tr></thead>' +
+      '<th class="mix-fix"></th><th class="mix-fix"></th>' + headPen +
+      '</tr></thead>' +
       '<tbody>' + corpo + '</tbody></table>' +
       '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">' +
       '✓ = já compra · — = ainda não compra. O % abaixo de cada coluna é a ' +
       'penetração. <b>Clique no nome da categoria</b> para abrir os SKUs dela ' +
-      '(o número ao lado é quantos SKUs ela tem no recorte). Mostrando até 80 ' +
-      'clientes.</div>';
+      '(o número ao lado é quantos SKUs ela tem no recorte). <b>Clique em ' +
+      'Ticket médio ou Líquido no ano</b> para ordenar; o segundo clique ' +
+      'inverte. <b>Líquido no ano</b> é venda menos devolução do ano inteiro e ' +
+      '<u>não</u> muda com o filtro de mês. Mostrando até 80 clientes.' +
+      ' <button id="mixCsv" class="btn-csv">Extrair para Excel</button></div>';
+
+    const bt = out.querySelector('#mixCsv');
+    if(bt) bt.onclick = () => extrairMix(rows, cats, skusDaCat);
+
+    out.querySelectorAll('th.mix-ord[data-ord]').forEach(th => {
+      th.onclick = () => {
+        const c = th.dataset.ord;
+        if(MIX_SORT.col === c) MIX_SORT.dir = -MIX_SORT.dir;
+        else { MIX_SORT.col = c; MIX_SORT.dir = -1; }
+        render();
+        if(typeof ajustarTopoMix === 'function') setTimeout(ajustarTopoMix, 30);
+      };
+    });
 
     out.querySelectorAll('th.mix-cat[data-cat]').forEach(th => {
       th.onclick = () => {
@@ -4157,9 +4212,39 @@ function vMixNovo(){
     if(!e || !e.parentNode) return;
     const novo = e.cloneNode(true);
     e.parentNode.replaceChild(novo, e);
-    novo.addEventListener(id === 'mixBusca' ? 'input' : 'change', render);
+    novo.addEventListener(id === 'mixBusca' ? 'input' : 'change', ev => {
+      /* Mexer no <select> desliga o sort por clique: os dois mandam na mesma
+         ordem, e deixar os dois ligados faria o select parecer quebrado. */
+      if(id === 'mixOrd') MIX_SORT.col = null;
+      render();
+    });
   });
   render();
+}
+
+/* A extracao le as MESMAS `rows` que a tela acabou de desenhar - mesma busca,
+   mesma ordem, mesmos 80. O que ele ve e o que ele leva.
+
+   As colunas de SKU saem SEMPRE, todas, mesmo as categorias fechadas na tela:
+   no Excel nao ha o problema de largura que fez a tela nascer com as categorias
+   colapsadas, e positivacao por SKU e justamente o motivo de extrair. */
+function extrairMix(rows, cats, skusDaCat){
+  const cabec = ['Cliente', 'CNPJ', 'Vendedor', 'Ticket medio',
+                 'Liquido no ano'];
+  cats.forEach(c => {
+    cabec.push(c);
+    skusDaCat[c].forEach(sk => cabec.push(c + ' > ' + prodName(sk)));
+  });
+  const num = v => String((Math.round(v * 100) / 100).toFixed(2)).replace('.', ',');
+  const dados = rows.map(r => {
+    const l = [cliName(r.cn), r.cn, r.vend, num(r.ticket), num(r.liq)];
+    cats.forEach(c => {
+      l.push(r.cats.has(c) ? 'SIM' : 'NAO');
+      skusDaCat[c].forEach(sk => l.push(r.skus.has(sk) ? 'SIM' : 'NAO'));
+    });
+    return l;
+  });
+  return baixarCSV(cabec, dados, 'mix_por_cnpj');
 }
 
 /* ============== BLOCO DE SHARES (09/09/2026) ==============================
@@ -7391,6 +7476,14 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 #v-metas .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--indigo);border-radius:4px}
 #v-metas .bar i.ok{background:var(--pos)}
 #v-metas .semmeta{color:var(--mute);font-style:italic}
+/* Botao de extracao das abas Mix e Penetracao. Regra GLOBAL: eles vivem fora do
+   #v-metas. Cores literais - as variaveis --line/--mute so existem la dentro. */
+.btn-csv{font:inherit;font-size:11px;font-weight:700;color:#fff;cursor:pointer;
+  background:#2C3B7E;border:0;border-radius:6px;padding:5px 11px;margin-left:10px;
+  vertical-align:1px}
+.btn-csv:hover{background:#3d4d99}
+th.mix-ord:hover{text-decoration:underline}
+th.mix-ord .mix-seta{margin-left:4px;font-size:9px}
 /* Unica regra deste bloco que NAO e escopada: o cartao de atingimento do Resumo
    vive na .kpirow, fora do #v-metas. Nome proprio para nao colidir com nada.
 
@@ -8789,6 +8882,66 @@ function metasResumoItens(){
        : 'Realizado ÷ meta, com o mês já fechado.'}
   ];
 }
+
+/* ===========================================================================
+   MIX POR CNPJ e PENETRACAO: extracao, ordenacao e liquido do ano (23/09/2026)
+   ========================================================================= */
+
+/* CSV e nao .xlsx, pelo mesmo motivo ja escrito na extracao da Carteira: montar
+   xlsx exigiria uma biblioteca e a CSP do Portal bloqueia script de CDN. CSV com
+   BOM e ';' abre no Excel em portugues com as colunas separadas e o acento
+   certo. O arquivo termina em .csv para ninguem esperar formatacao. */
+function baixarCSV(cabec, dados, prefixo){
+  const esc = v => {
+    const t = String(v == null ? '' : v);
+    return /[;"\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  };
+  const csv = '\ufeff' + [cabec].concat(dados)
+                .map(l => l.map(esc).join(';')).join('\r\n');
+  const quem = String((typeof SESSION === 'object' && SESSION && SESSION.user)
+                      || 'dobro').replace(/[^A-Za-z0-9]+/g, '_');
+  const per = (typeof mesesAtivos === 'function' ? mesesAtivos().join('-') : '')
+              || 'periodo';
+  const nome = prefixo + '_' + quem + '_' + per + '.csv';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
+  a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return nome;
+}
+
+/* Faturamento LIQUIDO do ano inteiro por CNPJ.
+
+   Diferente do resto da aba de proposito, e por isso o cabecalho da coluna diz
+   "no ano": a tabela do Mix respeita o filtro de mes, esta coluna NAO. A
+   pergunta que ela responde - "quanto este cliente vale no ano?" - nao muda
+   porque alguem filtrou setembro.
+
+   Os DEMAIS filtros continuam valendo (vendedor, modelo, regiao, UF, canal) e o
+   recorte de permissao vem antes de todos, igual ao linhas(). E liquido: soma
+   venda e devolucao (tipo 1 e 0), enquanto a tabela do Mix so olha venda. */
+function mixLiquidoDoAno(){
+  const filtra = (typeof podeFiltrar === 'function') ? podeFiltrar()
+                                                     : !!SESSION.isAdmin;
+  const out = {};
+  ROWS.forEach(r => {
+    if((r.tipo !== 0 && r.tipo !== 1) || !r.cn) return;
+    if(!SESSION.isAdmin && !VEND_VIS.has(r.v)) return;
+    if(filtra){
+      if(!multiOK(FILTER.vend,  r.v))   return;
+      if(!multiOK(FILTER.mod,   r.mo))  return;
+      if(!multiOK(FILTER.reg,   r.reg)) return;
+      if(!multiOK(FILTER.uf,    r.uf))  return;
+      if(!multiOK(FILTER.canal, r.ca))  return;
+    }
+    out[r.cn] = (out[r.cn] || 0) + r.fat;
+  });
+  return out;
+}
+
+/* Ordenacao por clique no cabecalho. `col` null = manda o <select> da barra. */
+const MIX_SORT = {col: null, dir: -1};
 
 /* Registro da aba - mesmo padrao do CRM e do SLA. */
 if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
