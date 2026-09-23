@@ -2159,8 +2159,17 @@ let CURRENT='resumo';
    precisa sumir - cada uma ja se ajusta sozinha pelo veSensivel/verNumeroRent.
    Por isso nao ha mais lista branca de abas: ela existiu por menos de uma hora
    e teria virado uma peneira para manter. */
+/* A aba Acessos so aparece para admin. Nao e a tranca - a tranca e o proprio
+   Entra, que nega o dado a quem nao tem papel de diretorio. E so nao mostrar um
+   botao que daria erro. */
+function abasPermitidas(){
+  const ehAdm = !!(SESSION && SESSION.isAdmin);
+  return VIEWS.filter(v => v.id !== 'acessos' || ehAdm);
+}
 function buildNav(){
-  el('nav').innerHTML=VIEWS.map(v=>`<button data-v="${v.id}" class="${v.id===CURRENT?'on':''}">${v.lab}</button>`).join('');
+  const vis = abasPermitidas();
+  if(vis.length && !vis.some(v => v.id === CURRENT)) CURRENT = vis[0].id;
+  el('nav').innerHTML=vis.map(v=>`<button data-v="${v.id}" class="${v.id===CURRENT?'on':''}">${v.lab}</button>`).join('');
   el('nav').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{CURRENT=b.dataset.v;showView();}));
 }
 function showView(){
@@ -7699,6 +7708,45 @@ th.mix-ord .mix-seta{margin-left:4px;font-size:9px}
   #v-metas .kpis{grid-template-columns:repeat(2,1fr)}
 }
 </style>
+<style>
+/* ===== Aba Acessos (23/09/2026), escopado sob #v-acessos ================= */
+#v-acessos{--navy:#2D377D;--indigo:#4A56A8;--line:#E3E7F3;--mist:#F4F6FC;
+  --mute:#7A83A8;--pos:#1F8A5B;--neg:#C0392B;--r:12px;
+  --shadow:0 1px 3px rgba(20,28,64,.08)}
+#v-acessos .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+#v-acessos .kpi{background:#fff;border:1px solid var(--line);border-radius:var(--r);
+  padding:15px 17px;box-shadow:var(--shadow);border-left:4px solid var(--indigo)}
+#v-acessos .kpi .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--mute);font-weight:700}
+#v-acessos .kpi .val{font-size:25px;font-weight:800;color:var(--navy);
+  font-variant-numeric:tabular-nums;margin-top:3px}
+#v-acessos .kpi .sub{font-size:12px;color:var(--mute);margin-top:2px}
+#v-acessos .card{background:#fff;border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--shadow);padding:14px 18px 6px;overflow:hidden}
+#v-acessos table{width:100%;border-collapse:collapse}
+#v-acessos thead th{text-align:left;font-size:11px;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--mute);font-weight:700;padding:9px 10px 9px 0;
+  border-bottom:1px solid var(--line);white-space:nowrap;cursor:pointer;user-select:none}
+#v-acessos thead th.r{text-align:right}
+#v-acessos td{font-size:12.5px;padding:8px 10px 8px 0;border-bottom:1px solid var(--mist);
+  color:#1d2440}
+#v-acessos td.r{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+#v-acessos tbody tr:hover{background:var(--mist)}
+#v-acessos .nunca{color:var(--mute);font-style:italic}
+#v-acessos .falha{color:var(--neg);font-weight:700}
+#v-acessos .eyebrow{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;
+  letter-spacing:.8px;text-transform:uppercase;color:var(--mute);margin:0 0 4px}
+#v-acessos .eyebrow::before{content:"";width:14px;height:2px;background:var(--navy);border-radius:2px}
+#v-acessos .sectionsub{font-size:11.5px;color:var(--mute);margin:0 0 12px}
+#v-acessos .avisobox{background:var(--mist);border:1px solid var(--line);
+  border-radius:var(--r);padding:26px 24px;text-align:center;color:var(--navy)}
+#v-acessos .avisobox b{display:block;font-size:15px;margin-bottom:5px}
+#v-acessos .avisobox span{font-size:12.5px;color:var(--mute)}
+#v-acessos .fonte{font-size:11px;color:var(--mute);margin-top:14px}
+#v-acessos .seta{margin-left:4px;font-size:9px}
+@media (max-width:920px){#v-acessos .kpis{grid-template-columns:repeat(2,1fr)}}
+</style>
+
 
 <script>
 /* ============ DETALHE POR NF NO DRE (26/08/2026) ==========================
@@ -9139,6 +9187,262 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
   if(typeof buildNav === 'function' && document.getElementById('nav') &&
      document.getElementById('nav').children.length){
     try{ buildNav(); }catch(e){}
+  }
+}
+
+
+/* ============================================================================
+   ABA ACESSOS  (23/09/2026)
+
+   Quem entrou no Portal, com data e hora. O dado NAO e nosso: vem do log de
+   entradas do proprio Entra, consultado ao vivo quando a aba abre. Nao ha
+   arquivo, nao ha acumulo, nao ha passo diario - foi exatamente por isso que
+   este caminho ganhou dos outros tres que testei em 23/09/2026 (o SharePoint so
+   registra quem GRAVA; a tela do Azure nao entrega os dados para automacao; e
+   baixar CSV todo dia o Igor descartou).
+
+   POR QUE ISTO NAO VAZA NADA
+   --------------------------
+   AuditLog.Read.All e permissao DELEGADA: ela deixa o Portal PERGUNTAR em nome
+   de quem esta logado, e quem responde sim ou nao e o Entra, pessoa por pessoa.
+   Vendedor que forcar esta aba recebe 403 do proprio Graph. A aba so aparece
+   para admin porque mostrar um botao que da erro nao ajuda ninguem - mas a
+   tranca de verdade esta do lado de la, nao aqui.
+
+   O TOKEN E PEDIDO SO AQUI
+   ------------------------
+   O login normal continua pedindo as tres permissoes de sempre. A da auditoria
+   e pedida no momento em que a aba abre, e so para quem abre. Assim nenhum
+   vendedor chega sequer a solicitar essa permissao.
+
+   RETENCAO: 7 dias na licenca gratuita, 30 com P1/P2. O Entra nao guarda mais
+   que isso, entao a aba mostra o periodo que existir e diz qual e - em vez de
+   deixar o leitor achar que "nao logou" quem so logou antes da janela.
+   ========================================================================== */
+const ACESSOS_APP_ID = MS_CLIENT_ID;
+const ACESSOS_SCOPE  = ["AuditLog.Read.All"];
+let ACESSOS_CACHE = null;                 /* uma consulta por sessao */
+const ACESSOS_SORT = {col: 'ultimo', dir: -1};
+
+function acessosEhAdmin(){ return !!(SESSION && SESSION.isAdmin); }
+
+/* Token SO da auditoria. Silencioso primeiro; se o Entra exigir interacao, cai
+   no redirect - o mesmo padrao do msToken, pelo mesmo motivo (popup e bloqueado
+   em navegador embutido). */
+async function acessosToken(){
+  const req = {scopes: ACESSOS_SCOPE, account: msAccount};
+  try{
+    const r = await msalApp.acquireTokenSilent(req);
+    return r.accessToken;
+  }catch(e){
+    await msalApp.acquireTokenRedirect(req);
+    return null;
+  }
+}
+
+/* Puxa as entradas DESTE app. Pagina ate acabar ou ate um teto - um locatario
+   movimentado poderia devolver dezenas de milhares e travar a aba. */
+async function acessosBuscar(){
+  if(ACESSOS_CACHE) return ACESSOS_CACHE;
+  const tok = await acessosToken();
+  if(!tok) return null;                    /* esta navegando para o Entra */
+  let url = GRAPH_BASE + "/auditLogs/signIns?$filter=appId eq '" +
+            ACESSOS_APP_ID + "'&$top=500";
+  const tudo = [];
+  let paginas = 0;
+  while(url && paginas < 20){
+    const r = await fetch(url, {headers: {Authorization: "Bearer " + tok}});
+    if(!r.ok){
+      const corpo = await r.text();
+      const err = new Error("Graph " + r.status);
+      err.status = r.status; err.body = corpo;
+      throw err;
+    }
+    const d = await r.json();
+    (d.value || []).forEach(x => tudo.push(x));
+    url = d["@odata.nextLink"];
+    paginas++;
+  }
+  ACESSOS_CACHE = tudo;
+  return tudo;
+}
+
+/* Uma linha por PESSOA, com o ultimo acesso e a contagem. */
+function acessosAgrupar(eventos){
+  const por = {};
+  eventos.forEach(e => {
+    const email = (e.userPrincipalName || e.userDisplayName || '(sem usuário)')
+                    .toLowerCase();
+    const o = por[email] = por[email] || {
+      email: email, nome: e.userDisplayName || '', n: 0, ok: 0, falha: 0,
+      ultimo: null, ultimoOk: null, ip: '', erroUlt: ''
+    };
+    o.n++;
+    const deu = !(e.status && e.status.errorCode);
+    if(deu) o.ok++; else o.falha++;
+    const t = e.createdDateTime || '';
+    if(t && (!o.ultimo || t > o.ultimo)){
+      o.ultimo = t;
+      o.ip = e.ipAddress || '';
+      o.erroUlt = deu ? '' : ((e.status && e.status.failureReason) || 'falhou');
+    }
+    if(deu && t && (!o.ultimoOk || t > o.ultimoOk)) o.ultimoOk = t;
+  });
+  return Object.values(por);
+}
+
+function acessosData(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(isNaN(d)) return iso;
+  const p = n => String(n).padStart(2, '0');
+  return p(d.getDate()) + '/' + p(d.getMonth()+1) + '/' + d.getFullYear();
+}
+function acessosHora(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(isNaN(d)) return '';
+  const p = n => String(n).padStart(2, '0');
+  return p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+function vAcessos(){
+  const box = el('v-acessos');
+  if(!box) return;
+  if(!acessosEhAdmin()){
+    box.innerHTML = '<div class="avisobox"><b>Visão restrita</b><span>' +
+      'O registro de acessos é do diretório da Dobro e só aparece para quem ' +
+      'tem essa permissão no Microsoft Entra.</span></div>';
+    return;
+  }
+  box.innerHTML = '<div class="empty">Consultando o registro de entradas…</div>';
+  acessosBuscar().then(ev => {
+    if(ev === null) return;               /* foi para o Entra pedir o token */
+    acessosLigar();
+    ACESSOS_EVENTOS = ev;
+    acessosPinta();
+  }).catch(e => {
+    console.error('ACESSOS:', e);
+    const dica = e.status === 403
+      ? 'O Entra recusou (403). A permissão <b>AuditLog.Read.All</b> existe no ' +
+        'app, mas quem está logado precisa também de um papel de diretório que ' +
+        'permita ler relatórios de entrada.'
+      : (e.status === 401
+         ? 'Sessão expirada (401). Saia e entre de novo.'
+         : 'Erro ao consultar o Entra: ' + (e.message || e));
+    box.innerHTML = '<div class="avisobox"><b>Não consegui ler o registro</b>' +
+      '<span>' + dica + '</span></div>';
+  });
+}
+
+let ACESSOS_EVENTOS = [];
+
+/* Ouvinte no CONTEINER: a tabela e reescrita a cada ordenacao. */
+function acessosLigar(){
+  const box = el('v-acessos');
+  if(!box || box.dataset.ligado) return;
+  box.dataset.ligado = '1';
+  box.addEventListener('click', ev => {
+    const th = ev.target.closest && ev.target.closest('th[data-ord]');
+    if(!th) return;
+    const c = th.getAttribute('data-ord');
+    if(ACESSOS_SORT.col === c) ACESSOS_SORT.dir = -ACESSOS_SORT.dir;
+    else { ACESSOS_SORT.col = c; ACESSOS_SORT.dir = (c === 'email') ? 1 : -1; }
+    acessosPinta();
+  });
+}
+
+function acessosPinta(){
+  const box = el('v-acessos');
+  if(!box) return;
+  const ev = ACESSOS_EVENTOS || [];
+  if(!ev.length){
+    box.innerHTML = '<div class="avisobox"><b>Nenhuma entrada no período</b>' +
+      '<span>O Entra guarda de 7 a 30 dias, conforme a licença. Se ninguém ' +
+      'entrou nessa janela, não há o que mostrar.</span></div>';
+    return;
+  }
+  const pessoas = acessosAgrupar(ev);
+  const datas = ev.map(e => e.createdDateTime).filter(Boolean).sort();
+  const de = datas[0], ate = datas[datas.length - 1];
+
+  /* Quantos entraram no MES corrente - o recorte que o Igor pediu. */
+  const agora = new Date();
+  const mesAtual = agora.getFullYear() + '-' + String(agora.getMonth()+1).padStart(2,'0');
+  const noMes = pessoas.filter(p => (p.ultimoOk || '').slice(0,7) === mesAtual);
+  const comFalha = pessoas.filter(p => p.falha > 0);
+
+  const kpis =
+    '<div class="kpis">' +
+      '<div class="kpi"><div class="lab">Pessoas no período</div><div class="val">' +
+        pessoas.length + '</div><div class="sub">contas distintas</div></div>' +
+      '<div class="kpi"><div class="lab">Entraram neste mês</div><div class="val">' +
+        noMes.length + '</div><div class="sub">com login bem-sucedido</div></div>' +
+      '<div class="kpi"><div class="lab">Entradas</div><div class="val">' +
+        n0(ev.length) + '</div><div class="sub">logins no período</div></div>' +
+      '<div class="kpi"><div class="lab">Com falha</div><div class="val">' +
+        comFalha.length + '</div><div class="sub">tentaram e não entraram</div></div>' +
+    '</div>';
+
+  const ord = ACESSOS_SORT.col, dir = ACESSOS_SORT.dir;
+  const lista = pessoas.slice().sort((a, b) => {
+    const x = a[ord], y = b[ord];
+    if(x === null && y === null) return 0;
+    if(x === null) return 1;
+    if(y === null) return -1;
+    if(typeof x === 'string') return dir * String(x).localeCompare(String(y), 'pt-BR');
+    return dir * (x - y);
+  });
+  const seta = c => ACESSOS_SORT.col === c
+    ? '<span class="seta">' + (ACESSOS_SORT.dir > 0 ? '\u25B2' : '\u25BC') + '</span>' : '';
+  const th = (c, rot, r) => '<th data-ord="' + c + '"' + (r ? ' class="r"' : '') +
+    '>' + rot + seta(c) + '</th>';
+
+  const trs = lista.map(p =>
+    '<tr><td>' + metasEsc(p.email) + '</td>' +
+    '<td>' + metasEsc(p.nome) + '</td>' +
+    '<td class="r">' + (p.ultimo ? acessosData(p.ultimo)
+                      : '<span class="nunca">—</span>') + '</td>' +
+    '<td class="r">' + acessosHora(p.ultimo) + '</td>' +
+    '<td class="r">' + n0(p.n) + '</td>' +
+    '<td class="r">' + (p.falha ? '<span class="falha">' + p.falha + '</span>' : '—') + '</td>' +
+    '<td class="r" style="color:var(--mute)">' + metasEsc(p.ip) + '</td></tr>').join('');
+
+  const tabela =
+    '<div class="section"><div class="eyebrow">Quem entrou no Portal</div>' +
+    '<div class="sectionsub">Uma linha por conta, com o último acesso. ' +
+    'Clique no título para ordenar. A coluna <b>Falhas</b> conta tentativas ' +
+    'que não entraram — senha errada, MFA não concluído, acesso bloqueado.</div>' +
+    '<div class="card"><table><thead><tr>' +
+    th('email', 'E-mail') + th('nome', 'Nome') +
+    th('ultimo', 'Último acesso', true) + '<th class="r">Hora</th>' +
+    th('n', 'Entradas', true) + th('falha', 'Falhas', true) +
+    '<th class="r">IP</th>' +
+    '</tr></thead><tbody>' + trs + '</tbody></table></div></div>';
+
+  const fonte = '<div class="fonte">Fonte: log de entradas do Microsoft Entra, ' +
+    'aplicativo do Portal. Período disponível: <b>' + acessosData(de) + '</b> a <b>' +
+    acessosData(ate) + '</b> — o Entra guarda de 7 a 30 dias conforme a licença, ' +
+    'então quem entrou antes disso não aparece aqui.</div>';
+
+  box.innerHTML = kpis + tabela + fonte;
+}
+
+/* Registro da aba - so para admin, no fim da barra. */
+if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
+  if(!VIEWS.some(v => v.id === 'acessos')){
+    VIEWS.push({id:'acessos', lab:'Acessos', fn:vAcessos});
+  }
+  if(!document.getElementById('v-acessos')){
+    const irmao = document.getElementById('v-metas') ||
+                  document.getElementById('v-crm') ||
+                  document.querySelector('.view');
+    if(irmao && irmao.parentNode){
+      const d = document.createElement('div');
+      d.className = 'view';
+      d.id = 'v-acessos';
+      irmao.parentNode.insertBefore(d, irmao);
+    }
   }
 }
 
