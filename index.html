@@ -9267,6 +9267,66 @@ async function acessosBuscar(){
   return tudo;
 }
 
+/* O HISTORICO ACUMULADO (23/09/2026).
+
+   O Entra so guarda 7 dias na licenca gratuita - medido: 17/09 a 23/09. Em vez
+   de comprar P1 para ter 30, o pipeline copia essa janela todo dia para um
+   arquivo nosso (coletar_acessos.py). Como a janela do Entra e bem maior que o
+   intervalo entre coletas, nada escapa, e o historico cresce sem teto.
+
+   O arquivo NAO tem IP: e o campo mais sensivel e o que menos serve para
+   "quem entrou e quando". IP so aparece para os 7 dias que vem do Entra na hora.
+
+   Se o arquivo ainda nao existir (primeiro dia, ou coleta que falhou), a aba
+   continua funcionando com os 7 dias - por isso o 404 devolve null em vez de
+   estourar. */
+const ACESSOS_ARQ_HIST = "acessos_historico.json";
+
+async function acessosHistorico(){
+  try{
+    const tok = await msToken();
+    if(!tok) return null;
+    const caminho = (PASTA_DADOS + "/" + ACESSOS_ARQ_HIST)
+                      .split("/").map(encodeURIComponent).join("/");
+    const r = await fetch(GRAPH_BASE + "/sites/" + MS_SITE_ID +
+                          "/drive/root:/" + caminho,
+                          {headers: {Authorization: "Bearer " + tok}});
+    if(!r.ok) return null;                    /* 404 = ainda nao coletou */
+    const meta = await r.json();
+    const dl = meta["@microsoft.graph.downloadUrl"];
+    if(!dl) return null;
+    const r2 = await fetch(dl);
+    if(!r2.ok) return null;
+    return await r2.json();
+  }catch(e){
+    console.warn('ACESSOS: historico indisponivel -', e);
+    return null;
+  }
+}
+
+/* O arquivo e compacto (indice da pessoa, instante, deu certo). Aqui ele volta
+   ao formato do Graph para o resto da aba nao precisar saber da diferenca. */
+function acessosDoHistorico(h){
+  if(!h || !Array.isArray(h.eventos)) return [];
+  const P = h.pessoas || [];
+  return h.eventos.map(e => {
+    const p = P[e[0]] || ['', ''];
+    return {userPrincipalName: p[0], userDisplayName: p[1],
+            createdDateTime: e[1], ipAddress: '',
+            status: e[2] ? {} : {errorCode: 1, failureReason: 'falhou'}};
+  });
+}
+
+/* Junta as duas fontes. O evento ao vivo MANDA quando coincide: e o unico que
+   traz IP. Chave: pessoa + instante, que e o mesmo par que o coletor usa. */
+function acessosJuntar(aoVivo, doArquivo){
+  const chave = e => (e.userPrincipalName || '').toLowerCase() + '|' +
+                     (e.createdDateTime || '');
+  const tem = new Set((aoVivo || []).map(chave));
+  const fora = (doArquivo || []).filter(e => !tem.has(chave(e)));
+  return (aoVivo || []).concat(fora);
+}
+
 /* Uma linha por PESSOA, com o ultimo acesso e a contagem. */
 function acessosAgrupar(eventos){
   const por = {};
@@ -9288,7 +9348,37 @@ function acessosAgrupar(eventos){
     }
     if(deu && t && (!o.ultimoOk || t > o.ultimoOk)) o.ultimoOk = t;
   });
-  return Object.values(por);
+  /* dias fica na propria pessoa para a ordenacao funcionar igual as outras
+     colunas - o sort le p[coluna], nao sabe formatar nada. */
+  const lista = Object.values(por);
+  lista.forEach(p => { p.dias = acessosDias(p.ultimo); });
+  return lista;
+}
+
+/* DIAS DESDE O ULTIMO ACESSO (23/09/2026, pedido do Igor).
+
+   Conta DIA DE CALENDARIO, nao 24 horas: quem entrou ontem as 23h50 e quem
+   entrou ontem as 08h00 sao os dois "ontem". Por isso zero as horas dos dois
+   lados antes de subtrair - a diferenca em horas diria 0 para um e 1 para o
+   outro, que e exatamente o que confunde quem le.
+
+   O Math.round e por causa do horario de verao: um dos dias do ano tem 23 ou 25
+   horas, e a divisao por 86400000 daria 0,96 ou 1,04 dia. */
+function acessosDias(iso){
+  if(!iso) return null;
+  const d = new Date(iso);
+  if(isNaN(d)) return null;
+  const quando = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const h = new Date();
+  const hoje = new Date(h.getFullYear(), h.getMonth(), h.getDate());
+  return Math.round((hoje - quando) / 86400000);
+}
+
+function acessosRotuloDias(n){
+  if(n === null || n === undefined) return '—';
+  if(n <= 0) return 'Hoje';
+  if(n === 1) return 'Ontem';
+  return 'Há ' + n0(n) + ' dias';
 }
 
 function acessosData(iso){
@@ -9316,10 +9406,14 @@ function vAcessos(){
     return;
   }
   box.innerHTML = '<div class="empty">Consultando o registro de entradas…</div>';
-  acessosBuscar().then(ev => {
+  /* As duas fontes em paralelo. O historico nao pode derrubar a aba, entao ele
+     ja vem com catch proprio; o do Entra continua propagando, porque 403 ali e
+     justamente o que o usuario precisa ler. */
+  Promise.all([acessosBuscar(), acessosHistorico()]).then(([ev, hist]) => {
     if(ev === null) return;               /* foi para o Entra pedir o token */
     acessosLigar();
-    ACESSOS_EVENTOS = ev;
+    ACESSOS_HIST = hist;
+    ACESSOS_EVENTOS = acessosJuntar(ev, acessosDoHistorico(hist));
     acessosPinta();
   }).catch(e => {
     console.error('ACESSOS:', e);
@@ -9336,6 +9430,7 @@ function vAcessos(){
 }
 
 let ACESSOS_EVENTOS = [];
+let ACESSOS_HIST = null;
 
 /* Ouvinte no CONTEINER: a tabela e reescrita a cada ordenacao. */
 function acessosLigar(){
@@ -9404,9 +9499,11 @@ function acessosPinta(){
     '<td class="r">' + (p.ultimo ? acessosData(p.ultimo)
                       : '<span class="nunca">—</span>') + '</td>' +
     '<td class="r">' + acessosHora(p.ultimo) + '</td>' +
+    '<td class="r">' + acessosRotuloDias(p.dias) + '</td>' +
     '<td class="r">' + n0(p.n) + '</td>' +
     '<td class="r">' + (p.falha ? '<span class="falha">' + p.falha + '</span>' : '—') + '</td>' +
-    '<td class="r" style="color:var(--mute)">' + metasEsc(p.ip) + '</td></tr>').join('');
+    '<td class="r" style="color:var(--mute)">' +
+      (p.ip ? metasEsc(p.ip) : '<span class="nunca">—</span>') + '</td></tr>').join('');
 
   const tabela =
     '<div class="section"><div class="eyebrow">Quem entrou no Portal</div>' +
@@ -9416,14 +9513,30 @@ function acessosPinta(){
     '<div class="card"><table><thead><tr>' +
     th('email', 'E-mail') + th('nome', 'Nome') +
     th('ultimo', 'Último acesso', true) + '<th class="r">Hora</th>' +
+    th('dias', 'Há quantos dias', true) +
     th('n', 'Entradas', true) + th('falha', 'Falhas', true) +
     '<th class="r">IP</th>' +
     '</tr></thead><tbody>' + trs + '</tbody></table></div></div>';
 
+  /* O rodape muda conforme exista ou nao historico: dizer "7 a 30 dias" depois
+     de acumular meses seria mentira, e nao dizer nada no primeiro dia esconderia
+     o limite real. */
+  const temHist = !!(ACESSOS_HIST && (ACESSOS_HIST.eventos || []).length);
+  const ultimaColeta = temHist && ACESSOS_HIST.gerado
+    ? ' Última coleta: <b>' + acessosData(ACESSOS_HIST.gerado) + ' ' +
+      acessosHora(ACESSOS_HIST.gerado) + '</b>.' : '';
   const fonte = '<div class="fonte">Fonte: log de entradas do Microsoft Entra, ' +
-    'aplicativo do Portal. Período disponível: <b>' + acessosData(de) + '</b> a <b>' +
-    acessosData(ate) + '</b> — o Entra guarda de 7 a 30 dias conforme a licença, ' +
-    'então quem entrou antes disso não aparece aqui.</div>';
+    'aplicativo do Portal. Período: <b>' + acessosData(de) + '</b> a <b>' +
+    acessosData(ate) + '</b>. ' +
+    (temHist
+      ? 'O Entra guarda só os últimos 7 dias; o pipeline copia essa janela todo ' +
+        'dia, então o histórico acima vai além disso e não some mais.' + ultimaColeta +
+        ' O <b>IP</b> só existe para os últimos 7 dias — o histórico guardado não ' +
+        'registra IP.'
+      : 'O Entra guarda de 7 a 30 dias conforme a licença, então quem entrou ' +
+        'antes disso não aparece aqui. O histórico acumulado ainda não foi ' +
+        'gerado — ele começa na primeira execução do pipeline.') +
+    '</div>';
 
   box.innerHTML = kpis + tabela + fonte;
 }
