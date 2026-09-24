@@ -2201,12 +2201,33 @@ function buildFilters(){
   el('mesDe').addEventListener('change',e=>{FILTER.de=e.target.value;refresh();});
   el('mesAte').addEventListener('change',e=>{FILTER.ate=e.target.value;refresh();});
 
-  if(SESSION.isAdmin){
-    const vends=['(todos)',...[...new Set(ROWS.map(r=>r.v))].sort()];
-    const mods=['(todos)',...[...new Set(ROWS.map(r=>r.mo))].sort()];
-    const regs=['(todos)',...[...new Set(ROWS.map(r=>r.reg))].filter(Boolean).sort()];
-    const ufs=['(todos)',...[...new Set(ROWS.map(r=>r.uf))].filter(Boolean).sort()];
-    const canais=['(todos)',...[...new Set(ROWS.map(r=>r.ca))].filter(Boolean).sort()];
+  /* A BARRA E DE QUEM PODE FILTRAR, NAO SO DO ADMIN (24/09/2026).
+
+     O Igor: "os moderadores nao estao conseguindo filtrar por canal, periodo,
+     vendedor, regiao e uf". A permissao ja existia - o podeFiltrar() inclui
+     moderador e supervisor desde que foram criados, e as telas ja respeitavam
+     o FILTER para eles. O que faltava era a BARRA: montada so para isAdmin,
+     entao nao havia onde clicar. Permissao sem controle na tela e o mesmo que
+     nao ter permissao.
+
+     Vale tambem para o supervisor, que tinha o mesmo furo e ninguem notou -
+     ele filtrava "(todos)" a vida inteira porque nunca teve o seletor.
+
+     AS LISTAS SAIEM DO QUE A PESSOA JA ENXERGA, nao de ROWS inteiro. Para o
+     moderador da no mesmo (VEND_VIS e todo mundo), mas para o supervisor evita
+     um menu que oferece vendedor de fora da equipe dele: escolher um daria
+     tela vazia - nao vaza nada, mas parece defeito. De quebra, regiao, UF e
+     canal passam a listar so o que existe na carteira dele. */
+  const _podeBarra = (typeof podeFiltrar === 'function') ? podeFiltrar()
+                                                         : !!SESSION.isAdmin;
+  if(_podeBarra){
+    const univ = SESSION.isAdmin ? ROWS
+               : ROWS.filter(r => !VEND_VIS || !VEND_VIS.size || VEND_VIS.has(r.v));
+    const vends=['(todos)',...[...new Set(univ.map(r=>r.v))].sort()];
+    const mods=['(todos)',...[...new Set(univ.map(r=>r.mo))].sort()];
+    const regs=['(todos)',...[...new Set(univ.map(r=>r.reg))].filter(Boolean).sort()];
+    const ufs=['(todos)',...[...new Set(univ.map(r=>r.uf))].filter(Boolean).sort()];
+    const canais=['(todos)',...[...new Set(univ.map(r=>r.ca))].filter(Boolean).sort()];
     el('admVend').innerHTML=vends.map(v=>`<option>${v}</option>`).join('');
     el('admMod').innerHTML=mods.map(v=>`<option>${v}</option>`).join('');
     el('admReg').innerHTML=regs.map(v=>`<option>${v}</option>`).join('');
@@ -2270,7 +2291,12 @@ function doLogout(){
   el('loginScreen').style.display='flex';
   el('loginPass').value='';
   // reset filtros admin
-  ['admVendGroup','admModGroup','admRegGroup'].forEach(g=>el(g).style.display='none');
+  /* os CINCO, nao tres: UF e Canal nasceram depois e ficaram de fora desta
+     limpeza. Nao dava problema visivel porque o buildFilters esconde tudo no
+     else, mas duas listas diferentes para a mesma coisa sempre acabam
+     discordando um dia. */
+  ['admVendGroup','admModGroup','admRegGroup','admUfGroup','admCanalGroup']
+    .forEach(g=>el(g).style.display='none');
   FILTER={period:'mes',mes:null,de:null,ate:null,vend:'(todos)',mod:'(todos)',reg:'(todos)',uf:'(todos)',canal:'(todos)'};
   RANK_SORT={key:'fat',dir:-1};
   CART_SORT={key:'ytd',dir:-1}; CART_VEND='(todos)'; CART_PAGE=0; CART_BUSCA='';
