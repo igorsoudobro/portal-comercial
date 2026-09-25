@@ -4989,6 +4989,26 @@ function ligarShares(){
   });
 }
 
+/* EXPORTAR PARA O window (25/09/2026).
+
+   O bloco dos Shares vive num escopo fechado, e a aba "Gestao de categoria"
+   nasceu no bloco do FIM do arquivo - que nao enxerga daqui. O sintoma foi
+   silencioso do pior jeito: a aba mostrava "Sem vendas nos filtros
+   selecionados", que e mensagem legitima, em vez de estourar. O try/catch do
+   vGestCat engolia o ReferenceError e o texto de vazio parecia resposta.
+
+   Meus testes passaram e nao pegaram isso porque rodaram cada funcao ISOLADA,
+   com new Function - exatamente o que mascara escopo. Integracao e outra coisa.
+
+   Sao so estas sete: as que o bloco do fim chama. O resto continua fechado. */
+window.montarShares = montarShares;
+window.ligarShares = ligarShares;
+window.shrDados = shrDados;
+window.shrMotor = shrMotor;
+window.shrTabela = shrTabela;
+window.veMargemCat = veMargemCat;
+window.veMargemCatEmNumero = veMargemCatEmNumero;
+
 /* ============== MATCH DO FRETE (visao admin) ==============================
    Pedido do Igor (31/07/2026): "quantas nfs fizeram match com as notas da base
    de fretes".
