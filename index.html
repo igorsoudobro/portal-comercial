@@ -10127,7 +10127,29 @@ function acessosPinta(){
    (menor e maior janela de N dias) e usa a media como padrao - com o campo
    editavel ao lado, para quem sabe que aquela semana e atipica.
    =========================================================================== */
-let SIMUL = {sku: null, preco: null, dias: null, pct: null};
+/* soCalc LIGADO por padrao (25/09/2026, pedido do Igor: "podem aparecer
+   apenas os mesmos SKUs da calculadora").
+
+   O QUE `calc===1` SIGNIFICA DE VERDADE: produto de LINHA. O Igor explicou
+   depois que a lista da Calculadora de pedido e a dos itens ativos - "o BT400
+   Nitrato Beterraba saiu de linha no decorrer do ano".
+
+   Registro porque eu errei a leitura antes de perguntar: medi que o corte tira
+   54 dos 109 SKUs com venda no ano, R$ 1.573.577 (8,5% do faturamento), e
+   tratei isso como valor escondido. Nao e - e produto descontinuado, e ninguem
+   simula preco de item que nao vende mais. A medicao estava certa; a conclusao,
+   nao.
+
+   A caixa fica assim mesmo: o padrao e o que ele pediu, e desmarcar serve para
+   olhar o historico de um item que saiu de linha - leitura, nao decisao. */
+let SIMUL = {sku: null, preco: null, dias: null, pct: null, soCalc: true};
+
+/* O mesmo criterio da Calculadora de pedido: calcSkusDe() filtra por calc===1. */
+function simulEhDaCalculadora(sk){
+  try{
+    return !!(CALC && CALC.skus && CALC.skus[sk] && CALC.skus[sk].calc === 1);
+  }catch(e){ return false; }
+}
 
 function simulDados(){
   const L = linhas();
@@ -10214,13 +10236,21 @@ function simulChave(t){
   return String(t || '').toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
-function simulProcurar(termo, limite){
+function simulUniverso(){
   const D = simulDados();
+  if(!SIMUL.soCalc) return D.skus;
+  const dentro = D.skus.filter(o => simulEhDaCalculadora(o.sk));
+  /* se o JSON vier sem CALC.skus (versao antiga), o filtro zeraria a lista e o
+     simulador ficaria inutil sem dizer por que - melhor ignorar o corte */
+  return dentro.length ? dentro : D.skus;
+}
+function simulProcurar(termo, limite){
   const q = simulChave(termo).trim();
+  const uni = simulUniverso();
   const lista = q
-    ? D.skus.filter(o => simulChave(simulNome(o.sk)).indexOf(q) >= 0 ||
-                         simulChave(o.sk).indexOf(q) >= 0)
-    : D.skus;
+    ? uni.filter(o => simulChave(simulNome(o.sk)).indexOf(q) >= 0 ||
+                      simulChave(o.sk).indexOf(q) >= 0)
+    : uni;
   return lista.slice(0, limite || 8);
 }
 function simulSugestoes(termo){
@@ -10358,14 +10388,23 @@ function montarSimulador(){
   if(!veMargemCatEmNumero()) return '';       /* margem em farol nao simula */
   const D = simulDados();
   if(!D.skus.length) return '';
-  if(!SIMUL.sku || !D.skus.some(o => o.sk === SIMUL.sku)){
-    SIMUL.sku = D.skus[0].sk; SIMUL.preco = null; SIMUL.pct = null;
+  /* o SKU escolhido tem de existir no universo VIGENTE: ligar a caixa com um
+     SKU de fora selecionado deixaria a tela mostrando um produto que a busca
+     nao acha mais */
+  const uni = simulUniverso();
+  if(!SIMUL.sku || !uni.some(o => o.sk === SIMUL.sku)){
+    SIMUL.sku = uni[0].sk; SIMUL.preco = null; SIMUL.pct = null;
   }
-  const o = D.skus.find(x => x.sk === SIMUL.sku);
+  const o = uni.find(x => x.sk === SIMUL.sku) || D.skus.find(x => x.sk === SIMUL.sku);
   const p0 = o ? (o.fat / o.q) : 0;
   const preco = (SIMUL.preco === null) ? p0 : SIMUL.preco;
   const faixa = simulFaixaDias(SIMUL.dias);
   const pctVal = (SIMUL.pct !== null) ? SIMUL.pct : (faixa ? faixa.media : 1);
+  /* os dois numeros na etiqueta: sem eles, "so SKUs da Calculadora" nao diz
+     QUANTO esta sendo escondido, e esconder metade da lista em silencio foi
+     justamente o risco que a medicao apontou */
+  const nTotal = D.skus.length;
+  const nDentro = D.skus.filter(x => simulEhDaCalculadora(x.sk)).length;
 
   return '<div class="card" id="cardSimul"><div class="card-h">' +
     '<h3>Simulação de preço</h3>' +
@@ -10397,6 +10436,16 @@ function montarSimulador(){
     '<label style="font-size:11px;color:var(--muted);font-weight:600">% do volume<br>' +
       '<input id="simulPct" type="number" step="1" min="0" max="100" value="' +
       (pctVal * 100).toFixed(0) + '" style="width:90px;margin-top:4px"></label>' +
+    '<label style="font-size:12px;color:var(--muted);font-weight:600;' +
+      'display:flex;align-items:center;gap:6px;padding-bottom:7px">' +
+      '<input id="simulSoCalc" type="checkbox"' + (SIMUL.soCalc ? ' checked' : '') +
+      '> só produtos de linha' +
+      '<span style="font-weight:400" title="Marcado: só os SKUs da Calculadora ' +
+      'de pedido, que é a lista dos produtos ativos. Desmarcado: entram também ' +
+      'os que saíram de linha durante o período — úteis para olhar histórico, ' +
+      'não para decidir preço.">' + nDentro + ' de ' + nTotal +
+      ', o resto saiu de linha</span>' +
+      '</label>' +
     '</div><div style="padding:0 14px 12px" id="simulOut"></div></div>';
 }
 
@@ -10452,6 +10501,20 @@ function ligarSimulador(){
   });
   card.addEventListener('input', ev => {
     const t = ev.target;
+    if(t.id === 'simulSoCalc'){
+      SIMUL.soCalc = !!t.checked;
+      /* o SKU atual pode ter saido do universo: refaz o cartao inteiro, que e
+         quem sabe escolher um valido e reescrever os campos */
+      const card2 = document.getElementById('cardSimul');
+      const pai = card2 && card2.parentNode;
+      if(pai){
+        const novo = document.createElement('div');
+        novo.innerHTML = montarSimulador();
+        pai.replaceChild(novo.firstElementChild, card2);
+        ligarSimulador();
+      }
+      return;
+    }
     if(t.id === 'simulSkuBusca'){ simulSugestoes(t.value); return; }
     else if(t.id === 'simulPreco'){ SIMUL.preco = parseFloat(t.value); }
     else if(t.id === 'simulDias'){
