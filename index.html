@@ -1049,9 +1049,16 @@ const DRE_ROWS_VEND=[['Faturamento','fat','brl'],['Devoluções','dev','brl'],['
   ['Ticket médio','ticket','brl'],['Nº de notas','nfs','n']];
 function dreRowsFor(){ return SESSION.isAdmin ? DRE_ROWS_FULL : DRE_ROWS_VEND; }
 
+/* Percentuais que revelam custo: quem não vê número vê FAROL.
+
+   `rentFin` entrou aqui em 25/09/2026, a pedido do Igor. Ela tinha nascido de
+   fora da lista e saía em número para todo mundo - a linha nova seria a única
+   do DRE a mostrar rentabilidade aberta para vendedor, justamente ao lado da
+   que mostra farol. Lista nomeada em vez de `||` encadeado: a próxima linha
+   desse tipo entra num lugar só, e não em três. */
+const DRE_PCT_FAROL = ['rent', 'rentFin', 'margem'];
 function fmtCell(v,f,key){
-  // rentabilidade e margem: vendedor vê só farol; admin vê o número
-  if((key==='rent'||key==='margem') && !verNumeroRent()) return farol(v,false);
+  if(DRE_PCT_FAROL.indexOf(key) >= 0 && !verNumeroRent()) return farol(v,false);
   return f==='brl'?brl(v):f==='pct'?pct(v):f==='n'?n0(v):v;
 }
 
@@ -1064,7 +1071,7 @@ function vDRE(){
     const d=dre(L);
     let body=dreRowsFor().map(([lab,key,f,flag])=>{
       const sens=flag==='s',bold=flag==='b';
-      let cls=(key==='rent'||key==='margem')?(d[key]>=0?'pos':'neg'):'';
+      let cls=DRE_PCT_FAROL.indexOf(key)>=0?(d[key]>=0?'pos':'neg'):'';
       return `<tr class="${bold?'tot':''}" data-dre="${key}"><td class="rowlab ${bold?'tot':''}">${lab}${sens?SENS:''}</td>
         <td class="mono ${cls} ${bold?'tot':''}">${fmtCell(d[key],f,key)}</td></tr>`;
     }).join('');
@@ -1078,7 +1085,7 @@ function vDRE(){
   const head=`<tr><th>Linha</th>${meses.map(m=>`<th style="text-align:right">${m}</th>`).join('')}<th style="text-align:right;border-left:2px solid var(--line)">YTD</th></tr>`;
   const body=dreRowsFor().map(([lab,key,f,flag])=>{
     const sens=flag==='s',bold=flag==='b';
-    const cell=(dd)=>{ let cls=(key==='rent'||key==='margem')?(dd[key]>=0?'pos':'neg'):(key==='dev'&&dd[key]<0?'neg':''); return `<td class="mono ${cls} ${bold?'tot':''}">${fmtCell(dd[key],f,key)}</td>`; };
+    const cell=(dd)=>{ let cls=DRE_PCT_FAROL.indexOf(key)>=0?(dd[key]>=0?'pos':'neg'):(key==='dev'&&dd[key]<0?'neg':''); return `<td class="mono ${cls} ${bold?'tot':''}">${fmtCell(dd[key],f,key)}</td>`; };
     return `<tr class="${bold?'tot':''}" data-dre="${key}"><td class="rowlab ${bold?'tot':''}">${lab}${sens?SENS:''}</td>
       ${dMes.map(cell).join('')}
       <td class="mono ${bold?'tot':''}" style="border-left:2px solid var(--line);font-weight:700">${fmtCell(dYTD[key],f,key)}</td></tr>`;
@@ -1287,7 +1294,7 @@ function analisarCNPJ(){
   if(mesesCN.length<=1){
     let body=dreRowsFor().map(([lab,key,f,flag])=>{
       const bold=flag==='b',sens=flag==='s';
-      let cls=(key==='rent'||key==='margem')?(d[key]>=0?'pos':'neg'):'';
+      let cls=DRE_PCT_FAROL.indexOf(key)>=0?(d[key]>=0?'pos':'neg'):'';
       return `<tr class="${bold?'tot':''}"><td class="rowlab ${bold?'tot':''}">${lab}${sens?SENS:''}</td><td class="mono ${cls} ${bold?'tot':''}">${fmtCell(d[key],f,key)}</td></tr>`;
     }).join('');
     dreHtml=`<table><tbody>${body}</tbody></table>`;
@@ -1296,7 +1303,7 @@ function analisarCNPJ(){
     const head=`<tr><th>Linha</th>${mesesCN.map(m=>`<th style="text-align:right">${m.substring(0,3)}</th>`).join('')}<th style="text-align:right;border-left:2px solid var(--line)">YTD</th></tr>`;
     const body=dreRowsFor().map(([lab,key,f,flag])=>{
       const sens=flag==='s',bold=flag==='b';
-      const cell=(dd)=>{ let cls=(key==='rent'||key==='margem')?(dd[key]>=0?'pos':'neg'):(key==='dev'&&dd[key]<0?'neg':''); return `<td class="mono ${cls} ${bold?'tot':''}">${fmtCell(dd[key],f,key)}</td>`; };
+      const cell=(dd)=>{ let cls=DRE_PCT_FAROL.indexOf(key)>=0?(dd[key]>=0?'pos':'neg'):(key==='dev'&&dd[key]<0?'neg':''); return `<td class="mono ${cls} ${bold?'tot':''}">${fmtCell(dd[key],f,key)}</td>`; };
       return `<tr class="${bold?'tot':''}"><td class="rowlab ${bold?'tot':''}">${lab}${sens?SENS:''}</td>${dMes.map(cell).join('')}<td class="mono ${bold?'tot':''}" style="border-left:2px solid var(--line);font-weight:700">${fmtCell(d[key],f,key)}</td></tr>`;
     }).join('');
     dreHtml=`<table class="dre-mensal"><thead>${head}</thead><tbody>${body}</tbody></table>`;
