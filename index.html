@@ -3274,6 +3274,9 @@ function vResumoNovo(){
     // que se olha primeiro depois dos KPIs. Em try/catch porque um erro aqui nao
     // pode levar embora a tabela por vendedor, que e o que sempre existiu.
     try{ montarVendaDiaria(); }catch(e){ console.error('venda diaria:', e); }
+    /* logo depois da venda diaria: e o mesmo dado visto como padrao, e quem
+       acabou de ver o mes em reais e quem quer ver o formato dele */
+    try{ montarShareDiaUtil(); }catch(e){ console.error('share dia util:', e); }
     view.insertAdjacentHTML('beforeend', tabela);
     /* Shares ACIMA do Match do frete (pedido do Igor, 09/09/2026): share de
        categoria e leitura comercial, o match do frete e qualidade de dado.
@@ -4459,6 +4462,38 @@ function extrairMix(rows, cats, skusDaCat){
 const SHARE_ABERTAS = new Set();          /* categorias abertas em SKU */
 const SHARE_MODO = {pct: 'fat', abs: 'fat'};   /* cada quadro tem o seu */
 
+/* MARGEM LIQUIDA POR SKU (25/09/2026, pedido do Igor).
+
+   E a mesma conta do dre() - nao uma aproximacao:
+
+       lucro = (faturamento + devolucao) - CMV - impostos - frete
+               - comissao - bonificacao - contrato
+
+   Todas as parcelas ja vem POR LINHA de nota, e toda linha tem SKU. A unica
+   que nasce agrupada e o contrato, que e um percentual do liquido do CLIENTE -
+   e percentual e linear, entao `fat * pct(cnpj)` somado linha a linha da
+   exatamente o mesmo que `liquido_do_cnpj * pct(cnpj)`. Por isso a soma dos
+   SKUs fecha com a categoria, que fecha com o total. Sem rateio arbitrario.
+
+   ENTRA BONIFICACAO E AMOSTRA, que o resto deste quadro exclui. Elas tem
+   faturamento zero e custo cheio, entao um SKU muito bonificado aparece com
+   margem baixa ou negativa. Isso e a informacao, nao um defeito: o custo
+   existiu e alguem tem de ve-lo. Elas NAO entram na base (fatLiq), pelo mesmo
+   motivo do dre().
+
+   QUEM VE: a mesma regra de Canais & Ticket - margem revela custo. Admin ve o
+   numero, moderador ve farol, vendedor nao ve nem o botao. */
+function veMargemCat(){
+  try{
+    if(typeof veSensivel === 'function' && veSensivel()) return true;
+    return (typeof ehModerador === 'function') && ehModerador();
+  }catch(e){ return false; }
+}
+function veMargemCatEmNumero(){
+  try{ return (typeof veSensivel === 'function') && veSensivel(); }
+  catch(e){ return false; }
+}
+
 function shrDados(){
   /* LIQUIDO: venda + devolucao. tipo===0 e devolucao (fat e q negativos). */
   const L = linhas().filter(r => r.venda || r.tipo === 0);
@@ -4467,8 +4502,27 @@ function shrDados(){
 
   const soma = (alvo, chave, m, r) => {
     const o = alvo[chave] = alvo[chave] || {};
-    const c = o[m] = o[m] || {fat: 0, vol: 0};
+    const c = o[m] = o[m] || {fat: 0, vol: 0, luc: 0, liq: 0};
     c.fat += r.fat; c.vol += r.q;
+  };
+  /* O contrato por CNPJ e consultado uma vez por cliente e guardado: a conta
+     passou a rodar por LINHA, e sao dezenas de milhares. */
+  const _pctCn = {};
+  const pctDe = (cn) => {
+    if(!cn) return 0;
+    if(_pctCn[cn] === undefined){
+      try{ _pctCn[cn] = (typeof contratoPct === 'function') ? (contratoPct(cn) || 0) : 0; }
+      catch(e){ _pctCn[cn] = 0; }
+    }
+    return _pctCn[cn];
+  };
+  /* Acumula lucro e base no MESMO objeto de celula, para o motor nao precisar
+     de uma segunda estrutura paralela. `luc` e `liq` ficam zerados quando o
+     usuario nao pode ver margem - a conta nem roda. */
+  const somaMargem = (alvo, chave, m, luc, liq) => {
+    const o = alvo[chave] = alvo[chave] || {};
+    const c = o[m] = o[m] || {fat: 0, vol: 0, luc: 0, liq: 0};
+    c.luc += luc; c.liq += liq;
   };
   L.forEach(r => {
     const c = r.cat || 'Outros';
@@ -4497,6 +4551,29 @@ function shrDados(){
         return sb - sa;
       });
   });
+  /* SEGUNDA PASSADA, sobre TODAS as linhas - inclusive bonificacao e amostra,
+     que a primeira exclui. De proposito separada: assim nenhum numero que ja
+     estava na tela (share, volume, ticket) muda de valor. */
+  if(veMargemCat()){
+    linhas().forEach(r => {
+      const c = r.cat || 'Outros';
+      let luc = 0, liq = 0;
+      if(r.venda || r.tipo === 0){
+        liq = r.fat;
+        luc = r.fat - r.cmv - r.imp - r.fr - r.com - (r.fat * pctDe(r.cn));
+      } else if(r.bonif){
+        luc = -(r.cmv + r.imp);          /* mercadoria + imposto, sem receita */
+      } else if(r.amostra){
+        luc = -r.cmv;                    /* amostra e isenta de imposto */
+      } else {
+        return;
+      }
+      somaMargem(cat, c, r.m, luc, liq);
+      somaMargem(sku, r.sk, r.m, luc, liq);
+      const t = tot[r.m] = tot[r.m] || {fat: 0, vol: 0, luc: 0, liq: 0};
+      t.luc += luc; t.liq += liq;
+    });
+  }
   return {meses, cats, cat, sku, tot, skusDaCat};
 }
 
@@ -4535,10 +4612,17 @@ function shrCor(v, ant, casas){
 function shrMotor(D, qual, modo){
   const ehPct = (qual === 'pct');
   const ehTic = (modo === 'tic');
+  const ehMrg = (modo === 'mrg');
   const cru = (o, m, campo) => (o && o[m]) ? (o[m][campo] || 0) : 0;
   /* No modo ticket o valor da célula é uma razão: sem volume não existe ticket,
      e devolver 0 mentiria (0 é "vendeu de graça", não "não vendeu"). */
   const valor = (o, m) => {
+    /* Margem e razao, igual ao ticket: sem base nao existe margem, e devolver
+       0 mentiria - 0 seria "vendeu no custo", nao "nao vendeu". */
+    if(ehMrg){
+      const b = cru(o, m, 'liq');
+      return b ? cru(o, m, 'luc') / b : null;
+    }
     if(!ehTic) return cru(o, m, modo);
     const v = cru(o, m, 'vol');
     return v ? cru(o, m, 'fat') / v : null;
@@ -4551,6 +4635,16 @@ function shrMotor(D, qual, modo){
   const nM = D.meses.length;
   /* média da linha, pela regra de cada modo (ver cabeçalho do shrTabela) */
   const media = (o) => {
+    /* PONDERADA, e nao a media das margens mensais (decidido com o Igor em
+       25/09/2026). Media simples da o mesmo peso a um mes que faturou R$ 2 mil
+       e a um que faturou R$ 100 mil: uma sobra de estoque com margem alta
+       levantaria a linha inteira. Lucro total sobre base total e a margem que
+       de fato aconteceu no periodo. Mesma regra que o ticket ja usava. */
+    if(ehMrg){
+      let l = 0, b = 0;
+      D.meses.forEach(m => { l += cru(o, m, 'luc'); b += cru(o, m, 'liq'); });
+      return b ? l / b : null;
+    }
     if(ehTic){
       let f = 0, v = 0;
       D.meses.forEach(m => { f += cru(o, m, 'fat'); v += cru(o, m, 'vol'); });
@@ -4560,9 +4654,17 @@ function shrMotor(D, qual, modo){
     D.meses.forEach(m => { s += ehPct ? share(o, m) : cru(o, m, modo); });
     return nM ? s / nM : 0;
   };
-  return {ehPct, ehTic, celula, media,
-          casas: ehPct ? 3 : ehTic ? 2 : 0,
+  /* O moderador ve FAROL no lugar do numero - mesma regra de Canais & Ticket.
+     A cor de fundo (subiu/caiu) continua, porque ela mostra direcao e nao
+     valor. */
+  const mrgNum = ehMrg && veMargemCatEmNumero();
+  return {ehPct, ehTic, ehMrg, celula, media,
+          casas: (ehPct || ehMrg) ? 3 : ehTic ? 2 : 0,
           fmt: (x) => x === null ? '—'
+            : ehMrg ? (mrgNum
+                        ? '<span style="color:' + farolCor(x) + ';font-weight:700">'
+                          + pct(x) + '</span>'
+                        : farol(x, false))
             : ehPct ? pct(x) : ehTic ? brl2(x)
             : (modo === 'fat' ? brl(x) : n0(x))};
 }
@@ -4577,6 +4679,9 @@ function shrTabela(qual){
 
   const M = shrMotor(D, qual, modo);
   const ehTic = M.ehTic, fmt = M.fmt, media = M.media, casas = M.casas;
+  /* margem nunca e "share": se alguem chegar aqui com o par errado, volta para
+     faturamento em vez de desenhar uma coluna sem significado */
+  if(ehPct && M.ehMrg){ modo = SHARE_MODO[qual] = 'fat'; return shrTabela(qual); }
   const valor = (o, m) => M.celula(o, m);
   const share = valor;
 
@@ -4625,7 +4730,8 @@ function shrTabela(qual){
   tdsTot += '<td class="mono shr-media">' +
     fmt(ehPct ? 1 : media(D.tot)) + '</td>';
 
-  const rotTot = ehPct ? 'Total' : ehTic ? 'Ticket do mês' : 'Total do mês';
+  const rotTot = ehPct ? 'Total' : M.ehMrg ? 'Margem do mês'
+               : ehTic ? 'Ticket do mês' : 'Total do mês';
   return '<table class="shr-tbl"><thead><tr><th>Categoria</th>' +
     D.meses.map(m => '<th>' + m.substring(0, 3) + '</th>').join('') +
     '<th class="shr-media">Média</th>' +
@@ -4634,22 +4740,34 @@ function shrTabela(qual){
     tdsTot + '</tr></tbody></table>';
 }
 
-function shrCard(qual, titulo, dica){
-  const modo = SHARE_MODO[qual];
+function shrCard(qual, titulo, dica, ns){
+  ns = ns || '';
+  let modo = SHARE_MODO[qual];
+  /* Se o usuario perdeu o direito a margem entre um render e outro (troca de
+     conta), o botao some e o modo tem de voltar para algo que ele possa ver. */
+  if(modo === 'mrg' && !veMargemCat()) modo = SHARE_MODO[qual] = 'fat';
   /* O botão de ticket médio só existe no quadro de valores - ver o cabeçalho
      do shrTabela para o motivo. */
   const bt = (m, rot) => '<button data-shr-modo="' + m + '"' +
     (modo === m ? ' class="on"' : '') + '>' + rot + '</button>';
-  return '<div class="card" id="cardShr' + qual + '"><div class="card-h">' +
+  /* NAMESPACE (25/09/2026): os dois quadros passaram a aparecer no Resumo E na
+     aba Gestao de categoria, entao existem DUAS copias no DOM ao mesmo tempo.
+     Id repetido quebraria o getElementById - por isso o ns no id, e por isso
+     todo o resto passou a procurar por data-shr-*, com querySelectorAll, que
+     acha as duas copias e as mantem em sincronia. */
+  return '<div class="card" id="cardShr' + ns + qual + '" data-shr-card="' + qual +
+    '"><div class="card-h">' +
     '<h3>' + titulo + '</h3><span class="hint">' + dica + '</span>' +
     '<span class="shr-tog" data-shr-quadro="' + qual + '">' +
     bt('fat', 'Faturamento') + bt('vol', 'Volume') +
     (qual === 'abs' ? bt('tic', 'Ticket médio') : '') +
+    (qual === 'abs' && veMargemCat() ? bt('mrg', 'Margem líquida') : '') +
     '</span>' +
     '<button class="btn-y" data-shr-xls="' + qual + '" style="margin-left:10px;' +
     'font-size:12px;padding:6px 12px">Extrair Excel</button>' +
     '</div>' +
-    '<div class="scroll" id="shrOut' + qual + '">' + shrTabela(qual) + '</div>' +
+    '<div class="scroll" id="shrOut' + ns + qual + '" data-shr-out="' + qual +
+    '">' + shrTabela(qual) + '</div>' +
     '</div>';
 }
 
@@ -4705,7 +4823,15 @@ function shrExtrair(qual){
      O nome carrega a unidade: lida solta, a linha ainda se explica. */
   const ROTULO = (qual === 'pct')
     ? {fat: 'Share faturamento (%)', vol: 'Share volume (%)'}
-    : {fat: 'Faturamento (R$)', vol: 'Volume (un)', tic: 'Ticket médio (R$)'};
+    : {fat: 'Faturamento (R$)', vol: 'Volume (un)', tic: 'Ticket médio (R$)',
+       mrg: 'Margem líquida (%)'};
+  /* O moderador ve margem em FAROL na tela; deixar o CSV sair com o numero
+     seria a mesma informacao por outra porta. Quem ve bolinha nao extrai. */
+  if(SHARE_MODO[qual] === 'mrg' && !veMargemCatEmNumero()){
+    alert('A margem líquida aparece em farol no seu perfil, sem o número. ' +
+          'Escolha Faturamento, Volume ou Ticket médio para extrair.');
+    return null;
+  }
   let sel = SHARE_MODO[qual];
   if(!ROTULO[sel]) sel = 'fat';           /* 'tic' não existe no de percentuais */
   const medidas = [[sel, ROTULO[sel]]];
@@ -4720,8 +4846,8 @@ function shrExtrair(qual){
   medidas.forEach(([modo, rotulo]) => {
     const M = shrMotor(D, qual, modo);
     /* percentual sai em pontos (58,3); valor e volume saem crus */
-    const casas = M.ehPct ? 1 : (modo === 'vol' ? 0 : 2);
-    const conv = (x) => x === null ? null : (M.ehPct ? x * 100 : x);
+    const casas = (M.ehPct || M.ehMrg) ? 1 : (modo === 'vol' ? 0 : 2);
+    const conv = (x) => x === null ? null : ((M.ehPct || M.ehMrg) ? x * 100 : x);
     D.cats.forEach(c => {
       push(...[rotulo, 'Categoria', c, '']
         .concat(D.meses.map(m => nx(conv(M.celula(D.cat[c], m)), casas)))
@@ -4760,7 +4886,8 @@ function shrExtrair(qual){
                 String(d.getMinutes()).padStart(2, '0');
   /* o nome diz a MEDIDA, não o cartão: foi abrir um arquivo sem saber o que
      tinha dentro que causou a confusão de 14/09 */
-  const APELIDO = {fat: 'faturamento', vol: 'volume', tic: 'ticket'};
+  const APELIDO = {fat: 'faturamento', vol: 'volume', tic: 'ticket',
+                   mrg: 'margem_liquida'};
   const nome = 'shares_' + (qual === 'pct' ? 'share_' : '') +
                (APELIDO[sel] || sel) + '_' + quem + '_' + stamp + '.csv';
   const a = document.createElement('a');
@@ -4771,7 +4898,8 @@ function shrExtrair(qual){
   return {nome: nome, linhas: linhas.length, secoes: secoes.length};
 }
 
-function montarShares(){
+function montarShares(ns){
+  ns = ns || '';
   const D = shrDados();
   if(!D.meses.length || !D.cats.length) return '';
   const umMes = D.meses.length === 1;
@@ -4794,8 +4922,18 @@ function montarShares(){
     '<h3>Shares por categoria</h3><span class="hint">' + D.meses.length +
     ' mês(es) no filtro · clique na categoria para abrir por SKU</span>' +
     '</div></div>' +
-    shrCard('pct', 'Share de categoria', 'percentual do líquido do mês') +
-    shrCard('abs', 'Faturamento e volume por categoria', 'valores brutos') +
+    shrCard('pct', 'Share de categoria', 'percentual do líquido do mês', ns) +
+    shrCard('abs', 'Faturamento e volume por categoria', 'valores brutos', ns) +
+    (veMargemCat()
+      ? '<div class="note"><b>Margem líquida</b> é a mesma conta do DRE: ' +
+        'faturamento líquido menos CMV, impostos, frete, comissão, bonificação ' +
+        'e contrato. A coluna <b>Média</b> é <b>ponderada</b> — lucro do período ' +
+        'sobre faturamento do período — e não a média das margens mensais, que ' +
+        'daria o mesmo peso a um mês de R$ 2 mil e a um de R$ 100 mil. ' +
+        '<b>Bonificação e amostra entram aqui</b> (e só aqui): elas têm custo e ' +
+        'não têm receita, então SKU muito bonificado aparece com margem baixa ' +
+        'ou negativa — é o custo aparecendo, não erro de conta.</div>'
+      : '') +
     nota;
 }
 
@@ -4804,9 +4942,11 @@ function montarShares(){
    para de funcionar. Foi exatamente o bug da Calculadora em 08/09/2026 - o
    campo era substituido no meio do proprio evento. Aqui o cartao permanece. */
 function ligarShares(){
-  ['pct', 'abs'].forEach(qual => {
-    const card = document.getElementById('cardShr' + qual);
-    if(!card || card.dataset.ligado) return;
+  /* Por ATRIBUTO e nao por id: com o quadro no Resumo e na Gestao de categoria
+     existem duas copias, e o getElementById so enxergaria a primeira. */
+  document.querySelectorAll('[data-shr-card]').forEach(card => {
+    const qual = card.dataset.shrCard;
+    if(card.dataset.ligado) return;
     card.dataset.ligado = '1';
     card.addEventListener('click', ev => {
       /* o botão de exportar vem ANTES do teste de modo: ele também é um
@@ -4822,10 +4962,15 @@ function ligarShares(){
       const bt = ev.target.closest('[data-shr-modo]');
       if(bt){
         SHARE_MODO[qual] = bt.dataset.shrModo;
-        card.querySelectorAll('[data-shr-modo]').forEach(b =>
-          b.classList.toggle('on', b === bt));
-        const out = document.getElementById('shrOut' + qual);
-        if(out) out.innerHTML = shrTabela(qual);
+        /* as DUAS copias mudam junto: ver o mesmo quadro em Faturamento numa
+           aba e em Volume na outra so confunde */
+        document.querySelectorAll('[data-shr-quadro="' + qual + '"]').forEach(tog => {
+          tog.querySelectorAll('[data-shr-modo]').forEach(b =>
+            b.classList.toggle('on', b.dataset.shrModo === SHARE_MODO[qual]));
+        });
+        document.querySelectorAll('[data-shr-out="' + qual + '"]').forEach(o => {
+          o.innerHTML = shrTabela(qual);
+        });
         return;
       }
       const tr = ev.target.closest('tr[data-shr-cat]');
@@ -4836,8 +4981,9 @@ function ligarShares(){
          ("o que tem dentro dessa categoria"), e ver aberto num e fechado no
          outro so confunde */
       ['pct', 'abs'].forEach(q => {
-        const o = document.getElementById('shrOut' + q);
-        if(o) o.innerHTML = shrTabela(q);
+        document.querySelectorAll('[data-shr-out="' + q + '"]').forEach(o => {
+          o.innerHTML = shrTabela(q);
+        });
       });
     });
   });
@@ -5090,6 +5236,155 @@ function vendaDiaria(L){
                 dia: t.getDate(), dow: t.getDay()});
   }
   return serie;
+}
+
+/* ===========================================================================
+   SHARE DE VENDA POR DIA UTIL (25/09/2026, pedido do Igor)
+
+   "Do dia 1 ao 31, qual percentual de venda de cada dia." Virou por DIA UTIL,
+   escolha dele depois de eu levantar tres problemas do dia do mes:
+
+     1. O dia 31 so existe em 7 dos 12 meses. Somar tudo e dividir por 12 o faz
+        parecer menor do que e - nao porque vende menos, porque existe menos.
+        Aqui a media de cada posicao so considera os meses QUE TEM aquela
+        posicao (ver `quantos`).
+     2. O mes em curso e parcial. Se setembro vai ate o dia 24, os ultimos dias
+        despencam por um motivo que nao tem nada a ver com venda. Ele fica de
+        FORA da linha, e a nota diz isso.
+     3. O dia 5 e sabado num mes e terca no outro. Por dia util isso some: a
+        1a posicao e sempre o primeiro dia de trabalho do mes.
+
+   DIA UTIL AQUI E DIA DE SEMANA (seg-sex). Nao temos calendario de feriados no
+   JSON, entao um feriado entra como dia util de venda baixa. Esta na nota - e
+   preferivel a inventar uma tabela de feriados que ninguem manteria.
+
+   VENDA DE FIM DE SEMANA nao some: ela entra no PROXIMO dia util. Assim a linha
+   continua fechando 100% e nenhum real desaparece da conta.
+
+   Os meses individuais vao atras em cinza (pedido dele): eles e que mostram se o
+   padrao e estavel ou se cada mes faz o que quer - que e o que decide se da para
+   confiar nesta curva para converter "3 dias de promocao" em "% do volume".
+   =========================================================================== */
+function shareDiaUtil(){
+  const L = linhas().filter(r => r.venda && r.d);
+  if(!L.length) return null;
+
+  const porMes = {};
+  L.forEach(r => {
+    const ym = String(r.d).slice(0, 7);
+    const m = porMes[ym] = porMes[ym] || {};
+    m[r.d] = (m[r.d] || 0) + r.fat;
+  });
+
+  const hoje = new Date();
+  const ymAtual = hoje.getFullYear() + '-' +
+                  String(hoje.getMonth() + 1).padStart(2, '0');
+  const series = [];
+  let parcial = null;
+
+  Object.keys(porMes).sort().forEach(ym => {
+    if(ym === ymAtual){ parcial = ym; return; }
+    const Y = +ym.slice(0, 4), M = +ym.slice(5, 7);
+    const ultimo = new Date(Y, M, 0).getDate();
+    const vals = [];
+    let pendente = 0;                       /* fim de semana esperando dia util */
+    for(let d = 1; d <= ultimo; d++){
+      const dow = new Date(Y, M - 1, d).getDay();
+      const iso = ym + '-' + String(d).padStart(2, '0');
+      const v = porMes[ym][iso] || 0;
+      if(dow === 0 || dow === 6){ pendente += v; continue; }
+      vals.push(v + pendente);
+      pendente = 0;
+    }
+    /* sabado/domingo no fim do mes nao tem "proximo dia util": volta para o
+       ultimo, senao o dinheiro sumiria da conta */
+    if(pendente && vals.length) vals[vals.length - 1] += pendente;
+    const tot = vals.reduce((a, b) => a + b, 0);
+    if(tot <= 0) return;
+    series.push({ym: ym, share: vals.map(v => v / tot), n: vals.length});
+  });
+
+  if(!series.length) return null;
+  const maxN = Math.max.apply(null, series.map(x => x.n));
+  const media = [], quantos = [];
+  for(let i = 0; i < maxN; i++){
+    let soma = 0, n = 0;
+    series.forEach(x => { if(i < x.n){ soma += x.share[i]; n++; } });
+    media.push(n ? soma / n : null);
+    quantos.push(n);
+  }
+  return {series: series, media: media, quantos: quantos, maxN: maxN,
+          parcial: parcial};
+}
+
+function svgShareDiaUtil(D){
+  const W = 1000, H = 250, ML = 52, MR = 18, MT = 16, MB = 34;
+  const iw = W - ML - MR, ih = H - MT - MB;
+  const topo = Math.max.apply(null,
+    D.series.map(s => Math.max.apply(null, s.share)).concat([0.12]));
+  const x = i => ML + (D.maxN < 2 ? iw / 2 : iw * i / (D.maxN - 1));
+  const y = v => MT + ih - (ih * v / topo);
+
+  const grade = [];
+  for(let k = 0; k <= 4; k++){
+    const v = topo * k / 4;
+    grade.push('<line x1="' + ML + '" y1="' + y(v) + '" x2="' + (W - MR) +
+      '" y2="' + y(v) + '" stroke="#E8ECF5"/>' +
+      '<text x="' + (ML - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end" ' +
+      'font-size="10" fill="#8A93A8">' + (v * 100).toFixed(1).replace('.', ',') +
+      '%</text>');
+  }
+
+  /* os meses atras, em cinza: sem legenda por nome de proposito - eles estao ali
+     para mostrar DISPERSAO, nao para serem lidos um a um */
+  const fundo = D.series.map(sm =>
+    '<polyline fill="none" stroke="#C9D0E0" stroke-width="1" opacity=".75" ' +
+    'points="' + sm.share.map((v, i) => x(i) + ',' + y(v)).join(' ') + '"/>'
+  ).join('');
+
+  const pts = D.media.map((v, i) => v === null ? null : (x(i) + ',' + y(v)))
+                     .filter(Boolean).join(' ');
+  const linha = '<polyline fill="none" stroke="#2C3B7E" stroke-width="2.5" ' +
+    'stroke-linejoin="round" points="' + pts + '"/>';
+  const bolas = D.media.map((v, i) => v === null ? '' :
+    '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="3" fill="#2C3B7E">' +
+    '<title>' + (i + 1) + 'º dia útil: ' + (v * 100).toFixed(2).replace('.', ',') +
+    '% do mês (média de ' + D.quantos[i] + ' mês(es))</title></circle>').join('');
+
+  const rotulos = [];
+  for(let i = 0; i < D.maxN; i++){
+    if(i === 0 || i === D.maxN - 1 || (i + 1) % 5 === 0){
+      rotulos.push('<text x="' + x(i) + '" y="' + (H - 12) +
+        '" text-anchor="middle" font-size="10" fill="#8A93A8">' + (i + 1) +
+        '</text>');
+    }
+  }
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto">' +
+    grade.join('') + fundo + linha + bolas + rotulos.join('') +
+    '<text x="' + (ML + iw / 2) + '" y="' + (H - 1) + '" text-anchor="middle" ' +
+    'font-size="10" fill="#8A93A8">dia útil do mês</text></svg>';
+}
+
+function montarShareDiaUtil(){
+  const view = document.getElementById('v-resumo');
+  if(!view || document.getElementById('cardShareDiaUtil')) return;
+  const D = shareDiaUtil();
+  if(!D) return;
+  const q = D.series.length;
+  const nota = '<div class="note">Cada linha cinza é um mês; a linha escura é a ' +
+    '<b>média</b> de cada posição, contando só os meses que têm aquele dia útil — ' +
+    'senão o último dia pareceria menor só por existir em menos meses. ' +
+    '<b>Dia útil = dia de semana</b>; não temos calendário de feriados, então um ' +
+    'feriado aparece como dia útil de venda baixa. Venda de sábado e domingo entra ' +
+    'no próximo dia útil, para a soma fechar 100%.' +
+    (D.parcial ? ' <b>O mês em curso ficou de fora</b>, porque está incompleto e ' +
+                 'derrubaria os últimos dias.' : '') + '</div>';
+  view.insertAdjacentHTML('beforeend',
+    '<div class="card" id="cardShareDiaUtil"><div class="card-h">' +
+    '<h3>Share de venda por dia útil</h3><span class="hint">' + q +
+    ' mês(es) fechado(s) · percentual do faturamento do mês em cada dia útil' +
+    '</span></div><div style="padding:10px 14px 4px">' +
+    svgShareDiaUtil(D) + '</div>' + nota + '</div>');
 }
 
 function svgVendaDiaria(serie, clicavel){
@@ -9593,6 +9888,323 @@ function acessosPinta(){
     '</div>';
 
   box.innerHTML = kpis + tabela + fonte;
+}
+
+/* ===========================================================================
+   ABA "GESTAO DE CATEGORIA" (25/09/2026, pedido do Igor)
+
+   Os dois quadros de share saem de dentro do Resumo e ganham lugar proprio,
+   logo depois do DRE. Eles CONTINUAM no Resumo - o Igor pediu nos dois lugares
+   ("pode ter no resumo e na nova aba").
+
+   Por isso o namespace nos ids (ver shrCard): as duas copias existem no DOM ao
+   mesmo tempo, e id repetido quebraria o getElementById. O toggle e o
+   abre/fecha de categoria sincronizam as duas, porque sao a mesma pergunta.
+
+   A aba aparece para todo mundo que ve o Resumo: quem nao pode ver margem
+   simplesmente nao recebe o botao dela, como ja acontece dentro do quadro.
+   =========================================================================== */
+/* ===========================================================================
+   SIMULACAO DE PRECO (25/09/2026, pedido do Igor). SO ADMIN.
+
+   "Escolho o SKU e um preco novo, e vejo qual seria a margem liquida
+   considerando os volumes historicos do periodo selecionado."
+
+   O QUE DECIDE SE ESTA FERRAMENTA PRESTA OU MENTE
+   ----------------------------------------------
+   Nem todo custo acompanha o preco:
+
+       CMV e frete      seguem o VOLUME  -> nao mudam quando o preco muda
+       imposto, comissao
+       e contrato       seguem a RECEITA -> caem junto com o preco
+
+   Tratar tudo como fixo erraria sempre para o lado pessimista. Medido no
+   exemplo que fechei com o Igor: SKU a R$ 100 caindo para R$ 90 da 29,7% de
+   margem; tratando os percentuais como valor fixo daria 27,8% - quase 2 p.p.
+   de erro. As taxas saem do HISTORICO DO PROPRIO SKU (imposto/faturamento
+   etc.), nao de tabela chutada.
+
+   O QUE A SIMULACAO NAO SABE
+   --------------------------
+   Que promocao vende mais. Ela responde "se eu baixar o preco e vender
+   exatamente o mesmo volume", que e o PIOR caso - o piso. Por isso a tela nao
+   pede palpite de uplift: mostra o inverso, o quanto seria preciso vender a
+   mais para empatar. Esse numero o Igor sabe julgar; o uplift, nao.
+
+   DIAS -> % DO VOLUME
+   -------------------
+   Ele preferiu pensar em dias ("uma coisa e o mes inteiro, outra e uma
+   semana"). Dias viram percentual pela curva de share por dia util. Como N dias
+   valem coisas diferentes conforme ONDE caem no mes, a tela mostra a FAIXA
+   (menor e maior janela de N dias) e usa a media como padrao - com o campo
+   editavel ao lado, para quem sabe que aquela semana e atipica.
+   =========================================================================== */
+let SIMUL = {sku: null, preco: null, dias: null, pct: null};
+
+function simulDados(){
+  const L = linhas();
+  const por = {};
+  const _pct = {};
+  const pctDe = (cn) => {
+    if(!cn) return 0;
+    if(_pct[cn] === undefined){
+      try{ _pct[cn] = (typeof contratoPct === 'function') ? (contratoPct(cn) || 0) : 0; }
+      catch(e){ _pct[cn] = 0; }
+    }
+    return _pct[cn];
+  };
+  let totLuc = 0, totLiq = 0;
+  L.forEach(r => {
+    const o = por[r.sk] = por[r.sk] || {sk: r.sk, fat: 0, q: 0, cmv: 0, imp: 0,
+                                        fr: 0, com: 0, contrato: 0, boni: 0};
+    if(r.venda || r.tipo === 0){
+      const ct = r.fat * pctDe(r.cn);
+      o.fat += r.fat; o.q += r.q; o.cmv += r.cmv; o.imp += r.imp;
+      o.fr += r.fr; o.com += r.com; o.contrato += ct;
+      totLiq += r.fat;
+      totLuc += r.fat - r.cmv - r.imp - r.fr - r.com - ct;
+    } else if(r.bonif){ o.boni += r.cmv + r.imp; totLuc -= (r.cmv + r.imp); }
+    else if(r.amostra){ o.boni += r.cmv; totLuc -= r.cmv; }
+  });
+  const skus = Object.values(por).filter(o => o.q > 0 && o.fat > 0)
+                     .sort((a, b) => b.fat - a.fat);
+  return {skus: skus, totLuc: totLuc, totLiq: totLiq,
+          rent: totLiq ? totLuc / totLiq : 0};
+}
+
+/* Faixa de volume de uma janela de N dias uteis consecutivos. */
+function simulFaixaDias(n){
+  const D = (typeof shareDiaUtil === 'function') ? shareDiaUtil() : null;
+  if(!D || !n || n < 1) return null;
+  const m = D.media.filter(v => v !== null);
+  if(!m.length) return null;
+  if(n >= m.length) return {min: 1, max: 1, media: 1, dias: m.length, uteis: m.length};
+  const somas = [];
+  for(let i = 0; i + n <= m.length; i++){
+    let t = 0;
+    for(let k = 0; k < n; k++) t += m[i + k];
+    somas.push(t);
+  }
+  const med = somas.reduce((a, b) => a + b, 0) / somas.length;
+  return {min: Math.min.apply(null, somas), max: Math.max.apply(null, somas),
+          media: med, dias: n, uteis: m.length};
+}
+
+function simulConta(o, precoNovo, fracao){
+  const p0 = o.fat / o.q;                       /* preco medio historico */
+  const custoVol = o.cmv + o.fr;                /* seguem o volume */
+  const taxaRec = o.fat ? (o.imp + o.com + o.contrato) / o.fat : 0;
+  const lucro0 = o.fat - custoVol - (o.imp + o.com + o.contrato) - o.boni;
+
+  const f = Math.max(0, Math.min(1, fracao));
+  const receita = precoNovo * o.q * f + p0 * o.q * (1 - f);
+  const lucro = receita - custoVol - taxaRec * receita - o.boni;
+
+  /* contribuicao de UMA unidade vendida ao preco novo, ja liquida das taxas */
+  const contribNovo = precoNovo * (1 - taxaRec) - (custoVol / o.q);
+  const falta = lucro0 - lucro;
+  const extraUn = (contribNovo > 0 && falta > 0) ? falta / contribNovo : null;
+
+  return {p0: p0, precoNovo: precoNovo, fracao: f,
+          fat0: o.fat, lucro0: lucro0, margem0: o.fat ? lucro0 / o.fat : 0,
+          receita: receita, lucro: lucro, margem: receita ? lucro / receita : 0,
+          contribNovo: contribNovo, extraUn: extraUn,
+          extraPct: extraUn === null ? null : extraUn / o.q};
+}
+
+function simulPinta(){
+  const box = document.getElementById('simulOut');
+  if(!box) return;
+  const D = simulDados();
+  const o = D.skus.find(x => x.sk === SIMUL.sku);
+  if(!o){ box.innerHTML = '<div class="empty">Escolha um SKU.</div>'; return; }
+
+  const p0 = o.fat / o.q;
+  if(SIMUL.preco === null || !isFinite(SIMUL.preco)) SIMUL.preco = +p0.toFixed(2);
+  const faixa = simulFaixaDias(SIMUL.dias);
+  if(SIMUL.pct === null && faixa) SIMUL.pct = faixa.media;
+  const f = (SIMUL.pct === null) ? 1 : SIMUL.pct;
+
+  const r = simulConta(o, SIMUL.preco, f);
+  const dPP = (r.margem - r.margem0) * 100;
+  const rentNova = (D.totLiq + (r.receita - r.fat0))
+    ? (D.totLuc + (r.lucro - r.lucro0)) / (D.totLiq + (r.receita - r.fat0))
+    : 0;
+  const impacto = (rentNova - D.rent) * 100;
+
+  const cor = v => v > 0.0005 ? '#18794E' : v < -0.0005 ? '#B3261E' : 'var(--muted)';
+  const sinal = v => (v > 0 ? '+' : '') + v.toFixed(2).replace('.', ',');
+
+  const linhaFaixa = faixa
+    ? '<div class="note" style="margin:8px 0 0">' + faixa.dias + ' dia(s) útil(eis) ' +
+      'valem entre <b>' + pct(faixa.min) + '</b> e <b>' + pct(faixa.max) + '</b> do ' +
+      'volume do mês, conforme onde caiam — a média é <b>' + pct(faixa.media) +
+      '</b>, que é o que está no campo ao lado. O mês tem ' + faixa.uteis +
+      ' dias úteis.</div>'
+    : '';
+
+  const tabela =
+    '<table><thead><tr><th></th><th class="r">Hoje</th><th class="r">Simulado</th>' +
+    '</tr></thead><tbody>' +
+    '<tr><td class="rowlab">Preço médio</td><td class="mono r">' + brl2(r.p0) +
+      '</td><td class="mono r">' + brl2(r.precoNovo) + '</td></tr>' +
+    '<tr><td class="rowlab">Volume no período</td><td class="mono r">' + n0(o.q) +
+      '</td><td class="mono r">' + n0(o.q) + ' <span style="color:var(--muted)">(' +
+      pct(r.fracao) + ' no preço novo)</span></td></tr>' +
+    '<tr><td class="rowlab">Faturamento líquido</td><td class="mono r">' +
+      brl(r.fat0) + '</td><td class="mono r">' + brl(r.receita) + '</td></tr>' +
+    '<tr><td class="rowlab">Lucro</td><td class="mono r">' + brl(r.lucro0) +
+      '</td><td class="mono r">' + brl(r.lucro) + '</td></tr>' +
+    '<tr class="tot"><td class="tot">Margem líquida</td><td class="mono r">' +
+      pct(r.margem0) + '</td><td class="mono r" style="color:' + cor(dPP) +
+      ';font-weight:700">' + pct(r.margem) + ' (' + sinal(dPP) + ' p.p.)</td></tr>' +
+    '</tbody></table>';
+
+  const kpis =
+    '<div class="kpis" style="margin-top:12px">' +
+    '<div class="kpi"><div class="lab">Impacto na rentabilidade total</div>' +
+      '<div class="val" style="color:' + cor(impacto) + '">' + sinal(impacto) +
+      ' p.p.</div><div class="sub">de ' + pct(D.rent) + ' para ' + pct(rentNova) +
+      '</div></div>' +
+    '<div class="kpi"><div class="lab">Para empatar o lucro</div><div class="val">' +
+      (r.extraUn === null
+        ? (r.lucro >= r.lucro0 ? 'já empata' : 'impossível')
+        : '+' + pct(r.extraPct)) +
+      '</div><div class="sub">' +
+      (r.extraUn === null
+        ? (r.lucro >= r.lucro0
+            ? 'o preço novo não reduz o lucro'
+            : 'cada unidade dá prejuízo neste preço')
+        : 'precisa vender ' + n0(Math.ceil(r.extraUn)) + ' un a mais') +
+      '</div></div>' +
+    '</div>';
+
+  box.innerHTML = tabela + linhaFaixa + kpis +
+    '<div class="note"><b>Assume o mesmo volume no preço novo</b> — é o piso, o ' +
+    'pior caso. Promoção costuma vender mais, e é por isso que o quadro mostra ' +
+    'quanto seria preciso vender a mais para empatar, em vez de pedir um palpite ' +
+    'de quanto você venderia. <b>CMV e frete não mudam</b> com o preço (seguem o ' +
+    'volume); <b>imposto, comissão e contrato caem junto</b> (são percentuais da ' +
+    'receita), e as taxas saem do histórico deste próprio SKU.</div>';
+}
+
+function montarSimulador(){
+  if(!veMargemCatEmNumero()) return '';       /* margem em farol nao simula */
+  const D = simulDados();
+  if(!D.skus.length) return '';
+  if(!SIMUL.sku || !D.skus.some(o => o.sk === SIMUL.sku)){
+    SIMUL.sku = D.skus[0].sk; SIMUL.preco = null; SIMUL.pct = null;
+  }
+  const ops = D.skus.map(o => '<option value="' + o.sk + '"' +
+    (o.sk === SIMUL.sku ? ' selected' : '') + '>' +
+    metasEsc(prodName(o.sk).replace(/^Dobro\s+/i, '')) + '</option>').join('');
+  const o = D.skus.find(x => x.sk === SIMUL.sku);
+  const p0 = o ? (o.fat / o.q) : 0;
+  const preco = (SIMUL.preco === null) ? p0 : SIMUL.preco;
+  const faixa = simulFaixaDias(SIMUL.dias);
+  const pctVal = (SIMUL.pct !== null) ? SIMUL.pct : (faixa ? faixa.media : 1);
+
+  return '<div class="card" id="cardSimul"><div class="card-h">' +
+    '<h3>Simulação de preço</h3>' +
+    '<span class="hint">só admin · usa o período do filtro acima</span></div>' +
+    '<div style="padding:12px 14px;display:flex;gap:14px;flex-wrap:wrap;' +
+    'align-items:flex-end">' +
+    '<label style="font-size:11px;color:var(--muted);font-weight:600">SKU<br>' +
+      '<select id="simulSku" style="min-width:260px;margin-top:4px">' + ops +
+      '</select></label>' +
+    '<label style="font-size:11px;color:var(--muted);font-weight:600">Preço novo (R$)<br>' +
+      '<input id="simulPreco" type="number" step="0.01" min="0" value="' +
+      preco.toFixed(2) + '" style="width:110px;margin-top:4px"></label>' +
+    '<label style="font-size:11px;color:var(--muted);font-weight:600">Dias de promoção<br>' +
+      '<input id="simulDias" type="number" step="1" min="1" value="' +
+      (SIMUL.dias || '') + '" placeholder="mês todo" style="width:110px;margin-top:4px">' +
+      '</label>' +
+    '<label style="font-size:11px;color:var(--muted);font-weight:600">% do volume<br>' +
+      '<input id="simulPct" type="number" step="1" min="0" max="100" value="' +
+      (pctVal * 100).toFixed(0) + '" style="width:90px;margin-top:4px"></label>' +
+    '</div><div style="padding:0 14px 12px" id="simulOut"></div></div>';
+}
+
+function ligarSimulador(){
+  const card = document.getElementById('cardSimul');
+  if(!card || card.dataset.ligado) return;
+  card.dataset.ligado = '1';
+  const redesenha = () => { try{ simulPinta(); }catch(e){ console.error('simul:', e); } };
+  card.addEventListener('change', ev => {
+    const t = ev.target;
+    if(t.id === 'simulSku'){ SIMUL.sku = t.value; SIMUL.preco = null;
+                             const c = document.getElementById('simulPreco');
+                             const D = simulDados();
+                             const o = D.skus.find(x => x.sk === SIMUL.sku);
+                             if(c && o) c.value = (o.fat / o.q).toFixed(2);
+                             SIMUL.preco = o ? +(o.fat / o.q).toFixed(2) : null; }
+    redesenha();
+  });
+  card.addEventListener('input', ev => {
+    const t = ev.target;
+    if(t.id === 'simulPreco'){ SIMUL.preco = parseFloat(t.value); }
+    else if(t.id === 'simulDias'){
+      SIMUL.dias = t.value ? Math.max(1, parseInt(t.value, 10)) : null;
+      /* mexer nos dias RECALCULA o percentual: e o sentido da conversao. Quem
+         quiser outro numero edita o campo do lado depois - e a edicao manda,
+         porque ela e a ultima coisa que aconteceu. */
+      const f = simulFaixaDias(SIMUL.dias);
+      SIMUL.pct = f ? f.media : null;
+      const cp = document.getElementById('simulPct');
+      if(cp) cp.value = ((SIMUL.pct === null ? 1 : SIMUL.pct) * 100).toFixed(0);
+    }
+    else if(t.id === 'simulPct'){
+      const v = parseFloat(t.value);
+      SIMUL.pct = isFinite(v) ? Math.max(0, Math.min(1, v / 100)) : null;
+    }
+    else return;
+    redesenha();
+  });
+  redesenha();
+}
+
+function vGestCat(){
+  const box = document.getElementById('v-gestcat');
+  if(!box) return;
+  let html = '';
+  try{ html = montarShares('g'); }
+  catch(e){ console.error('gestao de categoria:', e); }
+  /* O simulador fica SO aqui, e nao tambem no Resumo como os quadros de share:
+     ele tem campos de digitacao, e duas copias com os mesmos ids brigariam
+     entre si. Bloco de leitura pode ter copia; bloco de entrada, nao. */
+  let sim = '';
+  try{ sim = montarSimulador(); }catch(e){ console.error('simulador:', e); }
+  box.innerHTML = (html || '<div class="empty">Sem vendas nos filtros ' +
+    'selecionados.</div>') + sim;
+  try{ ligarShares(); }catch(e){ console.error('ligar shares:', e); }
+  try{ ligarSimulador(); }catch(e){ console.error('ligar simulador:', e); }
+}
+window.vGestCat = vGestCat;
+
+if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
+  if(!VIEWS.some(v => v.id === 'gestcat')){
+    /* DEPOIS do DRE, por indice e nao por push: a ordem da barra e a ordem de
+       leitura que o Igor pediu. Se um dia o DRE sair da lista, o indexOf devolve
+       -1 e o splice em -1+1=0 jogaria a aba para o COMECO - por isso o fallback
+       explicito para o fim. */
+    const i = VIEWS.findIndex(v => v.id === 'dre');
+    const reg = {id:'gestcat', lab:'Gestão de categoria', fn:vGestCat};
+    if(i >= 0) VIEWS.splice(i + 1, 0, reg); else VIEWS.push(reg);
+  }
+  if(!document.getElementById('v-gestcat')){
+    const irmao = document.getElementById('v-canais') ||
+                  document.querySelector('.view');
+    if(irmao && irmao.parentNode){
+      const d = document.createElement('div');
+      d.className = 'view';
+      d.id = 'v-gestcat';
+      irmao.parentNode.insertBefore(d, irmao);
+    }
+  }
+  if(typeof buildNav === 'function'){
+    const nav = document.getElementById('nav');
+    if(nav && nav.children.length) buildNav();
+  }
 }
 
 /* Registro da aba - so para admin, no fim da barra. */
