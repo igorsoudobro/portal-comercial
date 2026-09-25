@@ -4483,15 +4483,22 @@ const SHARE_MODO = {pct: 'fat', abs: 'fat'};   /* cada quadro tem o seu */
 
    QUEM VE: a mesma regra de Canais & Ticket - margem revela custo. Admin ve o
    numero, moderador ve farol, vendedor nao ve nem o botao. */
+/* SO ADMIN (ajustado em 25/09/2026 pelo Igor: "o filtro de margem liquida
+   aparece apenas para ADMIN").
+
+   Nao e veSensivel(): aquele inclui supervisor que ve numero. Aqui e o
+   `isAdmin` puro, que e o que ele pediu.
+
+   As duas funcoes devolvem o mesmo hoje. Mantenho as DUAS porque elas fazem
+   perguntas diferentes - "ve a coluna?" e "ve o numero ou o farol?" - e o
+   caminho do farol continua escrito no shrMotor. No dia em que o moderador
+   voltar a ter margem, muda-se so a de cima e o farol volta a funcionar
+   sozinho. */
 function veMargemCat(){
-  try{
-    if(typeof veSensivel === 'function' && veSensivel()) return true;
-    return (typeof ehModerador === 'function') && ehModerador();
-  }catch(e){ return false; }
+  try{ return !!(SESSION && SESSION.isAdmin); }catch(e){ return false; }
 }
 function veMargemCatEmNumero(){
-  try{ return (typeof veSensivel === 'function') && veSensivel(); }
-  catch(e){ return false; }
+  try{ return !!(SESSION && SESSION.isAdmin); }catch(e){ return false; }
 }
 
 function shrDados(){
@@ -5333,7 +5340,27 @@ function shareDiaUtil(){
     media.push(n ? soma / n : null);
     quantos.push(n);
   }
-  return {series: series, media: media, quantos: quantos, maxN: maxN,
+  /* NORMALIZAR A MEDIA PARA FECHAR 100% (25/09/2026).
+
+     A media de cada posicao e tirada sobre um numero DIFERENTE de meses - as
+     ultimas posicoes so existem nos meses mais longos. Somando as medias cruas,
+     o total nao da 100%: no teste com meses de 20, 21 e 22 dias uteis deu ~95%.
+
+     Isso nao e detalhe estetico. O simulFaixaDias soma uma janela desta curva e
+     trata o resultado como "fracao do volume do mes" - com a curva fechando
+     95%, toda promocao era subestimada. E o acumulado do balao nunca chegava ao
+     fim do mes.
+
+     Dividir pela soma resolve os dois e nao distorce o desenho: e um fator
+     unico, proximo de 1, aplicado a todos os pontos. A leitura passa a ser a
+     correta - "a distribuicao de um mes medio". */
+  const somaMedia = media.reduce((a, b) => a + (b || 0), 0);
+  const mediaNorm = somaMedia > 0
+    ? media.map(v => v === null ? null : v / somaMedia)
+    : media;
+
+  return {series: series, media: mediaNorm, mediaCrua: media,
+          fatorNorm: somaMedia, quantos: quantos, maxN: maxN,
           parcial: parcial};
 }
 
@@ -5366,10 +5393,25 @@ function svgShareDiaUtil(D){
                      .filter(Boolean).join(' ');
   const linha = '<polyline fill="none" stroke="#2C3B7E" stroke-width="2.5" ' +
     'stroke-linejoin="round" points="' + pts + '"/>';
+  /* sem <title>: o balao nativo do SVG demora ~1 s para aparecer e nao mostra
+     a dispersao. O hover de verdade esta no ligarShareDiaUtil. */
   const bolas = D.media.map((v, i) => v === null ? '' :
-    '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="3" fill="#2C3B7E">' +
-    '<title>' + (i + 1) + 'º dia útil: ' + (v * 100).toFixed(2).replace('.', ',') +
-    '% do mês (média de ' + D.quantos[i] + ' mês(es))</title></circle>').join('');
+    '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="3" fill="#2C3B7E"/>').join('');
+
+  /* A GEOMETRIA FICA GUARDADA, e nao recalculada no mouse: o handler so precisa
+     converter a posicao do ponteiro em indice, e refazer as contas a cada
+     mousemove seria trabalho a toa dezenas de vezes por segundo. */
+  window.__SHAREDIA = {
+    W: W, ML: ML, MR: MR, MT: MT, ih: ih, topo: topo, maxN: D.maxN,
+    media: D.media, quantos: D.quantos,
+    porDia: D.media.map((_, i) => D.series.filter(sm => i < sm.n)
+                                          .map(sm => sm.share[i]))
+  };
+  const guia = '<g id="shareDiaGuia" style="display:none;pointer-events:none">' +
+    '<line id="shareDiaLinha" y1="' + MT + '" y2="' + (MT + ih) +
+    '" stroke="#2C3B7E" stroke-width="1" stroke-dasharray="3 3" opacity=".55"/>' +
+    '<circle id="shareDiaBola" r="5" fill="#2C3B7E" stroke="#fff" ' +
+    'stroke-width="2"/></g>';
 
   const rotulos = [];
   for(let i = 0; i < D.maxN; i++){
@@ -5379,8 +5421,9 @@ function svgShareDiaUtil(D){
         '</text>');
     }
   }
-  return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto">' +
-    grade.join('') + fundo + linha + bolas + rotulos.join('') +
+  return '<svg id="shareDiaSvg" viewBox="0 0 ' + W + ' ' + H +
+    '" style="width:100%;height:auto;display:block">' +
+    grade.join('') + fundo + linha + bolas + guia + rotulos.join('') +
     '<text x="' + (ML + iw / 2) + '" y="' + (H - 1) + '" text-anchor="middle" ' +
     'font-size="10" fill="#8A93A8">dia útil do mês</text></svg>';
 }
@@ -5402,9 +5445,84 @@ function montarShareDiaUtil(){
   view.insertAdjacentHTML('beforeend',
     '<div class="card" id="cardShareDiaUtil"><div class="card-h">' +
     '<h3>Share de venda por dia útil</h3><span class="hint">' + q +
-    ' mês(es) fechado(s) · percentual do faturamento do mês em cada dia útil' +
-    '</span></div><div style="padding:10px 14px 4px">' +
-    svgShareDiaUtil(D) + '</div>' + nota + '</div>');
+    ' mês(es) fechado(s) · passe o mouse para ver o número' +
+    '</span></div><div style="padding:10px 14px 4px;position:relative" ' +
+    'id="shareDiaWrap">' + svgShareDiaUtil(D) +
+    '<div id="shareDiaTip" style="display:none;position:absolute;z-index:60;' +
+    'pointer-events:none;background:#2C3B7E;color:#fff;border-radius:8px;' +
+    'padding:8px 11px;font-size:12px;line-height:1.5;white-space:nowrap;' +
+    'box-shadow:0 6px 18px rgba(20,30,70,.28)"></div>' +
+    '</div>' + nota + '</div>');
+  ligarShareDiaUtil();
+}
+
+/* ---------------------------------------------------------------------------
+   HOVER (25/09/2026). O Igor: "so o grafico nao me permite ver o share".
+
+   O ouvinte fica no WRAPPER e nao nas bolinhas: com 22 pontos de raio 3 num
+   SVG que estica, acertar a bolinha com o mouse e sorte. Assim qualquer
+   posicao horizontal encontra o dia util mais proximo - o mesmo comportamento
+   de grafico de linha que todo mundo ja espera.
+
+   O balao mostra a FAIXA entre os meses, nao so a media: e ela que diz se o
+   padrao daquele dia e confiavel. Media de 6% com meses entre 5,8% e 6,2% e
+   outra conversa que media de 6% com meses entre 2% e 11%.
+   --------------------------------------------------------------------------- */
+function ligarShareDiaUtil(){
+  const wrap = document.getElementById('shareDiaWrap');
+  const svg = document.getElementById('shareDiaSvg');
+  const tip = document.getElementById('shareDiaTip');
+  const g = document.getElementById('shareDiaGuia');
+  if(!wrap || !svg || !tip || !g || wrap.dataset.ligado) return;
+  wrap.dataset.ligado = '1';
+
+  const some = () => { tip.style.display = 'none'; g.style.display = 'none'; };
+
+  wrap.addEventListener('mousemove', ev => {
+    const G = window.__SHAREDIA;
+    if(!G || !G.maxN){ some(); return; }
+    const r = svg.getBoundingClientRect();
+    if(!r.width){ some(); return; }
+    /* da tela para o viewBox: o SVG estica com a largura do cartao */
+    const vb = (ev.clientX - r.left) / r.width * G.W;
+    const iw = G.W - G.ML - G.MR;
+    const passo = (G.maxN > 1) ? iw / (G.maxN - 1) : iw;
+    let i = Math.round((vb - G.ML) / passo);
+    i = Math.max(0, Math.min(G.maxN - 1, i));
+    const v = G.media[i];
+    if(v === null || v === undefined){ some(); return; }
+
+    const px = G.ML + passo * i;
+    const py = G.MT + G.ih - (G.ih * v / G.topo);
+    document.getElementById('shareDiaLinha').setAttribute('x1', px);
+    document.getElementById('shareDiaLinha').setAttribute('x2', px);
+    document.getElementById('shareDiaBola').setAttribute('cx', px);
+    document.getElementById('shareDiaBola').setAttribute('cy', py);
+    g.style.display = '';
+
+    const meses = (G.porDia[i] || []);
+    const faixa = meses.length > 1
+      ? '<div style="opacity:.82">entre ' + pct(Math.min.apply(null, meses)) +
+        ' e ' + pct(Math.max.apply(null, meses)) + ' nos ' + meses.length +
+        ' meses</div>'
+      : '';
+    const acum = G.media.slice(0, i + 1)
+                        .reduce((a, b) => a + (b || 0), 0);
+    tip.innerHTML = '<b>' + (i + 1) + 'º dia útil</b><div>média <b>' + pct(v) +
+      '</b> do mês</div>' + faixa +
+      '<div style="opacity:.82">acumulado até aqui: <b>' + pct(acum) + '</b></div>';
+
+    /* o balao segue o ponto, mas nao sai do cartao: perto da borda direita ele
+       vira para a esquerda em vez de gerar rolagem horizontal */
+    const escX = px / G.W * r.width;
+    tip.style.display = 'block';
+    const larg = tip.offsetWidth;
+    const esq = (escX + larg + 18 > r.width) ? (escX - larg - 12) : (escX + 12);
+    tip.style.left = Math.max(4, esq) + 'px';
+    tip.style.top = Math.max(4, (py / 260 * r.height) - 10) + 'px';
+  });
+
+  wrap.addEventListener('mouseleave', some);
 }
 
 function svgVendaDiaria(serie, clicavel){
@@ -9994,8 +10112,12 @@ function simulDados(){
 
 /* Faixa de volume de uma janela de N dias uteis consecutivos. */
 function simulFaixaDias(n){
+  /* o teste do `n` vem ANTES de chamar o shareDiaUtil: ele varre todas as
+     linhas do periodo, e com o campo de dias vazio - que e o padrao - esse
+     trabalho todo seria jogado fora a cada redesenho */
+  if(!n || n < 1) return null;
   const D = (typeof shareDiaUtil === 'function') ? shareDiaUtil() : null;
-  if(!D || !n || n < 1) return null;
+  if(!D) return null;
   const m = D.media.filter(v => v !== null);
   if(!m.length) return null;
   if(n >= m.length) return {min: 1, max: 1, media: 1, dias: m.length, uteis: m.length};
@@ -10032,6 +10154,67 @@ function simulConta(o, precoNovo, fracao){
           extraPct: extraUn === null ? null : extraUn / o.q};
 }
 
+function simulNome(sk){
+  if(!sk) return '';
+  try{ return String(prodName(sk)).replace(/^Dobro\s+/i, ''); }
+  catch(e){ return String(sk); }
+}
+/* sem acento e sem caixa: "proteina" acha "Proteína" */
+function simulChave(t){
+  return String(t || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function simulProcurar(termo, limite){
+  const D = simulDados();
+  const q = simulChave(termo).trim();
+  const lista = q
+    ? D.skus.filter(o => simulChave(simulNome(o.sk)).indexOf(q) >= 0 ||
+                         simulChave(o.sk).indexOf(q) >= 0)
+    : D.skus;
+  return lista.slice(0, limite || 8);
+}
+function simulSugestoes(termo){
+  const cx = document.getElementById('simulSugest');
+  if(!cx) return;
+  const achados = simulProcurar(termo, 8);
+  if(!achados.length){
+    cx.innerHTML = '<div style="padding:9px 12px;color:var(--muted);' +
+      'font-size:12px">Nenhum SKU com esse texto.</div>';
+    cx.style.display = 'block';
+    return;
+  }
+  cx.innerHTML = achados.map(o =>
+    '<div class="simul-op" data-sk="' + metasEsc(o.sk) + '" style="padding:8px 12px;' +
+    'cursor:pointer;font-size:13px;border-bottom:1px solid #F0F2F8">' +
+    '<b>' + metasEsc(simulNome(o.sk)) + '</b>' +
+    '<span style="color:var(--muted);font-size:11px;margin-left:6px">' +
+    metasEsc(o.sk) + ' · ' + brl(o.fat) + '</span></div>').join('');
+  cx.style.display = 'block';
+}
+function simulFechaSugestoes(){
+  const cx = document.getElementById('simulSugest');
+  if(cx) cx.style.display = 'none';
+}
+
+/* Preco de tabela do SKU, por canal - o mesmo CALC.tabelas da Calculadora.
+   Clicar num deles joga o valor no campo de preco: e o caso de uso real
+   ("quanto ficaria se eu vendesse ao preco da tabela X?"). */
+function simulPrecosTabela(sk){
+  const out = [];
+  try{
+    const T = (typeof calcTabelasDoExcel === 'function') ? calcTabelasDoExcel() : {};
+    Object.keys(T).forEach(nome => {
+      const v = +T[nome][sk];
+      if(v > 0) out.push({tab: nome, preco: v});
+    });
+    if(!out.length && typeof CALC === 'object' && CALC && CALC.precos){
+      const v = +CALC.precos[sk];
+      if(v > 0) out.push({tab: 'Preço de tabela', preco: v});
+    }
+  }catch(e){ /* sem tabela no JSON: a linha some, o resto continua */ }
+  return out;
+}
+
 function simulPinta(){
   const box = document.getElementById('simulOut');
   if(!box) return;
@@ -10062,6 +10245,19 @@ function simulPinta(){
       '</b>, que é o que está no campo ao lado. O mês tem ' + faixa.uteis +
       ' dias úteis.</div>'
     : '';
+
+  /* Preco base por tabela, logo acima do comparativo: e a referencia contra a
+     qual o preco medio historico faz sentido. Clicavel para simular direto. */
+  const bases = simulPrecosTabela(o.sk);
+  const linhaBase = bases.length
+    ? '<div class="note" style="margin:0 0 10px"><b>Preço base por tabela</b> — ' +
+      'clique para simular: ' +
+      bases.map(b => '<a href="#" class="simul-base" data-preco="' + b.preco +
+        '" style="margin-right:12px;white-space:nowrap">' + metasEsc(b.tab) +
+        ' <b>' + brl2(b.preco) + '</b></a>').join('') + '</div>'
+    : '<div class="note" style="margin:0 0 10px">Este SKU não tem preço nas ' +
+      'tabelas da Calculadora — o comparativo abaixo usa só o preço médio ' +
+      'praticado.</div>';
 
   const tabela =
     '<table><thead><tr><th></th><th class="r">Hoje</th><th class="r">Simulado</th>' +
@@ -10099,7 +10295,7 @@ function simulPinta(){
       '</div></div>' +
     '</div>';
 
-  box.innerHTML = tabela + linhaFaixa + kpis +
+  box.innerHTML = linhaBase + tabela + linhaFaixa + kpis +
     '<div class="note"><b>Assume o mesmo volume no preço novo</b> — é o piso, o ' +
     'pior caso. Promoção costuma vender mais, e é por isso que o quadro mostra ' +
     'quanto seria preciso vender a mais para empatar, em vez de pedir um palpite ' +
@@ -10115,9 +10311,6 @@ function montarSimulador(){
   if(!SIMUL.sku || !D.skus.some(o => o.sk === SIMUL.sku)){
     SIMUL.sku = D.skus[0].sk; SIMUL.preco = null; SIMUL.pct = null;
   }
-  const ops = D.skus.map(o => '<option value="' + o.sk + '"' +
-    (o.sk === SIMUL.sku ? ' selected' : '') + '>' +
-    metasEsc(prodName(o.sk).replace(/^Dobro\s+/i, '')) + '</option>').join('');
   const o = D.skus.find(x => x.sk === SIMUL.sku);
   const p0 = o ? (o.fat / o.q) : 0;
   const preco = (SIMUL.preco === null) ? p0 : SIMUL.preco;
@@ -10129,9 +10322,21 @@ function montarSimulador(){
     '<span class="hint">só admin · usa o período do filtro acima</span></div>' +
     '<div style="padding:12px 14px;display:flex;gap:14px;flex-wrap:wrap;' +
     'align-items:flex-end">' +
-    '<label style="font-size:11px;color:var(--muted);font-weight:600">SKU<br>' +
-      '<select id="simulSku" style="min-width:260px;margin-top:4px">' + ops +
-      '</select></label>' +
+    /* DIGITAR E NAO ESCOLHER (25/09/2026, pedido do Igor). Sao 131 SKUs; achar
+       "BT Nitrato Lata" numa lista suspensa e rolagem cega. Digitando, as
+       opcoes parecidas aparecem embaixo e ele clica.
+       O campo guarda o NOME e o SKU escolhido fica no SIMUL.sku - o texto
+       digitado nao e a chave, senao uma letra a mais trocaria o produto. */
+    '<label style="font-size:11px;color:var(--muted);font-weight:600;' +
+    'position:relative">SKU<br>' +
+      '<input id="simulSkuBusca" type="text" autocomplete="off" ' +
+      'placeholder="digite parte do nome" value="' +
+      metasEsc(simulNome(SIMUL.sku)) + '" style="min-width:280px;margin-top:4px">' +
+      '<div id="simulSugest" style="display:none;position:absolute;z-index:70;' +
+      'left:0;top:100%;min-width:320px;max-height:260px;overflow:auto;' +
+      'background:#fff;border:1px solid #D7DCEC;border-radius:8px;' +
+      'box-shadow:0 8px 22px rgba(20,30,70,.16);font-weight:400"></div>' +
+      '</label>' +
     '<label style="font-size:11px;color:var(--muted);font-weight:600">Preço novo (R$)<br>' +
       '<input id="simulPreco" type="number" step="0.01" min="0" value="' +
       preco.toFixed(2) + '" style="width:110px;margin-top:4px"></label>' +
@@ -10150,19 +10355,55 @@ function ligarSimulador(){
   if(!card || card.dataset.ligado) return;
   card.dataset.ligado = '1';
   const redesenha = () => { try{ simulPinta(); }catch(e){ console.error('simul:', e); } };
-  card.addEventListener('change', ev => {
-    const t = ev.target;
-    if(t.id === 'simulSku'){ SIMUL.sku = t.value; SIMUL.preco = null;
-                             const c = document.getElementById('simulPreco');
-                             const D = simulDados();
-                             const o = D.skus.find(x => x.sk === SIMUL.sku);
-                             if(c && o) c.value = (o.fat / o.q).toFixed(2);
-                             SIMUL.preco = o ? +(o.fat / o.q).toFixed(2) : null; }
+  /* escolher um SKU: zera o preco para o medio dele, senao ficaria o preco do
+     produto anterior na tela, comparando maca com laranja */
+  const escolher = (sk) => {
+    const D = simulDados();
+    const o = D.skus.find(x => x.sk === sk);
+    if(!o) return;
+    SIMUL.sku = sk;
+    SIMUL.preco = +(o.fat / o.q).toFixed(2);
+    const cb = document.getElementById('simulSkuBusca');
+    if(cb) cb.value = simulNome(sk);
+    const cp = document.getElementById('simulPreco');
+    if(cp) cp.value = SIMUL.preco.toFixed(2);
+    simulFechaSugestoes();
     redesenha();
+  };
+
+  card.addEventListener('click', ev => {
+    const op = ev.target.closest && ev.target.closest('.simul-op');
+    if(op){ escolher(op.dataset.sk); return; }
+    const base = ev.target.closest && ev.target.closest('.simul-base');
+    if(base){
+      ev.preventDefault();
+      SIMUL.preco = +base.dataset.preco;
+      const cp = document.getElementById('simulPreco');
+      if(cp) cp.value = SIMUL.preco.toFixed(2);
+      redesenha();
+      return;
+    }
+    /* clique fora da lista fecha a lista */
+    if(!ev.target.closest('#simulSugest') && !ev.target.closest('#simulSkuBusca')){
+      simulFechaSugestoes();
+    }
+  });
+
+  card.addEventListener('keydown', ev => {
+    if(ev.target.id !== 'simulSkuBusca') return;
+    if(ev.key === 'Escape'){ simulFechaSugestoes(); return; }
+    if(ev.key === 'Enter'){
+      /* Enter pega o primeiro da lista: quem digitou o nome inteiro nao devia
+         precisar tirar a mao do teclado para clicar. */
+      ev.preventDefault();
+      const achados = simulProcurar(ev.target.value, 1);
+      if(achados.length) escolher(achados[0].sk);
+    }
   });
   card.addEventListener('input', ev => {
     const t = ev.target;
-    if(t.id === 'simulPreco'){ SIMUL.preco = parseFloat(t.value); }
+    if(t.id === 'simulSkuBusca'){ simulSugestoes(t.value); return; }
+    else if(t.id === 'simulPreco'){ SIMUL.preco = parseFloat(t.value); }
     else if(t.id === 'simulDias'){
       SIMUL.dias = t.value ? Math.max(1, parseInt(t.value, 10)) : null;
       /* mexer nos dias RECALCULA o percentual: e o sentido da conversao. Quem
