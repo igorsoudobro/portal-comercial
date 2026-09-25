@@ -2064,9 +2064,9 @@ function renderCalcItens(){
        <td class="mono" style="color:var(--muted)">${brl2(pcf)}</td>
        <td class="mono">${brl2(preco)}</td>
        <td><input type="number" min="0" max="${teto}" step="0.5" value="${dval}" data-sk="${sk}" data-campo="desc"${avisoDesc} class="calc-in" style="${estiloDesc}"></td>
-       <td class="mono">${brl2(pf)}</td>
+       <td class="mono" data-cel="pfinal">${brl2(pf)}</td>
        <td><input type="number" min="0" value="${q||''}" placeholder="0" data-sk="${sk}" data-campo="qtd" class="calc-in" style="width:70px"></td>
-       <td class="mono">${q>0?brl2(sub):'—'}</td></tr>`;
+       <td class="mono" data-cel="sub">${q>0?brl2(sub):'—'}</td></tr>`;
    }).join('')}</tbody></table>
    ${semPreco?`<div style="padding:8px 14px;font-size:11px;color:var(--muted)">${semPreco} item(ns) sem preço na tabela <b>${tab}</b> — para liberar, preencha a coluna &ldquo;Tabela ${tab}&rdquo; na aba Parametros do V8.</div>`:''}`;
   calcDevolverFoco(foco);
@@ -7380,11 +7380,30 @@ const CALC_CONTAINER = {
   renderCalcBrindes: 'calcBrindes'
 };
 
-/* O SKU sai do próprio atributo oninput, que é gerado por essas funções e traz
-   CALC_QTD['DBR-...']. Se um dia o formato mudar, o regex não casa, e aí eu
-   deixo a reconstrução acontecer - volta o comportamento antigo em vez de
-   quebrar calado. */
+/* DOIS FORMATOS, PORQUE A GRADE MUDOU E ESTA FUNCAO NAO (corrigido 25/09/2026)
+
+   Ela nasceu lendo o SKU do atributo `oninput`, que era como TODOS os campos da
+   Calculadora funcionavam. Em 08/09 a grade de itens passou a usar `data-sk` +
+   ouvinte no conteiner (para o campo nao se destruir no meio do proprio
+   evento). Bonificacao e brinde ficaram no formato antigo.
+
+   Resultado: para quantidade e desconto o regex nunca mais casou, esta funcao
+   devolvia null, e a tabela voltou a ser reconstruida a cada tecla - com o
+   cursor pulando para tras do algarismo digitado. Foi o que o Igor relatou:
+   "digito e vai pra tras do numero que eu digitei".
+
+   O proprio comentario antigo previa: "se um dia o formato mudar, o regex nao
+   casa". Previu e aconteceu; o que faltou foi alguem ligar o sintoma a causa.
+
+   Agora le os dois. `data-campo` usa os nomes da tela (qtd/desc); traduzo para
+   os nomes dos mapas. */
+const CALC_CAMPO_MAPA = {qtd: 'QTD', desc: 'DESCL',
+                         boni: 'BONI', brinde: 'BRINDE'};
 function calcSkuDoCampo(inp){
+  if(inp && inp.dataset && inp.dataset.sk){
+    const mapa = CALC_CAMPO_MAPA[inp.dataset.campo];
+    if(mapa) return { mapa: mapa, sk: inp.dataset.sk };
+  }
   const attr = (inp && inp.getAttribute && inp.getAttribute('oninput')) || '';
   const m = attr.match(/CALC_(QTD|BONI|BRINDE|DESCL)\['([^']+)'\]/);
   return m ? { mapa: m[1], sk: m[2] } : null;
@@ -7399,13 +7418,28 @@ function calcAtualizarLinha(inp){
   const mono = [...tds].filter(td => td.classList.contains('mono'));
 
   if(alvo.mapa === 'QTD' || alvo.mapa === 'DESCL'){
-    const preco = (CALC.precos && CALC.precos[sk]) || 0;
+    /* PRECO DE TABELA, nao CALC.precos (corrigido 25/09/2026). Em 08/09 o preco
+       da linha passou a ser o sell-in do canal escolhido; CALC.precos virou o
+       "preco de consumidor final", que e outra coluna. Como este caminho nunca
+       chegava a rodar - ver calcSkuDoCampo - o erro ficou escondido: ele teria
+       mostrado o preco errado enquanto a pessoa digita, e o certo so no blur. */
+    const preco = (typeof calcPrecoTabela === 'function')
+      ? calcPrecoTabela(sk) : ((CALC.precos && CALC.precos[sk]) || 0);
     const d = (typeof descLinha === 'function') ? descLinha(sk) : 0;
     const pf = preco * (1 - d);
     const q = CALC_QTD[sk] || 0;
-    // mono[0] = preço tabela | mono[1] = preço final | mono[2] = subtotal
-    if(mono[1]) mono[1].textContent = brl2(pf);
-    if(mono[2]) mono[2].textContent = q > 0 ? brl2(pf * q) : '—';
+    /* POR NOME e nao por posicao: o comentario antigo dizia "mono[0] = preco
+       tabela", o que era verdade numa grade de 6 colunas. Em 08/09 entrou o
+       "Preco consumidor final" na frente e todos os indices andaram uma casa -
+       o subtotal teria ido parar na coluna do preco final.
+       Sem as celulas nomeadas devolvo false: melhor reconstruir a tabela (o
+       comportamento antigo, com o cursor pulando) do que escrever numero na
+       coluna errada em silencio. */
+    const cPf = tr.querySelector('[data-cel="pfinal"]');
+    const cSub = tr.querySelector('[data-cel="sub"]');
+    if(!cPf || !cSub) return false;
+    cPf.textContent = brl2(pf);
+    cSub.textContent = q > 0 ? brl2(pf * q) : '—';
     tr.classList.toggle('filled', q > 0);
   } else {
     const cmv = (CALC.cmv && CALC.cmv[sk]) || 0;
