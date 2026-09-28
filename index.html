@@ -3,6 +3,10 @@
 <head>
 <!-- FASE 3: login Microsoft para buscar os dados no SharePoint (Dobro BI) -->
 <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+<!-- Chart.js: so a aba Degustacoes usa, e vem do MESMO CDN e da MESMA versao do
+     painel original, para o grafico sair identico. O Portal ja carregava script
+     externo (o MSAL acima), entao nao ha nada novo em termos de risco. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
 <script>
 if(!window.msal){
   document.write('<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js"><\/script>');
@@ -93,6 +97,11 @@ input,select{font-family:inherit}
 .kpi.accent{border-left-color:var(--yellow)}
 .kpi.pos{border-left-color:var(--pos)} .kpi.pos .val{color:var(--pos)}
 .kpi.sens{border-left-color:var(--warn)}
+/* do painel de degustacoes: KPI de pendencia e o cartao do score */
+#v-degustacoes .kpi.pend{border-left-color:#B3261E}
+#v-degustacoes .kpi.pend .val{color:#B3261E}
+#v-degustacoes .kpi.score{border-left-color:#FFD700}
+#v-degustacoes .kpi.score .val{font-size:32px;line-height:1.1}
 
 /* CARDS/TABLES */
 .card{background:#fff;border-radius:12px;box-shadow:var(--shadow);margin-bottom:22px;overflow:hidden}
@@ -10776,7 +10785,7 @@ const DEG_DEPARA = {
 };
 
 let DEG_ESTADO = {linhas: null, cabecalhos: null, lido: null, erro: null,
-                  timer: null, carregando: false,
+                  timer: null, carregando: false, serie: [], metrica: 'custoDeg',
                   de: '', ate: '', deg: '__todas__'};
 
 function degChave(t){
@@ -10868,6 +10877,53 @@ function degData(n){
    Na pratica o Excel manda numero de verdade e o caso nao aparecia; mas eu ia
    carregar o defeito para ca sem necessidade. Com virgula presente, os pontos
    sao milhar e saem fora. */
+/* OS FORMATOS SAO OS DO PAINEL ORIGINAL, nao os do Portal (pedido do Igor em
+   28/09/2026: "deixar exatamente igual", "inclusive os numeros depois da
+   virgula").
+
+   O brl() do Portal arredonda para o real inteiro - R$ 6.780 -, porque ali o
+   assunto e faturamento de milhoes e centavo e ruido. Aqui nao: o custo por
+   experimentacao e R$ 4,28, e sem os centavos vira R$ 4. Entao esta aba usa os
+   formatadores DELA.
+
+   A taxa de conversao sai com PONTO ("17.5%") porque e assim que o painel
+   original faz - toFixed(1) nao respeita locale. Mantive igual por pedido
+   expresso; se um dia incomodar, e trocar por uma virgula aqui. */
+function degBRL(v){
+  return (v || 0).toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'});
+}
+function degNumBR(v, dec){
+  return (v || 0).toLocaleString('pt-BR', {minimumFractionDigits: dec || 0,
+                                           maximumFractionDigits: dec || 0});
+}
+
+/* Score em estrelas - copia fiel do calcularScore/renderStars do painel
+   original, inclusive os pesos (CPE 33%, Degs 33%, Taxa 20%, Eficiencia 14%) e
+   o arredondamento em meia estrela. Nao reescrevi a conta de proposito: o Igor
+   pediu o MESMO numero, e uma formula "melhorada" daria outro. */
+function degScore(cpe, taxa, custoDeg, nDegs, b){
+  if(!nDegs) return null;
+  if(!cpe || taxa === null || !custoDeg) return null;
+  if(!b.cpeMin || !b.cpeMax || !b.taxaMin || !b.taxaMax || !b.eficMin || !b.eficMax)
+    return null;
+  const sCPE = Math.max(0, Math.min(1, 1 - (cpe - b.cpeMin) / (b.cpeMax - b.cpeMin || 1)));
+  let sDegs;
+  if(nDegs <= 3) sDegs = Math.min(0.6, nDegs / 5);
+  else if(nDegs <= 5) sDegs = 0.7 + (nDegs - 3) * 0.1;
+  else sDegs = Math.min(1, 0.9 + (nDegs - 5) * 0.05);
+  const sTaxa = Math.max(0, Math.min(1, (taxa - b.taxaMin) / (b.taxaMax - b.taxaMin || 1)));
+  const sEfic = Math.max(0, Math.min(1, 1 - (custoDeg - b.eficMin) / (b.eficMax - b.eficMin || 1)));
+  const final = (sCPE * 0.33) + (sDegs * 0.33) + (sTaxa * 0.2) + (sEfic * 0.14);
+  return Math.round(final * 5 * 2) / 2;
+}
+function degEstrelas(score){
+  if(!score) return '—';
+  const cheias = Math.floor(score);
+  const meia = score % 1 !== 0;
+  return '⭐'.repeat(cheias) + (meia ? '✨' : '') +
+         ((5 - cheias - meia > 0) ? '☆'.repeat(5 - cheias - meia) : '');
+}
+
 function degNum(v){
   if(typeof v === 'number') return isFinite(v) ? v : 0;
   let t = String(v == null ? '' : v).replace(/[^\d,.-]/g, '');
@@ -10967,21 +11023,50 @@ function degPinta(){
   const caq = carr > 0 ? gasto / carr : null;
   const verValor = degEhAdmin() || true;   /* o vendedor ve o gasto DELE */
 
-  const kpis = '<div class="kpis">' +
-    '<div class="kpi"><div class="lab">Degustações</div><div class="val">' +
-      n0(completas.length) + '</div><div class="sub">completas no período</div></div>' +
-    '<div class="kpi"><div class="lab">Valor gasto</div><div class="val">' +
-      brl(gasto) + '</div><div class="sub">só completas</div></div>' +
+  /* MESMA ORDEM, MESMOS ROTULOS E MESMOS FORMATOS do painel original - inclusive
+     a taxa com ponto decimal, que e o que o toFixed(1) de la produz.
+     "Degustações" conta TODAS do periodo (o subtitulo separa completas e
+     pendentes); as demais metricas usam so as completas. */
+  const custoDeg = completas.length ? gasto / completas.length : null;
+  const taxaPct = (taxa === null) ? null : taxa * 100;
+  /* Os benchmarks do score geral sao o proprio valor - e o que o painel
+     original faz para o cartao do topo: sem um conjunto para comparar, a
+     normalizacao vira 1 e o score mede so o numero de degustacoes. */
+  const score = degScore(cpe, taxaPct, custoDeg, completas.length, {
+    cpeMin: cpe, cpeMax: cpe || 1,
+    taxaMin: taxaPct || 0, taxaMax: taxaPct || 1,
+    eficMin: custoDeg, eficMax: custoDeg || 1
+  });
+  const kpis = '<div class="kpirow">' +
+    '<div class="kpi accent"><div class="lab">Degustações</div><div class="val">' +
+      noPeriodo.length + '</div><div class="sub">' + completas.length +
+      ' completa' + (completas.length === 1 ? '' : 's') +
+      (pendentes.length ? ' · ' + pendentes.length + ' pendente' +
+        (pendentes.length === 1 ? '' : 's') : '') + '</div></div>' +
+    '<div class="kpi pos"><div class="lab">Valor gasto</div><div class="val">' +
+      degBRL(gasto) + '</div><div class="sub">só completas</div></div>' +
+    '<div class="kpi"><div class="lab">Custo por degustação</div><div class="val">' +
+      (custoDeg != null ? degBRL(custoDeg) : '—') +
+      '</div><div class="sub">valor gasto ÷ eventos</div></div>' +
     '<div class="kpi"><div class="lab">Pessoas que provaram</div><div class="val">' +
-      n0(prov) + '</div><div class="sub">no período</div></div>' +
+      degNumBR(prov) + '</div><div class="sub">só completas</div></div>' +
     '<div class="kpi"><div class="lab">Colocaram no carrinho</div><div class="val">' +
-      n0(carr) + '</div><div class="sub">no período</div></div>' +
-    '<div class="kpi"><div class="lab">Taxa de conversão</div><div class="val">' +
-      (taxa === null ? '—' : pct(taxa)) + '</div><div class="sub">carrinho ÷ provaram</div></div>' +
-    '<div class="kpi"><div class="lab">CPE</div><div class="val">' +
-      (cpe === null ? '—' : brl(cpe)) + '</div><div class="sub">gasto ÷ provaram</div></div>' +
-    '<div class="kpi"><div class="lab">CAQ</div><div class="val">' +
-      (caq === null ? '—' : brl(caq)) + '</div><div class="sub">gasto ÷ carrinho</div></div>' +
+      degNumBR(carr) + '</div><div class="sub">só completas</div></div>' +
+    '<div class="kpi sens"><div class="lab">Taxa de conversão</div><div class="val">' +
+      (taxaPct != null ? taxaPct.toFixed(1) + '%' : '—') +
+      '</div><div class="sub">carrinho ÷ provaram</div></div>' +
+    '<div class="kpi sens"><div class="lab">CPE · custo por experimentação</div>' +
+      '<div class="val">' + (cpe != null ? degBRL(cpe) : '—') +
+      '</div><div class="sub">valor gasto ÷ provaram</div></div>' +
+    '<div class="kpi sens"><div class="lab">CAQ · custo por aquisição</div>' +
+      '<div class="val">' + (caq != null ? degBRL(caq) : '—') +
+      '</div><div class="sub">valor gasto ÷ carrinho</div></div>' +
+    '<div class="kpi score"><div class="lab">Score geral</div><div class="val">' +
+      degEstrelas(score) + '</div><div class="sub">CPE 33% · Degs 33%<br>' +
+      'Taxa 20% · Eficiência 14%</div></div>' +
+    (pendentes.length ? '<div class="kpi pend"><div class="lab">Pendentes</div>' +
+      '<div class="val">' + pendentes.length + '</div>' +
+      '<div class="sub">completar na planilha</div></div>' : '') +
     '</div>';
 
   const degs = [...new Set(todas.map(r => r.__deg).filter(Boolean))].sort();
@@ -11000,8 +11085,14 @@ function degPinta(){
       '<select id="degSel" style="min-width:220px;margin-top:4px">' +
       opt('__todas__', 'Todas as degustadoras') +
       degs.map(d => opt(d, d)).join('') + '</select></label>' +
-    '<button id="degAtualizar" class="btn-y" style="font-size:12px;padding:7px 13px">' +
-      'Atualizar agora</button>' +
+    '<button id="degAplicar" class="btn-y" style="font-size:12px;padding:7px 13px">' +
+      'Aplicar filtro</button>' +
+    '<button id="degLimpar" style="font-size:12px;padding:7px 13px;background:var(--grey);' +
+      'border:1px solid var(--line);border-radius:8px;font-weight:600;color:var(--navy)">' +
+      'Limpar período</button>' +
+    '<span style="margin-left:auto;background:var(--navy);color:#fff;border-radius:8px;' +
+      'padding:8px 14px;font-size:13px;font-weight:700">' + noPeriodo.length +
+      ' degustaç' + (noPeriodo.length === 1 ? 'ão' : 'ões') + ' no período</span>' +
     '</div></div>';
 
   const aviso = pendentes.length
@@ -11081,12 +11172,91 @@ function degPinta(){
       'Portal. As linhas deles não aparecem para ninguém além de admin.' : '') +
     '</div>';
 
-  box.innerHTML = barra + aviso + kpis +
+  /* HISTORICO ACUMULADO - mesma leitura do painel original: cada barra e o
+     indicador ACUMULADO ate o fim daquele dia, nao o valor do dia. Por isso a
+     curva de custo por degustacao comeca alta e vai assentando. */
+  let historico = '';
+  const porDia = {};
+  {
+    let aP = 0, aV = 0, aC = 0, aN = 0;
+    completas.slice().sort((a, b) => (a.__data || 0) - (b.__data || 0)).forEach(r => {
+      aP += r.__preco; aV += r.__prov; aC += r.__carr; aN++;
+      porDia[degDataBR(r.__data)] = {preco: aP, prov: aV, carr: aC, n: aN};
+    });
+  }
+  DEG_ESTADO.serie = Object.entries(porDia).map(([dia, v]) => ({
+    date: dia,
+    cpe: v.prov > 0 ? v.preco / v.prov : 0,
+    caq: v.carr > 0 ? v.preco / v.carr : 0,
+    taxa: v.prov > 0 ? (v.carr / v.prov * 100) : 0,
+    custoDeg: v.n > 0 ? v.preco / v.n : 0,
+    prov: v.prov, carr: v.carr, preco: v.preco, n: v.n
+  }));
+  if(DEG_ESTADO.serie.length && typeof Chart !== 'undefined'){
+    const op = (v, rot) => '<option value="' + v + '"' +
+      (DEG_ESTADO.metrica === v ? ' selected' : '') + '>' + rot + '</option>';
+    historico = '<div class="card"><div class="card-h">' +
+      '<h3>Histórico de indicadores (acumulado)</h3>' +
+      '<select id="degMetrica" style="margin-left:auto;border:1px solid var(--line);' +
+      'border-radius:6px;padding:6px 10px;font-size:13px;background:#fff">' +
+      op('custoDeg', 'Custo por Degustação') +
+      op('cpe', 'CPE · Custo por Experimentação') +
+      op('caq', 'CAQ · Custo por Aquisição') +
+      op('taxa', 'Taxa de Conversão') +
+      op('prov', 'Pessoas que Provaram') +
+      op('carr', 'Itens no Carrinho') +
+      op('preco', 'Valor Gasto') +
+      op('n', 'Número de Degustações') +
+      '</select></div>' +
+      '<div style="padding:20px;position:relative;height:320px">' +
+      '<canvas id="degCanvas"></canvas></div></div>';
+  }
+
+  box.innerHTML = barra + aviso + kpis + historico +
     tabela('Análise por degustadora', '__deg', true) +
     tabela('Análise por vendedor', '__vend', degEhAdmin()) +
     tabela('Análise por canal', '__canal', true) +
     lista + rodape;
   degLigar();
+  degDesenharGrafico();
+}
+
+/* UM grafico so, guardado e destruido antes de redesenhar.
+
+   O painel original criava um id novo a cada render (chart_ + Date.now()) e
+   guardava os dados em window.__historicos[id] para sempre - com releitura a
+   cada 30 s, aquilo so cresce. Aqui e sempre o mesmo canvas, e a instancia
+   anterior e destruida: sem isso o Chart.js deixa o antigo escutando o mesmo
+   elemento e o tooltip passa a mostrar dois valores. */
+let DEG_CHART = null;
+function degDesenharGrafico(){
+  const cv = document.getElementById('degCanvas');
+  if(DEG_CHART){ try{ DEG_CHART.destroy(); }catch(e){} DEG_CHART = null; }
+  if(!cv || typeof Chart === 'undefined' || !(DEG_ESTADO.serie || []).length) return;
+  const d = DEG_ESTADO.serie;
+  const m = DEG_ESTADO.metrica || 'custoDeg';
+  /* mesmos rotulos e mesmas cores do painel original */
+  const CONF = {
+    custoDeg: ['Custo por Degustação (R$)', x => x.custoDeg.toFixed(2), 'rgb(81, 136, 223)'],
+    cpe:      ['CPE (R$)',                  x => x.cpe.toFixed(2),      'rgb(224, 161, 0)'],
+    caq:      ['CAQ (R$)',                  x => x.caq.toFixed(2),      'rgb(216, 199, 51)'],
+    taxa:     ['Taxa de Conversão (%)',     x => x.taxa.toFixed(1),     'rgb(31, 157, 107)'],
+    prov:     ['Provaram',                  x => x.prov,                'rgb(31, 157, 107)'],
+    carr:     ['Carrinho',                  x => x.carr,                'rgb(81, 136, 223)'],
+    preco:    ['Valor gasto (R$)',          x => x.preco.toFixed(2),    'rgb(217, 83, 79)'],
+    n:        ['Degustações',               x => x.n,                   'rgb(42, 62, 126)']
+  };
+  const [rot, pega, cor] = CONF[m] || CONF.custoDeg;
+  DEG_CHART = new Chart(cv, {
+    type: 'bar',
+    data: {labels: d.map(x => x.date),
+           datasets: [{label: rot, data: d.map(pega), backgroundColor: cor,
+                       borderColor: cor, borderWidth: 1, borderRadius: 4}]},
+    options: {responsive: true, maintainAspectRatio: false,
+              plugins: {legend: {display: false}},
+              scales: {y: {beginAtZero: true, grid: {color: 'rgba(0,0,0,.05)'}},
+                       x: {grid: {display: false}}}}
+  });
 }
 
 function degLigar(){
@@ -11098,9 +11268,27 @@ function degLigar(){
     if(t.id === 'degDe'){ DEG_ESTADO.de = t.value; degPinta(); }
     else if(t.id === 'degAte'){ DEG_ESTADO.ate = t.value; degPinta(); }
     else if(t.id === 'degSel'){ DEG_ESTADO.deg = t.value; degPinta(); }
+    else if(t.id === 'degMetrica'){
+      /* so o grafico muda: repintar a aba inteira recriaria o <select> e o
+         foco sairia dele no meio da escolha */
+      DEG_ESTADO.metrica = t.value;
+      degDesenharGrafico();
+    }
   });
   box.addEventListener('click', ev => {
-    if(ev.target.id === 'degAtualizar') degCarregar(true);
+    const id = ev.target.id;
+    if(id === 'degAplicar'){ degCarregar(true); return; }
+    if(id === 'degLimpar'){
+      /* "Limpar periodo" volta ao intervalo INTEIRO da planilha, como no painel
+         original - nao ao mes corrente. Sao coisas diferentes: limpar e ver
+         tudo, e o mes corrente e so o padrao de quem acabou de abrir. */
+      const datas = (DEG_ESTADO.linhas || []).map(r => r.__data).filter(Boolean)
+                      .sort((a, b) => a - b);
+      DEG_ESTADO.de = datas.length ? degISO(datas[0]) : '';
+      DEG_ESTADO.ate = datas.length ? degISO(datas[datas.length - 1]) : '';
+      DEG_ESTADO.deg = '__todas__';
+      degPinta();
+    }
   });
 }
 
