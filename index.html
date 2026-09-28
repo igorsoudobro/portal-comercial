@@ -11117,15 +11117,21 @@ function degPinta(){
       '<div class="scroll"><table><thead><tr><th>' + titulo.replace(/^An\u00e1lise por /, '') +
       '</th><th class="r">Degustações</th><th class="r">Provaram</th>' +
       '<th class="r">Carrinho</th><th class="r">Taxa</th><th class="r">Gasto</th>' +
-      '<th class="r">CPE</th></tr></thead><tbody>' +
+      '<th class="r">Custo/deg.</th><th class="r">CPE</th></tr></thead><tbody>' +
+      /* degBRL e degNumBR, NAO o brl()/n0() do Portal: aqueles arredondam para o
+         real inteiro e o CPE (R$ 4,28) virava R$ 4. Mesma correcao dos KPIs -
+         eu tinha deixado as tabelas para tras. */
       arr.map(([k, o]) =>
         '<tr><td class="rowlab">' + metasEsc(k) + '</td>' +
-        '<td class="mono r">' + n0(o.n) + '</td>' +
-        '<td class="mono r">' + n0(o.prov) + '</td>' +
-        '<td class="mono r">' + n0(o.carr) + '</td>' +
-        '<td class="mono r">' + (o.prov > 0 ? pct(o.carr / o.prov) : '—') + '</td>' +
-        '<td class="mono r">' + brl(o.preco) + '</td>' +
-        '<td class="mono r">' + (o.prov > 0 ? brl(o.preco / o.prov) : '—') + '</td></tr>').join('') +
+        '<td class="mono r">' + degNumBR(o.n) + '</td>' +
+        '<td class="mono r">' + degNumBR(o.prov) + '</td>' +
+        '<td class="mono r">' + degNumBR(o.carr) + '</td>' +
+        '<td class="mono r">' +
+          (o.prov > 0 ? (o.carr / o.prov * 100).toFixed(1) + '%' : '—') + '</td>' +
+        '<td class="mono r">' + degBRL(o.preco) + '</td>' +
+        '<td class="mono r">' + (o.n > 0 ? degBRL(o.preco / o.n) : '—') + '</td>' +
+        '<td class="mono r">' + (o.prov > 0 ? degBRL(o.preco / o.prov) : '—') +
+        '</td></tr>').join('') +
       '</tbody></table></div></div>';
   };
 
@@ -11144,9 +11150,9 @@ function degPinta(){
       '<td>' + metasEsc(r.__loja) + '</td>' +
       (degEhAdmin() ? '<td>' + metasEsc(r.__vend) + '</td>' : '') +
       '<td>' + metasEsc(r.__canal) + '</td>' +
-      '<td class="mono r">' + n0(r.__prov) + '</td>' +
-      '<td class="mono r">' + n0(r.__carr) + '</td>' +
-      '<td class="mono r">' + (r.__preco > 0 ? brl(r.__preco) :
+      '<td class="mono r">' + degNumBR(r.__prov) + '</td>' +
+      '<td class="mono r">' + degNumBR(r.__carr) + '</td>' +
+      '<td class="mono r">' + (r.__preco > 0 ? degBRL(r.__preco) :
         '<span style="color:#B3261E">Completar</span>') + '</td></tr>').join('') +
     '</tbody></table></div></div>';
 
