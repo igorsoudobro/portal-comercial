@@ -1741,6 +1741,18 @@ function calcTemPreco(sk, tab){
 /* O teto segue o NOME do canal, não a origem do preço: se o KA ganhar coluna
    no Excel, o desconto dele continua livre. */
 function calcTetoDesc(tab){
+  /* ADMIN NAO TEM TETO (28/09/2026, pedido do Igor).
+
+     `SESSION.isAdmin` e nao `calcEhAdmin()`, que e veSensivel() e inclui o
+     supervisor que ve numero. A diferenca importa: teto de desconto e controle
+     COMERCIAL, nao regra de exibicao. Liberar desconto ilimitado para o
+     supervisor seria uma mudanca de alcada que ninguem pediu - e que so
+     apareceria num pedido ja fechado.
+
+     Devolve 100 em vez de Infinity porque o teto viaja para o `max` do input,
+     para o corte do descLinha e para o CSV; desconto acima de 100% nao existe,
+     entao 100 e "sem teto" sem inventar caso novo em quatro lugares. */
+  try{ if(SESSION && SESSION.isAdmin) return 100; }catch(e){}
   if(tab===undefined) tab=calcTabelaSel();
   return (tab===CALC_TAB_KA || tab===CALC_TAB_LEGADO) ? 100 : CALC_TETO_CANAL;
 }
@@ -1839,8 +1851,7 @@ function calcLigarGrade(){
 function calcSetDescLinha(sk, valor){
   if(valor===''||valor===null||valor===undefined){ CALC_DESCL[sk]=''; }
   else{
-    let v=+String(valor).replace(',','.');
-    if(!isFinite(v)) v=0;
+    let v=calcNum(valor);
     CALC_DESCL[sk]=String(Math.max(0, Math.min(v, calcTetoDesc())));
   }
   renderCalcItens(); renderCalcResumo(); updateBadges();
@@ -1926,7 +1937,7 @@ function vCalc(){
   if(!CALC_BONISEL) CALC_BONISEL=catBoni[0];
 
   el('v-calc').innerHTML=`
-   <div class="note"><b>Monte o pedido como na sua planilha.</b> Preencha as condições (obrigatórias) — inclusive <b>a tabela de preço do pedido</b> —, depois lance as quantidades por categoria. A rentabilidade usa o preço de sell-in da tabela escolhida, CMV real, imposto e frete médios da base. O desconto vem do geral e pode ser ajustado por linha, com <b>limite de ${CALC_TETO_CANAL}%</b> nas tabelas de canal — <b>mexer no desconto geral refaz todas as linhas</b>, inclusive as ajustadas à mão.</div>
+   <div class="note"><b>Monte o pedido como na sua planilha.</b> Preencha as condições (obrigatórias) — inclusive <b>a tabela de preço do pedido</b> —, depois lance as quantidades por categoria. A rentabilidade usa o preço de sell-in da tabela escolhida, CMV real, imposto e frete médios da base. O desconto vem do geral e pode ser ajustado por linha, ${(typeof SESSION==='object'&&SESSION&&SESSION.isAdmin)?'<b>sem limite</b> (visão admin)':`com <b>limite de ${CALC_TETO_CANAL}%</b> nas tabelas de canal`} — <b>mexer no desconto geral refaz todas as linhas</b>, inclusive as ajustadas à mão.</div>
 
    <div class="card"><div class="card-h"><h3>1 · Condições do pedido <span style="color:var(--neg)">*</span></h3><span class="hint">preenchimento obrigatório</span></div>
      <div style="padding:16px 20px;display:flex;gap:18px;flex-wrap:wrap;align-items:end">
@@ -2010,11 +2021,25 @@ function onCond(){
   if(c.ok){ renderCalcItens(); renderCalcBoni(); renderCalcBrindes(); renderCalcResumo(); updateBadges(); }
 }
 
+/* VIRGULA DECIMAL (28/09/2026). O Igor: "12,5% de desconto e diferente de
+   0,5%". Era: `+'12,5'` da NaN, o `|| 0` transformava em ZERO, e a linha
+   passava a calcular sem desconto nenhum enquanto ele digitava - o valor certo
+   so aparecia ao sair do campo, onde o calcSetDescLinha ja tratava a virgula.
+   Numero na tela discordando do numero aplicado, de novo.
+
+   Uma funcao so, usada em todos os pontos que leem desconto: tratar em um
+   lugar e esquecer de outro foi exatamente o que criou este caso. */
+function calcNum(v){
+  if(v===null || v===undefined || v==='') return 0;
+  const n = +String(v).replace(',', '.');
+  return isFinite(n) ? n : 0;
+}
+
 function descLinha(sk){ // efetivo: linha sobrescreve geral, as duas presas ao teto
   const teto=calcTetoDesc();
-  const geral=Math.min(+el('calcDescGeral').value||0, teto)/100;
+  const geral=Math.min(calcNum(el('calcDescGeral').value), teto)/100;
   if(CALC_DESCL[sk]!==undefined && CALC_DESCL[sk]!=='')
-    return Math.min(+CALC_DESCL[sk]||0, teto)/100;
+    return Math.min(calcNum(CALC_DESCL[sk]), teto)/100;
   return geral;
 }
 
@@ -2026,7 +2051,7 @@ function renderCalcItens(){
      final" — mesmo número de sempre (CALC.precos), nome novo, porque ele nunca
      foi sell-in. O "Preço final" continua sendo preço tabela menos o desconto. */
   const tab=calcTabelaSel(), teto=calcTetoDesc(tab);
-  const geral=Math.min(+el('calcDescGeral').value||0, teto);
+  const geral=Math.min(calcNum(el('calcDescGeral').value), teto);
   let semPreco=0;
   const foco=calcGuardarFoco();
   cont.innerHTML=`<table class="calc-grid"><thead><tr><th style="min-width:280px">Produto</th><th>Preço consumidor final</th><th>Preço tabela</th><th>Desc. linha %</th><th>Preço final</th><th>Qtd</th><th>Subtotal</th></tr></thead>
@@ -2150,7 +2175,7 @@ function renderCalcResumo(){
   if(!c.itens.length && !c.boni.length && !c.brindes.length){
     resumo.innerHTML=`<div class="empty">Lance as quantidades para ver a rentabilidade.</div>`; insights.innerHTML=''; return;
   }
-  const descGeral=(+el('calcDescGeral').value||0)/100;
+  const descGeral=calcNum(el('calcDescGeral').value)/100;
   resumo.innerHTML=`<div class="kpirow" style="margin-bottom:14px">
     <div class="kpi accent"><div class="lab">Valor líquido</div><div class="val">${brl2(c.liq)}</div><div class="sub">bruto ${brl2(c.bruto)}${descGeral?` · desc. geral ${pct(descGeral)}`:''}</div></div>
     <div class="kpi sens"><div class="lab">CMV total ${SENS}</div><div class="val" style="font-size:20px">${brl2(c.cmvT)}</div><div class="sub">itens ${brl2(c.cmvItens)}${c.cmvBoni?` · bonif ${brl2(c.cmvBoni)}`:''}${c.cmvBrinde?` · brinde ${brl2(c.cmvBrinde)}`:''}</div></div>
@@ -3185,10 +3210,26 @@ function vResumoNovo(){
 
   /* --- tabela por vendedor --- */
   const porVend = {};
+  /* CONVERSAO = COMPROU NO PERIODO, nao "Ativo" (corrigido em 28/09/2026).
+
+     Eu tinha usado `ativos`, e o Igor corrigiu: aquela coluna vem do
+     statusCarteira(), que e a regua de 120 DIAS - independente do filtro. Com
+     Setembro selecionado, quem comprou pela ultima vez em julho continua
+     contando como Ativo e nao comprou nada no mes. Sao perguntas diferentes:
+     "anda comprando" e "comprou neste periodo".
+
+     O conjunto sai do L, que ja e o recorte do filtro, e o numerador so conta
+     CNPJ que esta na carteira filtrada - assim ele e subconjunto do
+     denominador por construcao e a conversao nao passa de 100%. */
+  const compraramNoPeriodo = new Set();
+  L.forEach(r => { if(r.venda && r.cn) compraramNoPeriodo.add(r.cn); });
+
   carteiraFiltrada.forEach(c => {
     const o = porVend[c.v] = porVend[c.v] || {cart:0, ativos:0, inativos:0,
+                                              compraram:0,
                                               fat:0, pedidos:new Set(), novos:0};
     o.cart++;
+    if(compraramNoPeriodo.has(c.cn)) o.compraram++;
     const s = statusCarteira(c.cn);
     if(s === 'Ativo') o.ativos++; else if(s === 'Inativo') o.inativos++;
   });
@@ -3204,6 +3245,7 @@ function vResumoNovo(){
   L.forEach(r => {
     if(!r.venda) return;
     const o = porVend[r.v] = porVend[r.v] || {cart:0, ativos:0, inativos:0,
+                                              compraram:0,
                                               fat:0, pedidos:new Set(), novos:0};
     o.fat += r.fat;
     if(r.cn) o.pedidos.add(r.cn + '|' + r.m);
@@ -3281,7 +3323,8 @@ function vResumoNovo(){
     const dv = dre(linsPorVend[v] || []);
     const d = descPorVend[v];
     return {
-      v, cart:o.cart, ativos:o.ativos, inativos:o.inativos, novos:o.novos,
+      v, cart:o.cart, ativos:o.ativos, inativos:o.inativos,
+      compraram:o.compraram||0, novos:o.novos,
       fat:o.fat, ticket: o.pedidos.size ? o.fat / o.pedidos.size : 0,
       dev: dv.dev, boni: dv.boni, rent: dv.rent, fatLiq: dv.fatLiq,
       lucro: dv.lucro,
@@ -3312,6 +3355,7 @@ function vResumoNovo(){
 
   const tot = arr.reduce((a,r) => ({
     cart:a.cart+r.cart, ativos:a.ativos+r.ativos, inativos:a.inativos+r.inativos,
+    compraram:a.compraram+(r.compraram||0),
     novos:a.novos+r.novos, fat:a.fat+r.fat, dev:a.dev+r.dev, boni:a.boni+r.boni
   }), {cart:0,ativos:0,inativos:0,novos:0,fat:0,dev:0,boni:0});
   const totDre = dre(L);
@@ -3330,7 +3374,11 @@ function vResumoNovo(){
     '<th style="text-align:right">Desc. médio</th>' +
     '<th style="text-align:right">Novos clientes</th>' +
     '<th style="text-align:right">Ativos</th><th style="text-align:right">Inativos</th>' +
-    '<th style="text-align:right">Carteira</th></tr></thead><tbody>' +
+    '<th style="text-align:right">Carteira</th>' +
+    '<th style="text-align:right" title="Clientes da carteira que compraram ' +
+    'no período do filtro, sobre o total da carteira dele. Não é o mesmo que ' +
+    'Ativos: aquela coluna usa a régua de ' + DIAS_INATIVO + ' dias, que não ' +
+    'olha o período selecionado.">Conversão</th></tr></thead><tbody>' +
     arr.map(r =>
       '<tr><td class="rowlab">' + r.v + '</td>' +
       '<td class="mono" style="text-align:right">' + brl(r.fat) + '</td>' +
@@ -3345,7 +3393,13 @@ function vResumoNovo(){
       '<td class="mono" style="text-align:right">' + n0(r.novos) + '</td>' +
       '<td class="mono" style="text-align:right;color:#1BA466">' + n0(r.ativos) + '</td>' +
       '<td class="mono" style="text-align:right;color:#C0392B">' + n0(r.inativos) + '</td>' +
-      '<td class="mono" style="text-align:right;color:var(--muted)">' + n0(r.cart) + '</td></tr>').join('') +
+      '<td class="mono" style="text-align:right;color:var(--muted)">' + n0(r.cart) + '</td>' +
+      /* Ativos sobre a carteira DELE. Carteira zero devolve travessao e nao 0%:
+         vendedor sem carteira nao tem conversao ruim, tem conversao
+         indefinida - e 0% seria lido como desempenho. */
+      '<td class="mono" style="text-align:right">' +
+        (r.cart > 0 ? pct(r.compraram / r.cart)
+                    : '<span style="color:var(--muted)">—</span>') + '</td></tr>').join('') +
     '<tr class="tot"><td class="tot">Total</td>' +
     '<td class="mono tot" style="text-align:right">' + brl(tot.fat) + '</td>' +
     '<td class="tot"></td>' +
@@ -3366,7 +3420,13 @@ function vResumoNovo(){
     '<td class="mono tot" style="text-align:right">' + n0(tot.novos) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.ativos) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.inativos) + '</td>' +
-    '<td class="mono tot" style="text-align:right">' + n0(tot.cart) + '</td></tr>' +
+    '<td class="mono tot" style="text-align:right">' + n0(tot.cart) + '</td>' +
+    /* O total NAO e a media das conversoes: e a soma dos ativos sobre a soma
+       das carteiras. Media de percentuais daria o mesmo peso a quem tem 5
+       clientes e a quem tem 242 - e o RCA - Thiago, com 5 na carteira,
+       mexeria o numero da empresa tanto quanto a RCA - Luisa Helena. */
+    '<td class="mono tot" style="text-align:right">' +
+      (tot.cart > 0 ? pct(tot.compraram / tot.cart) : '—') + '</td></tr>' +
     '</tbody></table></div></div>';
 
   /* injeta: KPIs depois da primeira kpirow, tabela no fim da view */
