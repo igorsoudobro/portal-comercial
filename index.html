@@ -10730,6 +10730,452 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
   }
 }
 
+/* ===========================================================================
+   ABA DEGUSTACOES (28/09/2026, pedido do Igor)
+
+   Traz para dentro do Portal o painel que morava em
+   igorsoudobro.github.io/degustacoes. Tres coisas tornaram isso barato:
+
+     1. O painel avulso usa O MESMO app do Entra (b22e93eb...) e os mesmos
+        escopos. O token que o Portal ja tem le a planilha - sem permissao
+        nova, sem consentimento.
+     2. A planilha ja tem coluna de VENDEDOR por linha, que e o que a regra de
+        acesso precisa.
+     3. Leitura ao vivo continua sendo ao vivo: o Graph e chamado quando a aba
+        abre e a cada 30 s ENQUANTO ELA ESTIVER VISIVEL. Fora dela, nada roda -
+        o painel antigo consultava o Graph a cada 30 s para sempre.
+
+   REGRA DE ACESSO (decidida com ele): admin e moderador veem tudo; vendedor ve
+   so as linhas dele, com os KPIs calculados sobre o subconjunto e a analise por
+   vendedor escondida - ela teria uma linha so.
+
+   O CARD DO MONDAY FICOU DE FORA, a pedido dele: ele lia um JSON estatico do
+   outro repositorio, que aqui nao existe.
+   ========================================================================== */
+const DEG_ARQUIVO = "https://soudobro.sharepoint.com/:x:/s/DobroComerciodeAlimentoseBebidasLTDA/IQBlwqJ_lq4SS6rrfk4aX8WVAW_O50Z3X423qSYfQZ3lidY?e=KCp10y";
+const DEG_INTERVALO = 30000;
+
+/* DE-PARA DO VENDEDOR (medido e confirmado pelo Igor em 28/09/2026).
+
+   O nome vem digitado no Forms; o Portal usa o nome canonico. Dos 7 nomes da
+   planilha, 3 casam sozinhos e estes 4 nao:
+
+     Isabelle Fernandes  -> Isabelle              (confirmado pelo e-mail dela)
+     Joao Pavaneli       -> Joao Vitor Pavanelli  (falta um "l" no Forms)
+     Luisa Helena        -> RCA - Luisa Helena    (prefixo)
+     Luiz Netto          -> RCA - Luiz Netto      (prefixo)
+
+   Sem isto o vendedor veria a degustacao de OUTRO, e a tela nao teria como
+   acusar - foi o que aconteceu no CRM antes do de-para de la. Nome novo que nao
+   casar aparece no rodape da aba, em vez de sumir calado. */
+const DEG_DEPARA = {
+  'isabelle fernandes':   'Isabelle',
+  'joao pavaneli':        'João Vitor Pavanelli',
+  'luisa helena':         'RCA - Luisa Helena',
+  'luiz netto':           'RCA - Luiz Netto'
+};
+
+let DEG_ESTADO = {linhas: null, cabecalhos: null, lido: null, erro: null,
+                  timer: null, carregando: false,
+                  de: '', ate: '', deg: '__todas__'};
+
+function degChave(t){
+  return String(t == null ? '' : t).trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+/* nome da planilha -> nome do Portal */
+function degVendedorCanonico(nome){
+  const k = degChave(nome);
+  if(!k) return '';
+  if(DEG_DEPARA[k]) return DEG_DEPARA[k];
+  try{
+    const achado = (D && D.Vendedor || []).find(v => degChave(v) === k);
+    if(achado) return achado;
+  }catch(e){}
+  return String(nome).trim();      /* nao casou: devolve o original, e o rodape avisa */
+}
+
+function degEhAdmin(){
+  try{
+    if(SESSION && SESSION.isAdmin) return true;
+    return (typeof ehModerador === 'function') && ehModerador();
+  }catch(e){ return false; }
+}
+
+/* ------------------------------------------------- leitura via Graph */
+async function degGraph(caminho, tok){
+  const r = await fetch(GRAPH_BASE + caminho,
+                        {headers: {Authorization: 'Bearer ' + tok}});
+  if(!r.ok){
+    const corpo = await r.text();
+    const e = new Error('Graph ' + r.status);
+    e.status = r.status; e.body = corpo.slice(0, 400);
+    throw e;
+  }
+  return r.json();
+}
+/* o link de compartilhamento vira id da Shares API: u! + base64url */
+function degIdDoLink(url){
+  const bytes = new TextEncoder().encode(url);
+  let bin = '';
+  bytes.forEach(b => bin += String.fromCharCode(b));
+  return 'u!' + btoa(bin).replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-');
+}
+async function degLer(){
+  const tok = await msToken();
+  if(!tok) return null;                       /* esta navegando para o login */
+  const item = await degGraph('/shares/' + degIdDoLink(DEG_ARQUIVO) +
+                              '/driveItem?$select=id,name,parentReference', tok);
+  const drive = item && item.parentReference && item.parentReference.driveId;
+  if(!item || !item.id || !drive)
+    throw new Error('O link da planilha nao devolveu um arquivo valido.');
+  const base = '/drives/' + drive + '/items/' + item.id + '/workbook';
+  const abas = await degGraph(base + '/worksheets', tok);
+  const primeira = (abas.value && abas.value[0]) ? abas.value[0].name : 'Sheet1';
+  const faixa = await degGraph(base + "/worksheets('" +
+                  encodeURIComponent(primeira) + "')/usedRange(valuesOnly=true)?$select=values",
+                  tok);
+  return faixa.values || [];
+}
+
+/* ------------------------------------------------- planilha -> linhas */
+function degColunas(cab){
+  const acha = (...alts) => cab.find(h => alts.some(a => h.toLowerCase().includes(a)));
+  return {
+    data:     acha('data da degust', 'qual a data'),
+    loja:     acha('nome da loja', 'loja da degust', 'loja'),
+    provaram: acha('degustaram', 'quantas pessoas de', 'provaram'),
+    carrinho: acha('carrinho'),
+    preco:    acha('preço', 'preco'),
+    deg:      acha('degustadora', 'degustador'),
+    vendedor: acha('vendedor'),
+    canal:    acha('canal'),
+    obs:      acha('observ')
+  };
+}
+/* A data vem como numero de serie do Excel. Base 30/12/1899 ao MEIO-DIA local:
+   a meia-noite, qualquer fuso negativo joga a data para o dia anterior. */
+function degData(n){
+  if(n === null || n === undefined || n === '') return null;
+  const v = (typeof n === 'number') ? n : parseFloat(String(n).replace(',', '.'));
+  if(!isFinite(v)){ const d = new Date(n); return isNaN(d) ? null : d; }
+  const base = new Date(1899, 11, 30, 12, 0, 0);
+  base.setDate(base.getDate() + Math.floor(v));
+  return isNaN(base) ? null : base;
+}
+/* O painel original fazia `replace(',','.')` direto, e isso TRUNCA quando vem
+   separador de milhar: "R$ 1.234,50" virava "1.234.50" -> parseFloat -> 1,234.
+   Na pratica o Excel manda numero de verdade e o caso nao aparecia; mas eu ia
+   carregar o defeito para ca sem necessidade. Com virgula presente, os pontos
+   sao milhar e saem fora. */
+function degNum(v){
+  if(typeof v === 'number') return isFinite(v) ? v : 0;
+  let t = String(v == null ? '' : v).replace(/[^\d,.-]/g, '');
+  if(t.indexOf(',') >= 0) t = t.replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(t);
+  return isFinite(n) ? n : 0;
+}
+function degISO(d){
+  if(!d) return '';
+  const p = x => String(x).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+function degDataBR(d){
+  if(!d) return '—';
+  const p = x => String(x).padStart(2, '0');
+  return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear();
+}
+
+function degMontarLinhas(matriz){
+  if(!matriz || !matriz.length) return {cab: [], linhas: []};
+  const cab = matriz[0].map(h => String(h == null ? '' : h).trim());
+  const col = degColunas(cab);
+  const linhas = [];
+  for(let i = 1; i < matriz.length; i++){
+    const m = matriz[i];
+    if(!m || m.every(c => c === '' || c == null)) continue;
+    const o = {};
+    cab.forEach((h, k) => { o[h || ('col' + k)] = m[k]; });
+    o.__data  = col.data ? degData(o[col.data]) : null;
+    o.__deg   = col.deg ? String(o[col.deg] == null ? '' : o[col.deg]).trim() : '';
+    o.__vendP = col.vendedor ? String(o[col.vendedor] == null ? '' : o[col.vendedor]).trim() : '';
+    o.__vend  = degVendedorCanonico(o.__vendP);
+    o.__canal = col.canal ? String(o[col.canal] == null ? '' : o[col.canal]).trim() : '';
+    o.__preco = col.preco ? degNum(o[col.preco]) : 0;
+    o.__prov  = col.provaram ? degNum(o[col.provaram]) : 0;
+    o.__carr  = col.carrinho ? degNum(o[col.carrinho]) : 0;
+    o.__loja  = col.loja ? String(o[col.loja] == null ? '' : o[col.loja]).trim() : '';
+    /* pendente = sem preco OU sem degustadora. Fica fora das metricas, como no
+       painel original - senao o custo medio despenca com linha pela metade. */
+    o.__pendente = !(o.__preco > 0) || !o.__deg;
+    linhas.push(o);
+  }
+  return {cab: cab, col: col, linhas: linhas};
+}
+
+/* ------------------------------------------------- recorte por perfil */
+function degDoUsuario(linhas){
+  if(degEhAdmin()) return linhas;
+  let vis = null;
+  try{ vis = VEND_VIS; }catch(e){}
+  if(!vis || !vis.size) return [];
+  return linhas.filter(r => vis.has(r.__vend));
+}
+/* ------------------------------------------------- tela */
+function degPinta(){
+  const box = el('v-degustacoes');
+  if(!box) return;
+  if(DEG_ESTADO.erro && !DEG_ESTADO.linhas){
+    const e = DEG_ESTADO.erro;
+    const dica = (e.status === 403 || e.status === 401)
+      ? 'A sua conta não tem acesso à planilha de degustações no SharePoint. ' +
+        'É permissão do arquivo, não do Portal: peça acesso a quem cuida dela.'
+      : 'Erro ao ler a planilha: ' + metasEsc(e.message || String(e));
+    box.innerHTML = '<div class="avisobox"><b>Não consegui ler as degustações</b>' +
+      '<span>' + dica + '</span></div>';
+    return;
+  }
+  if(!DEG_ESTADO.linhas){
+    box.innerHTML = '<div class="empty">Lendo a planilha de degustações…</div>';
+    return;
+  }
+
+  const todas = degDoUsuario(DEG_ESTADO.linhas);
+  /* periodo padrao: do 1o do mes corrente ate hoje, igual ao painel original */
+  if(!DEG_ESTADO.de){
+    const h = new Date();
+    DEG_ESTADO.de = degISO(new Date(h.getFullYear(), h.getMonth(), 1));
+    DEG_ESTADO.ate = degISO(h);
+  }
+  const noPeriodo = todas.filter(r => {
+    if(!r.__data) return false;
+    const i = degISO(r.__data);
+    if(DEG_ESTADO.de && i < DEG_ESTADO.de) return false;
+    if(DEG_ESTADO.ate && i > DEG_ESTADO.ate) return false;
+    if(DEG_ESTADO.deg !== '__todas__' && r.__deg !== DEG_ESTADO.deg) return false;
+    return true;
+  });
+  const completas = noPeriodo.filter(r => !r.__pendente);
+  const pendentes = noPeriodo.filter(r => r.__pendente);
+
+  const soma = (arr, campo) => arr.reduce((a, r) => a + r[campo], 0);
+  const gasto = soma(completas, '__preco');
+  const prov = soma(completas, '__prov');
+  const carr = soma(completas, '__carr');
+  const taxa = prov > 0 ? carr / prov : null;
+  const cpe = prov > 0 ? gasto / prov : null;
+  const caq = carr > 0 ? gasto / carr : null;
+  const verValor = degEhAdmin() || true;   /* o vendedor ve o gasto DELE */
+
+  const kpis = '<div class="kpis">' +
+    '<div class="kpi"><div class="lab">Degustações</div><div class="val">' +
+      n0(completas.length) + '</div><div class="sub">completas no período</div></div>' +
+    '<div class="kpi"><div class="lab">Valor gasto</div><div class="val">' +
+      brl(gasto) + '</div><div class="sub">só completas</div></div>' +
+    '<div class="kpi"><div class="lab">Pessoas que provaram</div><div class="val">' +
+      n0(prov) + '</div><div class="sub">no período</div></div>' +
+    '<div class="kpi"><div class="lab">Colocaram no carrinho</div><div class="val">' +
+      n0(carr) + '</div><div class="sub">no período</div></div>' +
+    '<div class="kpi"><div class="lab">Taxa de conversão</div><div class="val">' +
+      (taxa === null ? '—' : pct(taxa)) + '</div><div class="sub">carrinho ÷ provaram</div></div>' +
+    '<div class="kpi"><div class="lab">CPE</div><div class="val">' +
+      (cpe === null ? '—' : brl(cpe)) + '</div><div class="sub">gasto ÷ provaram</div></div>' +
+    '<div class="kpi"><div class="lab">CAQ</div><div class="val">' +
+      (caq === null ? '—' : brl(caq)) + '</div><div class="sub">gasto ÷ carrinho</div></div>' +
+    '</div>';
+
+  const degs = [...new Set(todas.map(r => r.__deg).filter(Boolean))].sort();
+  const opt = (v, rot) => '<option value="' + metasEsc(v) + '"' +
+    (DEG_ESTADO.deg === v ? ' selected' : '') + '>' + metasEsc(rot) + '</option>';
+  const barra = '<div class="card"><div class="card-h">' +
+    '<h3>Degustações</h3><span class="hint">leitura ao vivo da planilha · ' +
+    (DEG_ESTADO.lido ? 'atualizado ' + DEG_ESTADO.lido : 'lendo…') + '</span>' +
+    '</div><div style="padding:12px 14px;display:flex;gap:12px;flex-wrap:wrap;' +
+    'align-items:flex-end">' +
+    '<label style="font-size:11px;color:var(--muted);font-weight:600">De<br>' +
+      '<input id="degDe" type="date" value="' + DEG_ESTADO.de + '" style="margin-top:4px"></label>' +
+    '<label style="font-size:11px;color:var(--muted);font-weight:600">Até<br>' +
+      '<input id="degAte" type="date" value="' + DEG_ESTADO.ate + '" style="margin-top:4px"></label>' +
+    '<label style="font-size:11px;color:var(--muted);font-weight:600">Degustadora<br>' +
+      '<select id="degSel" style="min-width:220px;margin-top:4px">' +
+      opt('__todas__', 'Todas as degustadoras') +
+      degs.map(d => opt(d, d)).join('') + '</select></label>' +
+    '<button id="degAtualizar" class="btn-y" style="font-size:12px;padding:7px 13px">' +
+      'Atualizar agora</button>' +
+    '</div></div>';
+
+  const aviso = pendentes.length
+    ? '<div class="avisobox"><b>' + n0(pendentes.length) + ' degustação(ões) pendente(s)</b>' +
+      '<span>Falta preço e/ou degustadora. Elas não entram nas métricas até ' +
+      'serem preenchidas na planilha.</span></div>'
+    : '';
+
+  /* tabelas de analise: mesma estrutura para degustadora, vendedor e canal */
+  const tabela = (titulo, campo, mostrar) => {
+    if(!mostrar) return '';
+    const m = {};
+    completas.forEach(r => {
+      const k = r[campo] || '—';
+      const o = m[k] = m[k] || {n: 0, preco: 0, prov: 0, carr: 0};
+      o.n++; o.preco += r.__preco; o.prov += r.__prov; o.carr += r.__carr;
+    });
+    const arr = Object.entries(m).sort((a, b) => b[1].preco - a[1].preco);
+    if(!arr.length) return '';
+    return '<div class="card"><div class="card-h"><h3>' + titulo +
+      '</h3><span class="hint">no período selecionado</span></div>' +
+      '<div class="scroll"><table><thead><tr><th>' + titulo.replace(/^An\u00e1lise por /, '') +
+      '</th><th class="r">Degustações</th><th class="r">Provaram</th>' +
+      '<th class="r">Carrinho</th><th class="r">Taxa</th><th class="r">Gasto</th>' +
+      '<th class="r">CPE</th></tr></thead><tbody>' +
+      arr.map(([k, o]) =>
+        '<tr><td class="rowlab">' + metasEsc(k) + '</td>' +
+        '<td class="mono r">' + n0(o.n) + '</td>' +
+        '<td class="mono r">' + n0(o.prov) + '</td>' +
+        '<td class="mono r">' + n0(o.carr) + '</td>' +
+        '<td class="mono r">' + (o.prov > 0 ? pct(o.carr / o.prov) : '—') + '</td>' +
+        '<td class="mono r">' + brl(o.preco) + '</td>' +
+        '<td class="mono r">' + (o.prov > 0 ? brl(o.preco / o.prov) : '—') + '</td></tr>').join('') +
+      '</tbody></table></div></div>';
+  };
+
+  const lista = '<div class="card"><div class="card-h"><h3>Degustações do período</h3>' +
+    '<span class="hint">' + n0(noPeriodo.length) + ' registro(s), mais recentes no topo' +
+    '</span></div><div class="scroll"><table><thead><tr>' +
+    '<th>Data</th><th>Degustadora</th><th>Loja</th>' +
+    (degEhAdmin() ? '<th>Vendedor</th>' : '') +
+    '<th>Canal</th><th class="r">Provaram</th><th class="r">Carrinho</th>' +
+    '<th class="r">Preço</th></tr></thead><tbody>' +
+    noPeriodo.slice().sort((a, b) => (b.__data || 0) - (a.__data || 0)).map(r =>
+      '<tr' + (r.__pendente ? ' style="background:#FFF8E1"' : '') + '>' +
+      '<td class="mono">' + degDataBR(r.__data) + '</td>' +
+      '<td class="rowlab">' + (metasEsc(r.__deg) ||
+        '<span style="color:#B3261E">Completar</span>') + '</td>' +
+      '<td>' + metasEsc(r.__loja) + '</td>' +
+      (degEhAdmin() ? '<td>' + metasEsc(r.__vend) + '</td>' : '') +
+      '<td>' + metasEsc(r.__canal) + '</td>' +
+      '<td class="mono r">' + n0(r.__prov) + '</td>' +
+      '<td class="mono r">' + n0(r.__carr) + '</td>' +
+      '<td class="mono r">' + (r.__preco > 0 ? brl(r.__preco) :
+        '<span style="color:#B3261E">Completar</span>') + '</td></tr>').join('') +
+    '</tbody></table></div></div>';
+
+  /* nomes que nao casaram com o Portal: aparecem, em vez de sumir calados */
+  let semCasar = [];
+  try{
+    const conhecidos = new Set(D && D.Vendedor || []);
+    /* SO acusa quando a lista de vendedores do Portal existe. Sem esta guarda,
+       uma abertura antes de o JSON carregar mostrava TODOS os nomes como "nao
+       casam" - aviso falso e alarmante, do tipo que faz a pessoa parar de ler
+       os avisos. */
+    if(conhecidos.size){
+      semCasar = [...new Set(DEG_ESTADO.linhas.map(r => r.__vend).filter(Boolean))]
+                   .filter(v => !conhecidos.has(v));
+    }
+  }catch(e){}
+  const rodape = '<div class="fonte">Fonte: planilha de degustações no ' +
+    'SharePoint, lida ao vivo pelo seu próprio acesso — atualiza sozinha a cada ' +
+    '30 s enquanto esta aba estiver aberta.' +
+    (degEhAdmin() ? '' : ' Você vê apenas as degustações ligadas a você.') +
+    (semCasar.length ? ' <b>Atenção:</b> ' + metasEsc(semCasar.join(', ')) +
+      ' — nome(s) de vendedor na planilha que não casam com nenhum vendedor do ' +
+      'Portal. As linhas deles não aparecem para ninguém além de admin.' : '') +
+    '</div>';
+
+  box.innerHTML = barra + aviso + kpis +
+    tabela('Análise por degustadora', '__deg', true) +
+    tabela('Análise por vendedor', '__vend', degEhAdmin()) +
+    tabela('Análise por canal', '__canal', true) +
+    lista + rodape;
+  degLigar();
+}
+
+function degLigar(){
+  const box = el('v-degustacoes');
+  if(!box || box.dataset.ligado) return;
+  box.dataset.ligado = '1';
+  box.addEventListener('change', ev => {
+    const t = ev.target;
+    if(t.id === 'degDe'){ DEG_ESTADO.de = t.value; degPinta(); }
+    else if(t.id === 'degAte'){ DEG_ESTADO.ate = t.value; degPinta(); }
+    else if(t.id === 'degSel'){ DEG_ESTADO.deg = t.value; degPinta(); }
+  });
+  box.addEventListener('click', ev => {
+    if(ev.target.id === 'degAtualizar') degCarregar(true);
+  });
+}
+
+async function degCarregar(forcar){
+  if(DEG_ESTADO.carregando) return;
+  DEG_ESTADO.carregando = true;
+  try{
+    const m = await degLer();
+    if(m === null) return;                 /* foi para o login */
+    const r = degMontarLinhas(m);
+    DEG_ESTADO.linhas = r.linhas;
+    DEG_ESTADO.cabecalhos = r.cab;
+    DEG_ESTADO.erro = null;
+    const agora = new Date();
+    DEG_ESTADO.lido = String(agora.getHours()).padStart(2, '0') + ':' +
+                      String(agora.getMinutes()).padStart(2, '0');
+  }catch(e){
+    console.error('DEGUSTACOES:', e);
+    /* SO troca a tela por erro se nunca houve leitura boa: uma falha
+       passageira nao pode apagar o que ja esta na frente da pessoa. */
+    DEG_ESTADO.erro = e;
+  }finally{
+    DEG_ESTADO.carregando = false;
+    if(CURRENT === 'degustacoes') degPinta();
+  }
+}
+
+/* O relogio so anda com a aba ABERTA. O painel antigo consultava o Graph a cada
+   30 s para sempre; aqui, sair da aba para o relogio. */
+function degRelogio(ligar){
+  if(DEG_ESTADO.timer){ clearInterval(DEG_ESTADO.timer); DEG_ESTADO.timer = null; }
+  if(ligar) DEG_ESTADO.timer = setInterval(() => {
+    if(CURRENT === 'degustacoes' && !document.hidden) degCarregar();
+  }, DEG_INTERVALO);
+}
+
+function vDegustacoes(){
+  degPinta();
+  degRelogio(true);
+  if(!DEG_ESTADO.linhas && !DEG_ESTADO.carregando) degCarregar();
+}
+
+/* Registro da aba, depois do SLA. */
+if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
+  if(!VIEWS.some(v => v.id === 'degustacoes')){
+    const i = VIEWS.findIndex(v => v.id === 'sla');
+    const reg = {id: 'degustacoes', lab: 'Degustações', fn: vDegustacoes};
+    if(i >= 0) VIEWS.splice(i + 1, 0, reg); else VIEWS.push(reg);
+  }
+  if(!document.getElementById('v-degustacoes')){
+    const irmao = document.getElementById('v-acessos') ||
+                  document.querySelector('.view');
+    if(irmao && irmao.parentNode){
+      const d = document.createElement('div');
+      d.className = 'view';
+      d.id = 'v-degustacoes';
+      irmao.parentNode.insertBefore(d, irmao);
+    }
+  }
+  if(typeof buildNav === 'function'){
+    const nav = document.getElementById('nav');
+    if(nav && nav.children.length) buildNav();
+  }
+}
+/* sair da aba desliga o relogio - embrulho o showView, que e por onde toda
+   troca passa */
+if(typeof showView === 'function'){
+  const _showAntes = showView;
+  window.showView = function(){
+    const r = _showAntes.apply(this, arguments);
+    try{ if(CURRENT !== 'degustacoes') degRelogio(false); }catch(e){}
+    return r;
+  };
+}
+
 /* Registro da aba - so para admin, no fim da barra. */
 if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
   if(!VIEWS.some(v => v.id === 'acessos')){
