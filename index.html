@@ -2921,6 +2921,49 @@ const vResumoOriginal = VIEWS.find(v => v.id === 'resumo').fn;
    para quem nao ve numero. O Igor descreveu a ordem pela visao dele (admin); se
    quiser frete e comissao visiveis para o vendedor tambem, e tirar o `sens:true`
    da lista abaixo. */
+/* CONVERSAO DA CARTEIRA (28/09/2026, pedido do Igor)
+   "Clientes que fizeram pedido no periodo dividido pelo total de clientes na
+   carteira", acompanhando o filtro.
+
+   O DENOMINADOR usa a MESMA regra da aba Carteira - cadastro do cliente, nao
+   as notas dele: vendedor, modelo, canal, UF e regiao (esta deduzida da UF,
+   porque a carteira nao tem a coluna). Se as duas telas recortassem a carteira
+   de formas diferentes, o Igor veria 2.956 clientes num lugar e outro numero
+   aqui, sem explicacao.
+
+   O NUMERADOR conta so quem esta na carteira recortada. Isso nao e detalhe: em
+   28/09 o consolidado tinha 1.480 CNPJs e a carteira 1.370 - 110 compradores
+   nao estao la (63 com documento de PF). Dividir TODOS os compradores pela
+   carteira daria conversao acima de 100% em varios filtros, e um indicador que
+   passa de 100% nao e lido como erro - e lido como bom.
+
+   Os de fora viram a nota do KPI, em vez de sumirem: quem esta faturando e nao
+   esta na carteira e informacao, nao ruido. */
+function conversaoCarteira(ativos){
+  if(typeof CARTEIRA === 'undefined' || !Array.isArray(CARTEIRA) || !CARTEIRA.length)
+    return null;
+  const regDaUf = {};
+  try{ ROWS.forEach(r => { if(r.uf && r.reg && !regDaUf[r.uf]) regDaUf[r.uf] = r.reg; }); }
+  catch(e){}
+  const filtraBarra = (typeof podeFiltrar === 'function') ? podeFiltrar()
+                                                          : !!SESSION.isAdmin;
+  const base = CARTEIRA.filter(c => {
+    if(!SESSION.isAdmin && !(VEND_VIS && VEND_VIS.has(c.v))) return false;
+    if(!filtraBarra) return true;
+    if(!multiOK(FILTER.vend,  c.v))  return false;
+    if(!multiOK(FILTER.mod,   c.mo)) return false;
+    if(!multiOK(FILTER.canal, c.ca)) return false;
+    if(!multiOK(FILTER.uf,    c.uf)) return false;
+    if(!multiOK(FILTER.reg,   regDaUf[c.uf] || '')) return false;
+    return true;
+  });
+  const naBase = new Set(base.map(c => c.cn));
+  let compraram = 0, fora = 0;
+  (ativos || []).forEach(cn => { if(naBase.has(cn)) compraram++; else fora++; });
+  return {compraram: compraram, base: naBase.size, fora: fora,
+          pct: naBase.size ? compraram / naBase.size : null};
+}
+
 function ajustarKpisResumo(){
   const row = document.querySelector('#v-resumo .kpirow');
   if(!row) return;
@@ -2941,6 +2984,8 @@ function ajustarKpisResumo(){
   const novos = [...ativos].filter(cn =>
     primeira[cn] >= minSel && ms.has(MESES_ORD[primeira[cn]])).length;
 
+  const conv = (typeof conversaoCarteira === 'function')
+                 ? conversaoCarteira(ativos) : null;
   const pctDev = d.fat ? Math.abs(d.dev) / d.fat : 0;
   let itens = [
     {lab: 'Faturamento bruto', val: brl(d.fat), cls: '',
@@ -3009,6 +3054,16 @@ function ajustarKpisResumo(){
      dica: 'Faturamento líquido ÷ pedidos (pedido = CNPJ + mês).'},
     {lab: 'Clientes ativos', val: n0(ativos.size), cls: '',
      sub: 'CNPJs com venda no período'},
+    ...(conv ? [{lab: 'Conversão', val: conv.pct === null ? '—' : pct(conv.pct),
+     cls: '',
+     sub: n0(conv.compraram) + ' de ' + n0(conv.base) + ' na carteira',
+     dica: 'Clientes da carteira que compraram no período, sobre o total da ' +
+           'carteira. O recorte da carteira segue os filtros da barra pelo ' +
+           'CADASTRO do cliente (vendedor, modelo, canal, UF, região), o mesmo ' +
+           'critério da aba Carteira.' +
+           (conv.fora ? ' Atenção: ' + n0(conv.fora) + ' CNPJ(s) compraram no ' +
+             'período e NÃO estão na carteira — não entram nesta conta, senão ' +
+             'a conversão passaria de 100%.' : '')}] : []),
     {lab: 'Novos clientes', val: n0(novos), cls: '',
      sub: '1ª compra no período'},
   ];
