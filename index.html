@@ -10766,30 +10766,60 @@ const DEG_INTERVALO = 30000;
 
 /* DE-PARA DO VENDEDOR (medido e confirmado pelo Igor em 28/09/2026).
 
-   O nome vem digitado no Forms; o Portal usa o nome canonico. Dos 7 nomes da
-   planilha, 3 casam sozinhos e estes 4 nao:
+   O nome vem digitado no Forms; o Portal usa o nome canonico. Estes nao casam
+   sozinhos:
 
      Isabelle Fernandes  -> Isabelle              (confirmado pelo e-mail dela)
      Joao Pavaneli       -> Joao Vitor Pavanelli  (falta um "l" no Forms)
      Luisa Helena        -> RCA - Luisa Helena    (prefixo)
      Luiz Netto          -> RCA - Luiz Netto      (prefixo)
+     Daniel Travensoli   -> Daniel                (29/09/2026; ver abaixo)
 
    Sem isto o vendedor veria a degustacao de OUTRO, e a tela nao teria como
    acusar - foi o que aconteceu no CRM antes do de-para de la. Nome novo que nao
-   casar aparece no rodape da aba, em vez de sumir calado. */
+   casar aparece no rodape da aba, em vez de sumir calado.
+
+   O "Daniel" mereceu confirmacao expressa do Igor antes de entrar: o Portal tem
+   DOIS Daniels ("Daniel" e "Daniel Muniz"), e chutar entre os dois entregaria
+   as 6 degustacoes de agosto para a pessoa errada - o unico erro aqui que
+   ninguem consegue enxergar depois. */
 const DEG_DEPARA = {
   'isabelle fernandes':   'Isabelle',
   'joao pavaneli':        'João Vitor Pavanelli',
   'luisa helena':         'RCA - Luisa Helena',
-  'luiz netto':           'RCA - Luiz Netto'
+  'luiz netto':           'RCA - Luiz Netto',
+  'daniel travensoli':    'Daniel'
 };
+
+/* CANAIS FORA DA ANALISE - guarda quem esta DESMARCADO, e nao quem esta
+   marcado. A diferenca importa: canal novo na planilha entra LIGADO sozinho.
+   Se eu guardasse os marcados, o canal criado amanha nasceria desmarcado e
+   ninguem veria - degustacao sumindo da conta sem aviso.
+
+   "Evento" comeca fora por pedido do Igor (30/09/2026), e o motivo esta num
+   numero: a unica linha de Evento de setembro tem 400 pessoas provando e ZERO
+   carrinho. Ela sozinha derruba a taxa de conversao do mes de 17,6% para 14,1%
+   e o CPE de R$ 4,32 para R$ 3,60. Evento e outra coisa - distribuicao em massa,
+   sem ponto de venda para levar o produto ao caixa -, e misturar com degustacao
+   de loja faz as duas mentirem. */
+const DEG_CANAIS_FORA_PADRAO = ['evento'];
 
 let DEG_ESTADO = {linhas: null, cabecalhos: null, lido: null, erro: null,
                   timer: null, carregando: false, serie: [], metrica: 'custoDeg',
-                  de: '', ate: '', deg: '__todas__'};
+                  de: '', ate: '', deg: '__todas__',
+                  canaisFora: new Set(DEG_CANAIS_FORA_PADRAO)};
 
+/* Os caracteres INVISIVEIS saem antes de qualquer comparacao.
+   Medido em 29/09/2026: a planilha tem "Daniel Travensoli\u200e" - uma marca de
+   direcao de texto que o Excel cola sozinho em alguns cadastros. Sem tirar, a
+   chave nao casa com "Daniel Travensoli" do Portal, o nome cai no fallback e as
+   6 degustacoes dele de agosto ficam invisiveis para ele - e o rodape acusa o
+   nome como "nao casa" sem que se veja diferenca nenhuma na tela. */
 function degChave(t){
-  return String(t == null ? '' : t).trim().toLowerCase()
+  return String(t == null ? '' : t)
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '')
+    .replace(/\u00a0/g, ' ')
+    .trim().toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 /* nome da planilha -> nome do Portal */
@@ -10801,7 +10831,10 @@ function degVendedorCanonico(nome){
     const achado = (D && D.Vendedor || []).find(v => degChave(v) === k);
     if(achado) return achado;
   }catch(e){}
-  return String(nome).trim();      /* nao casou: devolve o original, e o rodape avisa */
+  /* nao casou: devolve o original - mas sem os invisiveis, senao o rodape
+     acusaria um nome que na tela e identico ao do Portal. */
+  return String(nome).replace(/[​-‏‪-‮⁦-⁩﻿]/g, '')
+                     .replace(/ /g, ' ').trim();
 }
 
 function degEhAdmin(){
@@ -11003,8 +11036,26 @@ function degPinta(){
     DEG_ESTADO.de = degISO(new Date(h.getFullYear(), h.getMonth(), 1));
     DEG_ESTADO.ate = degISO(h);
   }
+  /* Canais: a lista sai de `todas`, nao do periodo. Se saisse do periodo, a
+     caixinha de um canal sumiria ao mudar a data - e o filtro pareceria ter se
+     perdido sozinho. */
+  const canais = [...new Set(todas.map(r => r.__canal).filter(Boolean))].sort();
+  const foraDaAnalise = r => DEG_ESTADO.canaisFora.has(degChave(r.__canal));
+
   const noPeriodo = todas.filter(r => {
     if(!r.__data) return false;
+    const i = degISO(r.__data);
+    if(DEG_ESTADO.de && i < DEG_ESTADO.de) return false;
+    if(DEG_ESTADO.ate && i > DEG_ESTADO.ate) return false;
+    if(DEG_ESTADO.deg !== '__todas__' && r.__deg !== DEG_ESTADO.deg) return false;
+    if(foraDaAnalise(r)) return false;
+    return true;
+  });
+  /* Quantas ficaram de fora: o numero e dito em voz alta, embaixo das caixinhas.
+     Sem isso, "28 degustações" virando "27" parece defeito, e quem nao lembra de
+     ter desmarcado um canal vai procurar erro onde nao ha. */
+  const excluidas = todas.filter(r => {
+    if(!r.__data || !foraDaAnalise(r)) return false;
     const i = degISO(r.__data);
     if(DEG_ESTADO.de && i < DEG_ESTADO.de) return false;
     if(DEG_ESTADO.ate && i > DEG_ESTADO.ate) return false;
@@ -11072,6 +11123,34 @@ function degPinta(){
   const degs = [...new Set(todas.map(r => r.__deg).filter(Boolean))].sort();
   const opt = (v, rot) => '<option value="' + metasEsc(v) + '"' +
     (DEG_ESTADO.deg === v ? ' selected' : '') + '>' + metasEsc(rot) + '</option>';
+
+  /* Uma caixinha por canal, com o numero de degustacoes do canal ao lado - o
+     numero e o que diz se vale a pena desmarcar. Desmarcado fica cinza, para a
+     exclusao ser visivel de relance e nao so pelo quadradinho. */
+  const caixasDeCanal = !canais.length ? '' :
+    '<div style="padding:0 14px 12px;border-top:1px solid var(--line);margin-top:2px">' +
+    '<div style="font-size:11px;color:var(--muted);font-weight:600;' +
+      'margin:10px 0 7px">Canais na análise</div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+    canais.map(c => {
+      const dentro = !DEG_ESTADO.canaisFora.has(degChave(c));
+      const n = todas.filter(r => r.__canal === c).length;
+      return '<label style="display:inline-flex;align-items:center;gap:6px;' +
+        'border:1px solid var(--line);border-radius:8px;padding:5px 10px;' +
+        'font-size:12px;font-weight:600;cursor:pointer;background:' +
+        (dentro ? '#fff' : 'var(--grey)') + ';color:' +
+        (dentro ? 'var(--navy)' : 'var(--muted)') + '">' +
+        '<input type="checkbox" class="degCanal" data-canal="' + metasEsc(c) + '"' +
+        (dentro ? ' checked' : '') + '>' + metasEsc(c) +
+        '<span style="font-weight:400;color:var(--muted)">' + n + '</span></label>';
+    }).join('') +
+    '</div>' +
+    (excluidas.length
+      ? '<div style="font-size:11px;color:var(--muted);margin-top:8px">' +
+        n0(excluidas.length) + ' degustação(ões) fora da análise no período, ' +
+        'por canal desmarcado. Elas não entram em nenhum número desta aba.</div>'
+      : '') +
+    '</div>';
   const barra = '<div class="card"><div class="card-h">' +
     '<h3>Degustações</h3><span class="hint">leitura ao vivo da planilha · ' +
     (DEG_ESTADO.lido ? 'atualizado ' + DEG_ESTADO.lido : 'lendo…') + '</span>' +
@@ -11093,7 +11172,7 @@ function degPinta(){
     '<span style="margin-left:auto;background:var(--navy);color:#fff;border-radius:8px;' +
       'padding:8px 14px;font-size:13px;font-weight:700">' + noPeriodo.length +
       ' degustaç' + (noPeriodo.length === 1 ? 'ão' : 'ões') + ' no período</span>' +
-    '</div></div>';
+    '</div>' + caixasDeCanal + '</div>';
 
   const aviso = pendentes.length
     ? '<div class="avisobox"><b>' + n0(pendentes.length) + ' degustação(ões) pendente(s)</b>' +
@@ -11274,6 +11353,14 @@ function degLigar(){
     if(t.id === 'degDe'){ DEG_ESTADO.de = t.value; degPinta(); }
     else if(t.id === 'degAte'){ DEG_ESTADO.ate = t.value; degPinta(); }
     else if(t.id === 'degSel'){ DEG_ESTADO.deg = t.value; degPinta(); }
+    else if(t.classList && t.classList.contains('degCanal')){
+      /* a chave e a degChave, e nao o texto cru: "Evento" e "evento " tem de
+         ser o mesmo canal, senao desmarcar um deixa o outro passando */
+      const k = degChave(t.dataset.canal);
+      if(t.checked) DEG_ESTADO.canaisFora.delete(k);
+      else DEG_ESTADO.canaisFora.add(k);
+      degPinta();
+    }
     else if(t.id === 'degMetrica'){
       /* so o grafico muda: repintar a aba inteira recriaria o <select> e o
          foco sairia dele no meio da escolha */
