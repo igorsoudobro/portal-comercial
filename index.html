@@ -4291,6 +4291,24 @@ window.renderCalcResumo = function(){
      tela da para voltar ao real - mas o pedido era ver o impacto, e o Igor ja
      sabe que esconder custo aqui e tela, nao sigilo. */
   const impPP = (v) => (c.liq ? v / c.liq : 0);
+
+  /* PESO (05/10/2026). Vale para admin e vendedor igualmente: peso nao e numero
+     sensivel, e quem monta o pedido precisa dele para falar de frete. */
+  const pesoT = calcPesoTotal(c);
+  const celPeso = (sk, q) => {
+    const p = calcPesoDe(sk);
+    /* travessao, nunca zero: zero somaria calado e faria o total parecer
+       completo quando nao esta. */
+    return '<td class="mono">' + (p === null ? '—' : kgFmt(p * (q || 0))) + '</td>';
+  };
+  const kpiPeso = (!pesoT.kg && !pesoT.semPeso.length) ? '' :
+    '<div class="kpi' + (pesoT.semPeso.length ? ' sens' : '') + '">' +
+    '<div class="lab">Peso do pedido</div>' +
+    '<div class="val" style="font-size:20px">' + kgFmt(pesoT.kg) + '</div>' +
+    '<div class="sub">' + (pesoT.semPeso.length
+      ? pesoT.semPeso.length + ' item(ns) sem peso cadastrado'
+      : 'bruto, com bonificação e brindes') + '</div></div>';
+
   const colLucro = adm ? '<th>Lucro unit. ' + SENS + '</th>'
                        : '<th>Impacto na margem</th>';
   const tdLucro = (v) => adm
@@ -4310,15 +4328,16 @@ window.renderCalcResumo = function(){
     '<div class="sub">bruto ' + brl2(c.bruto) +
     (descGeral ? ' · desc. geral ' + pct(descGeral) : '') +
     (c.tab ? ' · tabela ' + c.tab : '') + '</div></div>' +
-    kpisAdm + kpiImpacto + kpiRent + '</div>' +
+    kpisAdm + kpiImpacto + kpiRent + kpiPeso + '</div>' +
     '<h4 style="color:var(--navy);margin:6px 0 8px">Itens do pedido (qtd &gt; 0)</h4>' +
     '<table><thead><tr><th>Produto</th><th>Qtd</th><th>Preço final</th>' +
-    '<th>Subtotal</th>' + colLucro + '</tr></thead><tbody>' +
+    '<th>Subtotal</th><th>Peso</th>' + colLucro + '</tr></thead><tbody>' +
     c.itens.slice().sort((a, b) => b.liq - a.liq).map(it =>
       '<tr><td class="rowlab">' + prodName(it.sk).substring(0, 44) + '</td>' +
       '<td class="mono">' + it.q + '</td>' +
       '<td class="mono">' + brl2(it.pf) + '</td>' +
       '<td class="mono">' + brl2(it.liq) + '</td>' +
+      celPeso(it.sk, it.q) +
       tdLucro(it.lucroUnit) + tdVazio + '</tr>').join('') +
     // Bonificacao nao tem preco final: o produto TEM preco de tabela e nao foi
     // vendido a zero - ele nao foi vendido. "R$ 0,00" lia-se como "vendi de
@@ -4331,6 +4350,7 @@ window.renderCalcResumo = function(){
       '<td class="mono">' + b.q + '</td>' +
       '<td class="mono" style="color:var(--muted)">—</td>' +
       '<td class="mono">R$ 0,00</td>' +
+      celPeso(b.sk, b.q) +
       tdLucro(-(CALC.cmv[b.sk] || 0)) +
       tdImpacto((CALC.cmv[b.sk] || 0) * b.q) + '</tr>').join('') +
     c.brindes.map(b =>
@@ -4338,9 +4358,17 @@ window.renderCalcResumo = function(){
       prodName(b.sk).substring(0, 44) + ' <span class="pill">brinde</span></td>' +
       '<td class="mono">' + b.q + '</td><td class="mono">R$ 0,00</td>' +
       '<td class="mono">R$ 0,00</td>' +
+      celPeso(b.sk, b.q) +
       tdLucro(-(CALC.cmv[b.sk] || 0)) +
       tdImpacto((CALC.cmv[b.sk] || 0) * b.q) + '</tr>').join('') +
-    '</tbody></table>' +
+    '</tbody>' +
+    /* Rodape com os dois totais do pedido lado a lado: o que ele vale e o que
+       ele pesa. Sao as duas perguntas que se faz antes de fechar. */
+    '<tfoot><tr style="border-top:2px solid var(--line);font-weight:700">' +
+    '<td class="rowlab">Total do pedido</td><td></td><td></td>' +
+    '<td class="mono">' + brl2(c.liq) + '</td>' +
+    '<td class="mono">' + kgFmt(pesoT.kg) + '</td>' +
+    (adm ? '<td></td>' : '<td></td>') + '</tr></tfoot></table>' +
     (adm ? '' : '<div style="padding:8px 0 0;font-size:11px;color:var(--muted)">' +
      'Bonificação e brindes saem com receita zero, mas <b>custam</b>: a coluna ' +
      '<b>Impacto na margem</b> mostra quantos pontos cada linha tira da ' +
@@ -4391,6 +4419,21 @@ window.renderCalcResumo = function(){
   if(fm && fm.value === 'auto') ins.push({t: 'info', x:
     'Frete pelo médio real de <b>' + c.uf + '</b> (' + pct(c.frPct) +
     '). Para cotação específica, use o modo manual.'});
+  /* Peso incompleto e 'warn' e nomeia os itens DE PROPOSITO: o risco nao e o
+     total estar errado, e alguem cotar frete com ele sem saber que falta coisa.
+     Quem olha so o cartao do topo nao veria os travessoes da tabela. */
+  if(pesoT.semPeso.length){
+    const nomes = [...new Set(pesoT.semPeso)]
+                    .map(sk => prodName(sk).substring(0, 30));
+    ins.push({t: 'warn', x:
+      'O peso de <b>' + nomes.length + ' item(ns)</b> não está cadastrado, ' +
+      'então <b>' + kgFmt(pesoT.kg) + '</b> é o peso dos demais, não do pedido ' +
+      'inteiro: ' + nomes.slice(0, 4).join(', ') +
+      (nomes.length > 4 ? ' e mais ' + (nomes.length - 4) : '') + '.'});
+  }else if(pesoT.kg > 0){
+    ins.push({t: 'info', x: 'Peso bruto do pedido: <b>' + kgFmt(pesoT.kg) +
+      '</b>, já incluindo bonificação e brindes.'});
+  }
   // Só quando NAO ha nada mais a dizer. Antes ele entrava sempre que faltava
   // alerta, e num pedido verde virava um segundo "esta tudo bem" redundante -
   // e num amarelo/vermelho ja nao entrava, mas por acidente, nao por regra.
