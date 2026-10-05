@@ -1706,6 +1706,44 @@ function calcVersao(){
 try{ console.info('Calculadora ' + CALC_BUILD); }catch(e){}
 
 function calcTabelasDoExcel(){ return (typeof CALC!=='undefined' && CALC.tabelas) || {}; }
+
+/* ---------------- PESO DO PEDIDO (pedido do Igor em 05/10/2026) ------------
+   O peso vem da Matriz de Cubagem pelo JSON (CALC.pesos), em kg por unidade de
+   venda - ou seja, pelo DISPLAY quando o SKU e display. A conta aqui e so
+   multiplicar pela quantidade; a conversao unidade->display ja foi feita no
+   Python, onde fica junto da planilha que a origina.
+
+   E PESO BRUTO: produto mais embalagem, que e o que vai no caminhao. O liquido
+   seria 60% menor num gel de 30 g (0,030 contra 0,048 kg) e daria cotacao de
+   frete errada.
+
+   BONIFICACAO E BRINDE ENTRAM NO TOTAL. Eles nao faturam, mas pesam e viajam no
+   mesmo caminhao - um total de peso que ignorasse a bonificacao mentiria
+   justamente nos pedidos grandes, que sao os que mais bonificam. */
+function calcPesoDe(sk){
+  try{
+    const p = (typeof CALC !== 'undefined' && CALC.pesos) ? CALC.pesos[sk] : null;
+    return (typeof p === 'number' && isFinite(p) && p > 0) ? p : null;
+  }catch(e){ return null; }
+}
+function calcPesoTotal(c){
+  let kg = 0;
+  const semPeso = [];
+  [c.itens, c.boni, c.brindes].forEach(arr => (arr || []).forEach(it => {
+    const p = calcPesoDe(it.sk);
+    if(p === null){ if(it.q > 0) semPeso.push(it.sk); }
+    else kg += p * (it.q || 0);
+  }));
+  return {kg: kg, semPeso: semPeso};
+}
+/* "12,5 kg" e "1.240 kg": duas casas ate 100 kg, nenhuma acima - acima de
+   100 kg o grama nao muda decisao de frete e so polui a tela. */
+function kgFmt(v){
+  if(v === null || v === undefined) return '—';
+  const dec = (Math.abs(v) < 100) ? 2 : 0;
+  return v.toLocaleString('pt-BR', {minimumFractionDigits: dec,
+                                    maximumFractionDigits: dec}) + ' kg';
+}
 function calcModoLegado(){ return Object.keys(calcTabelasDoExcel()).length===0; }
 
 /* Quem pode escolher Key Account: admin ou a Júlia Barros. É o MESMO portão dos
@@ -2185,19 +2223,30 @@ function renderCalcResumo(){
     resumo.innerHTML=`<div class="empty">Lance as quantidades para ver a rentabilidade.</div>`; insights.innerHTML=''; return;
   }
   const descGeral=calcNum(el('calcDescGeral').value)/100;
+  const pesoT=calcPesoTotal(c);
+  /* uma linha so, usada na tabela: peso do item ou travessao quando o SKU nao
+     esta na matriz de cubagem. Travessao e melhor que zero - zero somaria
+     silenciosamente e faria o total parecer completo. */
+  const celPeso=(sk,q)=>{const p=calcPesoDe(sk);
+    return `<td class="mono">${p===null?'—':kgFmt(p*(q||0))}</td>`;};
   resumo.innerHTML=`<div class="kpirow" style="margin-bottom:14px">
     <div class="kpi accent"><div class="lab">Valor líquido</div><div class="val">${brl2(c.liq)}</div><div class="sub">bruto ${brl2(c.bruto)}${descGeral?` · desc. geral ${pct(descGeral)}`:''}</div></div>
     <div class="kpi sens"><div class="lab">CMV total ${SENS}</div><div class="val" style="font-size:20px">${brl2(c.cmvT)}</div><div class="sub">itens ${brl2(c.cmvItens)}${c.cmvBoni?` · bonif ${brl2(c.cmvBoni)}`:''}${c.cmvBrinde?` · brinde ${brl2(c.cmvBrinde)}`:''}</div></div>
     <div class="kpi sens"><div class="lab">Margem bruta ${SENS}</div><div class="val" style="font-size:20px">${pct(c.liq?c.lucroBruto/c.liq:0)}</div><div class="sub">${brl2(c.lucroBruto)}</div></div>
     <div class="kpi"><div class="lab">Imp+Frete+Comissão</div><div class="val" style="font-size:20px">${brl2(c.imp+c.fr+c.comissaoVal)}</div><div class="sub">imp ${brl2(c.imp)} · frete ${brl2(c.fr)}${c.comissaoVal?` · com ${brl2(c.comissaoVal)}`:''}</div></div>
     <div class="kpi ${c.rent>=0.15?'pos':c.rent<0?'sens':''}"><div class="lab">Rentabilidade</div><div class="val">${pct(c.rent)}</div><div class="sub">${brl2(c.lucro)}</div></div>
+    ${pesoT.kg>0||pesoT.semPeso.length?`<div class="kpi ${pesoT.semPeso.length?'sens':''}"><div class="lab">Peso do pedido</div><div class="val" style="font-size:20px">${kgFmt(pesoT.kg)}</div><div class="sub">${pesoT.semPeso.length?`${pesoT.semPeso.length} item(ns) sem peso cadastrado`:'bruto, com bonificação e brinde'}</div></div>`:''}
   </div>
   <h4 style="color:var(--navy);margin:6px 0 8px">Itens do pedido (qtd &gt; 0)</h4>
-  <table><thead><tr><th>Produto</th><th>Qtd</th><th>Preço final</th><th>Subtotal</th><th>Lucro unit. ${SENS}</th></tr></thead>
-   <tbody>${c.itens.sort((a,b)=>b.liq-a.liq).map(it=>`<tr><td class="rowlab">${prodName(it.sk).substring(0,44)}</td><td class="mono">${it.q}</td><td class="mono">${brl2(it.pf)}</td><td class="mono">${brl2(it.liq)}</td><td class="mono ${it.lucroUnit<0?'neg':''}">${brl2(it.lucroUnit)}</td></tr>`).join('')}
-   ${c.boni.map(b=>`<tr style="opacity:.75"><td class="rowlab">${prodName(b.sk).substring(0,44)} <span class="pill y">bonif</span></td><td class="mono">${b.q}</td><td class="mono">R$ 0,00</td><td class="mono">R$ 0,00</td><td class="mono neg">${brl2(-(CALC.cmv[b.sk]||0))}</td></tr>`).join('')}
-   ${c.brindes.map(b=>`<tr style="opacity:.75"><td class="rowlab">${prodName(b.sk).substring(0,44)} <span class="pill">brinde</span></td><td class="mono">${b.q}</td><td class="mono">R$ 0,00</td><td class="mono">R$ 0,00</td><td class="mono neg">${brl2(-(CALC.cmv[b.sk]||0))}</td></tr>`).join('')}
-   </tbody></table>`;
+  <table><thead><tr><th>Produto</th><th>Qtd</th><th>Preço final</th><th>Subtotal</th><th>Peso</th><th>Lucro unit. ${SENS}</th></tr></thead>
+   <tbody>${c.itens.sort((a,b)=>b.liq-a.liq).map(it=>`<tr><td class="rowlab">${prodName(it.sk).substring(0,44)}</td><td class="mono">${it.q}</td><td class="mono">${brl2(it.pf)}</td><td class="mono">${brl2(it.liq)}</td>${celPeso(it.sk,it.q)}<td class="mono ${it.lucroUnit<0?'neg':''}">${brl2(it.lucroUnit)}</td></tr>`).join('')}
+   ${c.boni.map(b=>`<tr style="opacity:.75"><td class="rowlab">${prodName(b.sk).substring(0,44)} <span class="pill y">bonif</span></td><td class="mono">${b.q}</td><td class="mono">R$ 0,00</td><td class="mono">R$ 0,00</td>${celPeso(b.sk,b.q)}<td class="mono neg">${brl2(-(CALC.cmv[b.sk]||0))}</td></tr>`).join('')}
+   ${c.brindes.map(b=>`<tr style="opacity:.75"><td class="rowlab">${prodName(b.sk).substring(0,44)} <span class="pill">brinde</span></td><td class="mono">${b.q}</td><td class="mono">R$ 0,00</td><td class="mono">R$ 0,00</td>${celPeso(b.sk,b.q)}<td class="mono neg">${brl2(-(CALC.cmv[b.sk]||0))}</td></tr>`).join('')}
+   </tbody>
+   <tfoot><tr style="border-top:2px solid var(--line);font-weight:700">
+     <td class="rowlab">Total do pedido</td><td></td><td></td>
+     <td class="mono">${brl2(c.liq)}</td><td class="mono">${kgFmt(pesoT.kg)}</td><td></td>
+   </tr></tfoot></table>`;
 
   // insights
   const ins=[];
@@ -2209,6 +2258,16 @@ function renderCalcResumo(){
   const neg=c.itens.filter(it=>it.lucroUnit<0).sort((a,b)=>a.lucroUnit-b.lucroUnit)[0];
   if(neg) ins.push({t:'warn',x:`<b>${prodName(neg.sk).substring(0,40)}</b> está com lucro unitário negativo (${brl2(neg.lucroUnit)}/un) — desconto alto demais para esse item.`});
   if(el('calcFreteModo').value==='auto') ins.push({t:'info',x:`Frete pelo médio real de <b>${c.uf}</b> (${pct(c.frPct)}). Para cotação específica, use o modo manual.`});
+  /* O aviso de peso incompleto e DELIBERADAMENTE 'warn' e nomeia os itens: o
+     risco aqui nao e o total estar errado, e alguem cotar frete com ele sem
+     saber que falta coisa. Itens sem peso aparecem com travessao na tabela, mas
+     quem olha so o KPI do topo nao veria. */
+  if(pesoT.semPeso.length){
+    const nomes=[...new Set(pesoT.semPeso)].map(sk=>prodName(sk).substring(0,30));
+    ins.push({t:'warn',x:`O peso de <b>${nomes.length} item(ns)</b> não está na matriz de cubagem, então <b>${kgFmt(pesoT.kg)}</b> é o peso dos demais, não do pedido inteiro: ${nomes.slice(0,4).join(', ')}${nomes.length>4?` e mais ${nomes.length-4}`:''}.`});
+  }else if(pesoT.kg>0){
+    ins.push({t:'info',x:`Peso bruto do pedido: <b>${kgFmt(pesoT.kg)}</b>, já incluindo bonificação e brindes.`});
+  }
   if(!ins.some(o=>o.t==='alert'||o.t==='warn')) ins.push({t:'ok',x:`Pedido equilibrado — nada pressionando a margem de forma preocupante.`});
   const col={info:'var(--sky)',ok:'var(--pos)',warn:'var(--warn)',alert:'var(--neg)'},ic={info:'ℹ',ok:'✓',warn:'!',alert:'✕'};
   insights.innerHTML=`<div style="display:flex;flex-direction:column;gap:8px">${ins.map(o=>`<div style="display:flex;gap:10px;align-items:flex-start;background:#F8FAFE;border-left:3px solid ${col[o.t]};border-radius:8px;padding:10px 14px"><span style="color:${col[o.t]};font-weight:800">${ic[o.t]}</span><span style="font-size:13px;line-height:1.5">${o.x}</span></div>`).join('')}</div>`;
