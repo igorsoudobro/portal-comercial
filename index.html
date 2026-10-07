@@ -1744,6 +1744,41 @@ function kgFmt(v){
   return v.toLocaleString('pt-BR', {minimumFractionDigits: dec,
                                     maximumFractionDigits: dec}) + ' kg';
 }
+
+/* ---------------- VOLUMES / CAIXA MASTER (pedido do Igor em 07/10/2026) -----
+   CALC.caixas diz quantas unidades de venda cabem numa caixa master, NA MESMA
+   unidade em que o SKU e lancado: display para quem vende display, unidade para
+   quem vende avulso. A conversao ja veio resolvida do Python.
+
+   ARREDONDA PARA CIMA, e isso e o ponto. 150 displays com 12 por caixa dao 12,5
+   caixas - mas meia caixa nao viaja: viaja uma caixa pela metade, e a
+   transportadora cobra por volume, nao por fracao. Entao 13. Somar as fracoes e
+   depois arredondar daria 12, e o pedido chegaria com um volume a mais do que o
+   papel diz.
+
+   Bonificacao e brinde entram, pelo mesmo motivo do peso: ocupam caixa. */
+function calcCaixaDe(sk){
+  try{
+    const n = (typeof CALC !== 'undefined' && CALC.caixas) ? CALC.caixas[sk] : null;
+    return (typeof n === 'number' && isFinite(n) && n > 0) ? n : null;
+  }catch(e){ return null; }
+}
+function calcVolumes(c){
+  let volumes = 0, fechadas = 0;
+  const parciais = [], semCaixa = [];
+  [c.itens, c.boni, c.brindes].forEach(arr => (arr || []).forEach(it => {
+    const q = it.q || 0;
+    if(q <= 0) return;
+    const porCx = calcCaixaDe(it.sk);
+    if(porCx === null){ semCaixa.push(it.sk); return; }
+    const cheias = Math.floor(q / porCx), resto = q % porCx;
+    volumes += cheias + (resto > 0 ? 1 : 0);
+    fechadas += cheias;
+    if(resto > 0) parciais.push({sk: it.sk, resto: resto, porCx: porCx});
+  }));
+  return {volumes: volumes, fechadas: fechadas,
+          parciais: parciais, semCaixa: semCaixa};
+}
 function calcModoLegado(){ return Object.keys(calcTabelasDoExcel()).length===0; }
 
 /* Quem pode escolher Key Account: admin ou a Júlia Barros. É o MESMO portão dos
@@ -4301,6 +4336,35 @@ window.renderCalcResumo = function(){
        completo quando nao esta. */
     return '<td class="mono">' + (p === null ? '—' : kgFmt(p * (q || 0))) + '</td>';
   };
+  /* VOLUMES: so no Key Account, como o Igor pediu. E o canal em que o pedido e
+     montado em caixa fechada e a logistica precisa do numero de volumes; nos
+     outros a coluna seria ruido numa tabela que ja tem seis. */
+  const ehKA = (c.tab === CALC_TAB_KA);
+  const volT = ehKA ? calcVolumes(c) : null;
+  const celCaixa = (sk, q) => {
+    if(!ehKA) return '';
+    const porCx = calcCaixaDe(sk);
+    if(porCx === null || !q) return '<td class="mono">—</td>';
+    const cheias = Math.floor(q / porCx), resto = q % porCx;
+    const tot = cheias + (resto > 0 ? 1 : 0);
+    /* o titulo mostra a conta inteira: sem ele, "13" numa linha de 150 parece
+       numero tirado do nada, e quem confere na mao chega em 12,5 */
+    return '<td class="mono" title="' + q + ' ÷ ' + porCx + ' por caixa = ' +
+      cheias + ' fechada(s)' + (resto ? ' + ' + resto + ' solta(s)' : '') + '">' +
+      tot + (resto ? ' <span style="color:var(--muted)">(+' + resto + ')</span>' : '') +
+      '</td>';
+  };
+  const kpiVolumes = (!volT || (!volT.volumes && !volT.semCaixa.length)) ? '' :
+    '<div class="kpi' + (volT.semCaixa.length ? ' sens' : '') + '">' +
+    '<div class="lab">Volumes · caixas master</div>' +
+    '<div class="val" style="font-size:20px">' + n0(volT.volumes) + '</div>' +
+    '<div class="sub">' + (volT.semCaixa.length
+      ? volT.semCaixa.length + ' item(ns) sem caixa cadastrada'
+      : (volT.parciais.length
+          ? n0(volT.fechadas) + ' fechada(s) · ' + volT.parciais.length +
+            ' caixa(s) incompleta(s)'
+          : 'todas fechadas')) + '</div></div>';
+
   const kpiPeso = (!pesoT.kg && !pesoT.semPeso.length) ? '' :
     '<div class="kpi' + (pesoT.semPeso.length ? ' sens' : '') + '">' +
     '<div class="lab">Peso do pedido</div>' +
@@ -4328,16 +4392,17 @@ window.renderCalcResumo = function(){
     '<div class="sub">bruto ' + brl2(c.bruto) +
     (descGeral ? ' · desc. geral ' + pct(descGeral) : '') +
     (c.tab ? ' · tabela ' + c.tab : '') + '</div></div>' +
-    kpisAdm + kpiImpacto + kpiRent + kpiPeso + '</div>' +
+    kpisAdm + kpiImpacto + kpiRent + kpiPeso + kpiVolumes + '</div>' +
     '<h4 style="color:var(--navy);margin:6px 0 8px">Itens do pedido (qtd &gt; 0)</h4>' +
     '<table><thead><tr><th>Produto</th><th>Qtd</th><th>Preço final</th>' +
-    '<th>Subtotal</th><th>Peso</th>' + colLucro + '</tr></thead><tbody>' +
+    '<th>Subtotal</th><th>Peso</th>' + (ehKA ? '<th>Caixas</th>' : '') +
+    colLucro + '</tr></thead><tbody>' +
     c.itens.slice().sort((a, b) => b.liq - a.liq).map(it =>
       '<tr><td class="rowlab">' + prodName(it.sk).substring(0, 44) + '</td>' +
       '<td class="mono">' + it.q + '</td>' +
       '<td class="mono">' + brl2(it.pf) + '</td>' +
       '<td class="mono">' + brl2(it.liq) + '</td>' +
-      celPeso(it.sk, it.q) +
+      celPeso(it.sk, it.q) + celCaixa(it.sk, it.q) +
       tdLucro(it.lucroUnit) + tdVazio + '</tr>').join('') +
     // Bonificacao nao tem preco final: o produto TEM preco de tabela e nao foi
     // vendido a zero - ele nao foi vendido. "R$ 0,00" lia-se como "vendi de
@@ -4350,7 +4415,7 @@ window.renderCalcResumo = function(){
       '<td class="mono">' + b.q + '</td>' +
       '<td class="mono" style="color:var(--muted)">—</td>' +
       '<td class="mono">R$ 0,00</td>' +
-      celPeso(b.sk, b.q) +
+      celPeso(b.sk, b.q) + celCaixa(b.sk, b.q) +
       tdLucro(-(CALC.cmv[b.sk] || 0)) +
       tdImpacto((CALC.cmv[b.sk] || 0) * b.q) + '</tr>').join('') +
     c.brindes.map(b =>
@@ -4358,7 +4423,7 @@ window.renderCalcResumo = function(){
       prodName(b.sk).substring(0, 44) + ' <span class="pill">brinde</span></td>' +
       '<td class="mono">' + b.q + '</td><td class="mono">R$ 0,00</td>' +
       '<td class="mono">R$ 0,00</td>' +
-      celPeso(b.sk, b.q) +
+      celPeso(b.sk, b.q) + celCaixa(b.sk, b.q) +
       tdLucro(-(CALC.cmv[b.sk] || 0)) +
       tdImpacto((CALC.cmv[b.sk] || 0) * b.q) + '</tr>').join('') +
     '</tbody>' +
@@ -4368,7 +4433,8 @@ window.renderCalcResumo = function(){
     '<td class="rowlab">Total do pedido</td><td></td><td></td>' +
     '<td class="mono">' + brl2(c.liq) + '</td>' +
     '<td class="mono">' + kgFmt(pesoT.kg) + '</td>' +
-    (adm ? '<td></td>' : '<td></td>') + '</tr></tfoot></table>' +
+    (ehKA ? '<td class="mono">' + n0(volT.volumes) + '</td>' : '') +
+    '<td></td></tr></tfoot></table>' +
     (adm ? '' : '<div style="padding:8px 0 0;font-size:11px;color:var(--muted)">' +
      'Bonificação e brindes saem com receita zero, mas <b>custam</b>: a coluna ' +
      '<b>Impacto na margem</b> mostra quantos pontos cada linha tira da ' +
