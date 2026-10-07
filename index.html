@@ -108,6 +108,12 @@ input,select{font-family:inherit}
 .card-h{padding:14px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
 .card-h h3{font-size:16px;color:var(--navy)}
 .card-h .hint{font-size:12px;color:var(--muted);font-weight:500}
+/* Botão "Exportar" de cada tabela. Discreto de propósito: ele aparece em ~46
+   cards, e um botão chamativo repetido 46 vezes vira poluição. */
+.btn-exp{font-size:11px;font-weight:600;color:var(--muted);background:var(--grey);
+  border:1px solid var(--line);border-radius:7px;padding:4px 10px;cursor:pointer;
+  white-space:nowrap}
+.btn-exp:hover{color:var(--navy);border-color:var(--sky);background:#fff}
 .scroll{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
 th,td{padding:9px 14px;text-align:right;font-size:13px;border-bottom:1px solid var(--line)}
@@ -11674,6 +11680,163 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
     }
   }
 }
+
+/* ==========================================================================
+   EXPORTAR TABELA EM CSV  (pedido do Igor em 07/10/2026)
+   ==========================================================================
+
+   UM exportador para as ~46 tabelas do Portal, e nao um por aba. A razao nao e
+   preguica: a tela JA esta filtrada e JA esta com a permissao aplicada - o
+   vendedor nao tem a coluna de CMV no DOM dele, e o filtro de periodo ja
+   reduziu as linhas. Lendo a tabela desenhada, o arquivo herda as duas coisas
+   sem um segundo caminho para divergir.
+
+   Um export escrito a mao por aba seria 46 copias da regra de permissao. No dia
+   em que uma coluna sensivel nascesse, seriam 46 lugares para lembrar - e o que
+   vaza nesse esquecimento e CMV e lucro para vendedor.
+
+   Isto tambem evita encostar nas funcoes de render. Este arquivo monta a tela
+   em camadas (VIEWS.find(...).fn = vNovo) e tem funcao definida tres vezes; em
+   05/10 eu editei a copia morta do renderCalcResumo e a coluna simplesmente nao
+   apareceu. Mexer em 15 renders seria repetir aquele erro quinze vezes.
+
+   O BOTAO E INJETADO POR OBSERVACAO DO DOM, nao por chamada no fim de cada
+   render. Varias telas se redesenham sozinhas (Degustacoes a cada 30 s, a
+   Calculadora a cada digito), e um observador cobre todas sem que ninguem
+   precise lembrar de chamar nada.
+
+   LIMITE CONHECIDO: os numeros saem como estao na tela. Onde o brl() arredonda
+   para o real inteiro, o CSV carrega o arredondado. Celulas com `data-v` saem
+   com o valor cru - e assim que se corrige isso onde fizer falta, uma tabela
+   por vez, sem mexer aqui.
+   ========================================================================== */
+
+/* "R$ 1.234,56" -> "1234,56"  |  "17,6%" -> "17,6"  |  "—" -> ""
+   A VIRGULA FICA: o separador do CSV e ';' e o Excel esta em pt-BR, entao
+   1234,56 e lido como numero. Trocar por ponto transformaria tudo em texto. */
+function expValor(td){
+  const cru = td.getAttribute('data-v');
+  if(cru !== null && cru !== '') return cru.replace('.', ',');
+  let t = (td.textContent || '').replace(/\s+/g, ' ').trim();
+  if(!t || t === '—' || t === '-') return '';
+  /* o Portal usa o sinal de menos tipografico em varias telas */
+  t = t.replace(/−/g, '-');
+  /* marcador visual depois do numero: "12 ·mista" -> "12" */
+  t = t.replace(/\s*·.*$/, '').trim();
+  /* A UNIDADE SO SAI SE ESTIVER NESTA LISTA.
+     A tentacao e aceitar "numero + qualquer palavra curta", mas isso
+     transformaria "2026 Janeiro" em 2026. Lista explicita nao tem esse risco:
+     o que nao esta nela continua texto, que no pior caso e so menos comodo. */
+  const UNID = /\s?(kg|g|un|dp|cx|%)$/i;
+  const semUnid = t.replace(UNID, '').trim();
+  if(/^-?R?\$?\s?-?[\d.]+(,\d+)?$/.test(semUnid)){
+    return semUnid.replace(/R\$|\s/g, '')
+                  .replace(/\.(?=\d{3}(\D|$))/g, '');   /* tira ponto de milhar */
+  }
+  return t;
+}
+
+function expLinhas(tabela){
+  const linhas = [];
+  tabela.querySelectorAll('tr').forEach(tr => {
+    /* linha escondida por filtro de tela nao entra: o arquivo tem de ser o que
+       a pessoa esta vendo, nao o que esta no HTML */
+    if(tr.offsetParent === null && tr.closest('thead') === null) return;
+    const cs = tr.querySelectorAll('th,td');
+    if(!cs.length) return;
+    linhas.push([...cs].map(expValor));
+  });
+  return linhas;
+}
+
+function expNomeArquivo(card){
+  const aba = (typeof CURRENT !== 'undefined' ? CURRENT : 'portal');
+  const h = card.querySelector('.card-h h3');
+  const tit = (h ? h.textContent : 'tabela').trim()
+                .normalize('NFD').replace(/[̀-ͯ]/g, '')
+                .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').toLowerCase();
+  let quem = 'dobro';
+  try{ quem = String((SESSION && SESSION.user) || 'dobro'); }catch(e){}
+  quem = quem.normalize('NFD').replace(/[̀-ͯ]/g, '')
+             .replace(/[^A-Za-z0-9]+/g, '_');
+  const d = new Date(), p = x => String(x).padStart(2, '0');
+  return [aba, tit, quem, '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) +
+          '_' + p(d.getHours()) + p(d.getMinutes())].join('_') + '.csv';
+}
+
+function expTabela(card){
+  const tabela = card && card.querySelector('table');
+  if(!tabela) return null;
+  const linhas = expLinhas(tabela);
+  if(!linhas.length) return null;
+
+  const esc = v => {
+    const s = String(v == null ? '' : v);
+    return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  /* BOM na frente: sem ele o Excel abre o acento como caractere estranho */
+  const csv = '﻿' + linhas.map(l => l.map(esc).join(';')).join('\r\n');
+  const nome = expNomeArquivo(card);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
+  a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return {nome: nome, linhas: linhas.length, colunas: linhas[0].length};
+}
+window.expTabela = expTabela;
+
+function expInjetar(){
+  document.querySelectorAll('.card').forEach(card => {
+    const h = card.querySelector('.card-h');
+    if(!h || h.querySelector('.btn-exp')) return;
+    if(!card.querySelector('table tbody tr')) return;   /* tabela vazia, nao */
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn-exp';
+    b.textContent = 'Exportar';
+    b.title = 'Baixa esta tabela em CSV, exatamente como está na tela — ' +
+              'mesmo filtro, mesmas colunas.';
+    h.appendChild(b);
+  });
+}
+
+/* UM ouvinte so, no documento: os botoes nascem e morrem a cada render, e
+   pendurar ouvinte em cada um deixaria lixo preso ao DOM antigo. */
+document.addEventListener('click', ev => {
+  const alvo = ev.target && ev.target.closest && ev.target.closest('.btn-exp');
+  if(!alvo) return;
+  ev.preventDefault();
+  const card = alvo.closest('.card');
+  const antes = alvo.textContent;
+  try{
+    const r = expTabela(card);
+    alvo.textContent = r ? 'Baixado' : 'Vazio';
+  }catch(e){
+    console.error('export falhou', e);
+    alvo.textContent = 'Erro';
+  }
+  setTimeout(() => { alvo.textContent = antes; }, 1800);
+});
+
+/* O observador e debounced porque um render dispara dezenas de mutacoes; sem
+   isso o expInjetar rodaria dezenas de vezes por clique de filtro. */
+(function(){
+  let timer = null;
+  const obs = new MutationObserver(() => {
+    if(timer) return;
+    timer = setTimeout(() => { timer = null; try{ expInjetar(); }catch(e){} }, 120);
+  });
+  const liga = () => {
+    try{
+      obs.observe(document.body, {childList: true, subtree: true});
+      expInjetar();
+    }catch(e){ console.error('export: nao consegui observar o DOM', e); }
+  };
+  if(document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', liga);
+  else liga();
+})();
 
 </script>
 </body>
