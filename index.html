@@ -1763,21 +1763,48 @@ function calcCaixaDe(sk){
     return (typeof n === 'number' && isFinite(n) && n > 0) ? n : null;
   }catch(e){ return null; }
 }
+/* CAIXA MISTA (regra do Igor, 07/10/2026): SKUs da mesma categoria e formato,
+   com a mesma capacidade, dividem caixa - muda so o sabor. Por isso a conta
+   AGRUPA antes de arredondar.
+
+   O erro que isto evita e concreto: 150 displays de Maracuja (12,5 caixas) e
+   150 de Neutro Fresh (12,5 caixas) nao sao 13 + 13 = 26 volumes. As duas metades
+   viajam juntas numa caixa mista: 300 / 12 = 25 volumes exatos. Contar por SKU
+   cobraria um volume a mais.
+
+   Quem NAO tem grupo conhecido fica sozinho, de proposito: misturar por
+   suposicao SUBESTIMARIA volumes, e caixa faltando chega no cliente. */
+function calcGrupoDe(sk){
+  try{
+    const g = (typeof CALC !== 'undefined' && CALC.cxgrupo) ? CALC.cxgrupo[sk] : null;
+    return g || ('SO|' + sk);
+  }catch(e){ return 'SO|' + sk; }
+}
 function calcVolumes(c){
-  let volumes = 0, fechadas = 0;
-  const parciais = [], semCaixa = [];
+  const porGrupo = {};
+  const semCaixa = [];
   [c.itens, c.boni, c.brindes].forEach(arr => (arr || []).forEach(it => {
     const q = it.q || 0;
     if(q <= 0) return;
     const porCx = calcCaixaDe(it.sk);
     if(porCx === null){ semCaixa.push(it.sk); return; }
-    const cheias = Math.floor(q / porCx), resto = q % porCx;
+    const g = calcGrupoDe(it.sk);
+    const o = porGrupo[g] = porGrupo[g] || {q: 0, porCx: porCx, skus: []};
+    o.q += q;
+    o.skus.push(it.sk);
+  }));
+  let volumes = 0, fechadas = 0;
+  const parciais = [], mistas = [];
+  Object.keys(porGrupo).forEach(g => {
+    const o = porGrupo[g];
+    const cheias = Math.floor(o.q / o.porCx), resto = o.q % o.porCx;
     volumes += cheias + (resto > 0 ? 1 : 0);
     fechadas += cheias;
-    if(resto > 0) parciais.push({sk: it.sk, resto: resto, porCx: porCx});
-  }));
-  return {volumes: volumes, fechadas: fechadas,
-          parciais: parciais, semCaixa: semCaixa};
+    if(resto > 0) parciais.push({grupo: g, resto: resto, porCx: o.porCx});
+    if(o.skus.length > 1) mistas.push({grupo: g, skus: o.skus, q: o.q});
+  });
+  return {volumes: volumes, fechadas: fechadas, parciais: parciais,
+          mistas: mistas, semCaixa: semCaixa, porGrupo: porGrupo};
 }
 function calcModoLegado(){ return Object.keys(calcTabelasDoExcel()).length===0; }
 
@@ -4341,18 +4368,23 @@ window.renderCalcResumo = function(){
      outros a coluna seria ruido numa tabela que ja tem seis. */
   const ehKA = (c.tab === CALC_TAB_KA);
   const volT = ehKA ? calcVolumes(c) : null;
+  /* A coluna mostra a CAPACIDADE da caixa, nao quantas caixas a linha gera -
+     pedido do Igor em 07/10/2026, e e a informacao honesta aqui: com caixa
+     mista, "quantas caixas" nao e uma propriedade da linha, e sim do grupo de
+     sabores. O numero de volumes do pedido fica no cartao e no rodape. */
   const celCaixa = (sk, q) => {
     if(!ehKA) return '';
     const porCx = calcCaixaDe(sk);
-    if(porCx === null || !q) return '<td class="mono">—</td>';
-    const cheias = Math.floor(q / porCx), resto = q % porCx;
-    const tot = cheias + (resto > 0 ? 1 : 0);
-    /* o titulo mostra a conta inteira: sem ele, "13" numa linha de 150 parece
-       numero tirado do nada, e quem confere na mao chega em 12,5 */
-    return '<td class="mono" title="' + q + ' ÷ ' + porCx + ' por caixa = ' +
-      cheias + ' fechada(s)' + (resto ? ' + ' + resto + ' solta(s)' : '') + '">' +
-      tot + (resto ? ' <span style="color:var(--muted)">(+' + resto + ')</span>' : '') +
-      '</td>';
+    if(porCx === null) return '<td class="mono">—</td>';
+    const g = calcGrupoDe(sk);
+    const noGrupo = volT && volT.porGrupo[g];
+    const dica = (noGrupo && noGrupo.skus.length > 1)
+      ? ' title="caixa mista: ' + noGrupo.skus.length + ' sabores somam ' +
+        noGrupo.q + ' e fecham ' + Math.ceil(noGrupo.q / porCx) + ' caixa(s)"'
+      : '';
+    return '<td class="mono"' + dica + '>' + porCx +
+      ((noGrupo && noGrupo.skus.length > 1)
+        ? ' <span style="color:var(--muted)">·mista</span>' : '') + '</td>';
   };
   const kpiVolumes = (!volT || (!volT.volumes && !volT.semCaixa.length)) ? '' :
     '<div class="kpi' + (volT.semCaixa.length ? ' sens' : '') + '">' +
@@ -4360,10 +4392,10 @@ window.renderCalcResumo = function(){
     '<div class="val" style="font-size:20px">' + n0(volT.volumes) + '</div>' +
     '<div class="sub">' + (volT.semCaixa.length
       ? volT.semCaixa.length + ' item(ns) sem caixa cadastrada'
-      : (volT.parciais.length
-          ? n0(volT.fechadas) + ' fechada(s) · ' + volT.parciais.length +
-            ' caixa(s) incompleta(s)'
-          : 'todas fechadas')) + '</div></div>';
+      : (n0(volT.fechadas) + ' fechada(s)' +
+         (volT.parciais.length ? ' · ' + volT.parciais.length + ' incompleta(s)' : '') +
+         (volT.mistas.length ? ' · ' + volT.mistas.length + ' mista(s)' : ''))) +
+    '</div></div>';
 
   const kpiPeso = (!pesoT.kg && !pesoT.semPeso.length) ? '' :
     '<div class="kpi' + (pesoT.semPeso.length ? ' sens' : '') + '">' +
@@ -4395,7 +4427,7 @@ window.renderCalcResumo = function(){
     kpisAdm + kpiImpacto + kpiRent + kpiPeso + kpiVolumes + '</div>' +
     '<h4 style="color:var(--navy);margin:6px 0 8px">Itens do pedido (qtd &gt; 0)</h4>' +
     '<table><thead><tr><th>Produto</th><th>Qtd</th><th>Preço final</th>' +
-    '<th>Subtotal</th><th>Peso</th>' + (ehKA ? '<th>Caixas</th>' : '') +
+    '<th>Subtotal</th><th>Peso</th>' + (ehKA ? '<th>Qtd/caixa</th>' : '') +
     colLucro + '</tr></thead><tbody>' +
     c.itens.slice().sort((a, b) => b.liq - a.liq).map(it =>
       '<tr><td class="rowlab">' + prodName(it.sk).substring(0, 44) + '</td>' +
