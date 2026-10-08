@@ -3470,6 +3470,15 @@ function vResumoNovo(){
       fat:o.fat, ticket: o.pedidos.size ? o.fat / o.pedidos.size : 0,
       dev: dv.dev, boni: dv.boni, rent: dv.rent, fatLiq: dv.fatLiq,
       lucro: dv.lucro,
+      /* Margem bruta e % bonificado saem do MESMO dre() da linha, e nao de uma
+         soma propria: assim a coluna daqui nao pode divergir do DRE por eu ter
+         esquecido de descontar algo. (08/10/2026) */
+      margem: dv.margem,
+      /* % bonificado = (bonificação + amostra) sobre o faturamento LIQUIDO - o
+         mesmo critério do cartão do Resumo e do e-mail de fechamento. Sem base
+         liquida nao existe percentual: devolve null e a celula mostra
+         travessao, em vez de 0% lido como "nao bonificou". */
+      pboni: dv.fatLiq > 0 ? dv.boni / dv.fatLiq : null,
       desc: (d && d.tab > 0) ? 1 - d.real / d.tab : null,
       descCob: (d && d.fatTot > 0) ? d.real / d.fatTot : 0
     };
@@ -3495,6 +3504,29 @@ function vResumoNovo(){
            (cob < 70 ? ';opacity:.55' : '') + '">' + pct(r.desc) + '</span>';
   };
 
+  /* MARGEM BRUTA segue a mesma trava da rentabilidade: ela nasce do CMV, entao
+     quem ve rentabilidade em farol ve margem em farol tambem. Mostrar o
+     percentual aqui para quem nao pode ver numero de rentabilidade seria abrir
+     pela janela o que a porta fecha - de margem e faturamento se chega ao CMV.
+
+     A regua do farol e a MESMA (farolCor), de proposito: duas reguas na mesma
+     linha fariam a pessoa comparar cores que nao significam a mesma coisa. */
+  const celulaMargem = (r) => {
+    if(r.margem === null || r.margem === undefined || !(r.fatLiq > 0))
+      return '<span style="color:var(--muted)">—</span>';
+    return verNumeroRent()
+      ? '<span class="mono" style="color:' + farolCor(r.margem) +
+        ';font-weight:700">' + pct(r.margem) + '</span>'
+      : farol(r.margem, false);
+  };
+  /* % bonificado NAO e sensivel: o valor em reais da bonificacao ja esta na
+     coluna ao lado, e dividir por um faturamento que tambem esta na tela nao
+     revela nada novo. Entao todo mundo ve o numero. */
+  const celulaPboni = (r) =>
+    (r.pboni === null || r.pboni === undefined)
+      ? '<span style="color:var(--muted)">—</span>'
+      : '<span class="mono">' + pct(r.pboni) + '</span>';
+
   const tot = arr.reduce((a,r) => ({
     cart:a.cart+r.cart, ativos:a.ativos+r.ativos, inativos:a.inativos+r.inativos,
     compraram:a.compraram+(r.compraram||0),
@@ -3509,9 +3541,13 @@ function vResumoNovo(){
     '</span></div>' +
     '<div class="scroll"><table class="tbl-vend"><thead><tr>' +
     '<th>Vendedor</th><th style="text-align:right">Faturamento</th>' +
+    '<th style="text-align:right" title="lucro bruto sobre o faturamento ' +
+      'líquido — mesmo critério do DRE">Margem bruta</th>' +
     '<th style="text-align:right">Ticket médio</th>' +
     '<th style="text-align:right">Devoluções</th>' +
     '<th style="text-align:right">Bonif.+Amostra</th>' +
+    '<th style="text-align:right" title="(bonificação + amostra) sobre o ' +
+      'faturamento líquido — mesmo critério do cartão do Resumo">% bonif.</th>' +
     '<th style="text-align:right">Rentab.</th>' +
     '<th style="text-align:right">Desc. médio</th>' +
     '<th style="text-align:right">Novos clientes</th>' +
@@ -3524,12 +3560,14 @@ function vResumoNovo(){
     arr.map(r =>
       '<tr><td class="rowlab">' + r.v + '</td>' +
       '<td class="mono" style="text-align:right">' + brl(r.fat) + '</td>' +
+      '<td style="text-align:right">' + celulaMargem(r) + '</td>' +
       '<td class="mono" style="text-align:right">' + brl(r.ticket) + '</td>' +
       '<td class="mono" style="text-align:right' +
         (r.dev ? ';color:#C0392B' : ';color:var(--muted)') + '">' +
         (r.dev ? brl(r.dev) : '—') + '</td>' +
       '<td class="mono" style="text-align:right">' +
         (r.boni ? brl(r.boni) : '—') + '</td>' +
+      '<td style="text-align:right">' + celulaPboni(r) + '</td>' +
       '<td style="text-align:right">' + celulaRent(r) + '</td>' +
       '<td style="text-align:right">' + celulaDesc(r) + '</td>' +
       '<td class="mono" style="text-align:right">' + n0(r.novos) + '</td>' +
@@ -3544,9 +3582,15 @@ function vResumoNovo(){
                     : '<span style="color:var(--muted)">—</span>') + '</td></tr>').join('') +
     '<tr class="tot"><td class="tot">Total</td>' +
     '<td class="mono tot" style="text-align:right">' + brl(tot.fat) + '</td>' +
+    /* A margem do TOTAL e o dre() do recorte inteiro, nao a media das linhas -
+       mesma razao da rentabilidade logo abaixo. */
+    '<td class="mono tot" style="text-align:right">' +
+      (verNumeroRent() ? pct(totDre.margem) : '') + '</td>' +
     '<td class="tot"></td>' +
     '<td class="mono tot" style="text-align:right">' + brl(tot.dev) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + brl(tot.boni) + '</td>' +
+    '<td class="mono tot" style="text-align:right">' +
+      (totDre.fatLiq > 0 ? pct(totDre.boni / totDre.fatLiq) : '—') + '</td>' +
     // A rentabilidade do TOTAL nao e a soma nem a media das linhas: e o dre() do
     // recorte inteiro. Somar percentuais daria numero sem significado.
     '<td class="mono tot" style="text-align:right">' +
