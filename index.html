@@ -119,6 +119,10 @@ input,select{font-family:inherit}
    flutuando a direita; e quando o card nao tem titulo nenhum dentro, entra uma
    barrinha so para ele. */
 .btn-exp.solto{float:right;margin-left:10px}
+.link-util{display:flex;align-items:center;gap:14px;text-decoration:none;
+  border:1px solid var(--line);border-radius:10px;padding:16px 18px;background:#fff;
+  transition:border-color .15s,box-shadow .15s}
+.link-util:hover{border-color:var(--sky);box-shadow:0 2px 10px rgba(0,0,0,.06)}
 .exp-bar{display:flex;justify-content:flex-end;padding:8px 10px 0}
 .scroll{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
@@ -4939,8 +4943,13 @@ function shrDados(){
 
   const soma = (alvo, chave, m, r) => {
     const o = alvo[chave] = alvo[chave] || {};
-    const c = o[m] = o[m] || {fat: 0, vol: 0, luc: 0, liq: 0};
+    const c = o[m] = o[m] || {fat: 0, vol: 0, luc: 0, liq: 0, cmv: 0};
     c.fat += r.fat; c.vol += r.q;
+    /* CMV para o modo M (custo / preco de venda), pedido do Igor em
+       13/10/2026. Entra AQUI, na passada de venda+devolucao, e nao na segunda:
+       M e custo sobre RECEITA, e bonificacao/amostra nao tem receita - incluir
+       inflaria o custo contra uma base que nao existe. */
+    c.cmv += r.cmv;
   };
   /* O contrato por CNPJ e consultado uma vez por cliente e guardado: a conta
      passou a rodar por LINHA, e sao dezenas de milhares. */
@@ -4966,8 +4975,8 @@ function shrDados(){
     soma(cat, c, r.m, r);
     soma(sku, r.sk, r.m, r);
     catDoSku[r.sk] = c;
-    const t = tot[r.m] = tot[r.m] || {fat: 0, vol: 0};
-    t.fat += r.fat; t.vol += r.q;
+    const t = tot[r.m] = tot[r.m] || {fat: 0, vol: 0, cmv: 0};
+    t.fat += r.fat; t.vol += r.q; t.cmv += r.cmv;
     const tc = totalCat[c] = totalCat[c] || {fat: 0, vol: 0};
     tc.fat += r.fat; tc.vol += r.q;
   });
@@ -5043,6 +5052,25 @@ function shrCor(v, ant, casas){
                              dos totais é o ticket que de fato aconteceu.
 
    A coluna Média não recebe cor de comparação: ela não tem "mês anterior". */
+/* REGUA DO M (13/10/2026). Corte do Igor: acima de 50% e critico. O amarelo
+   em 45% vem da media medida da casa (46,9% no ano) - passar da media ja
+   merece atencao. Aqui MAIOR e pior, ao contrario de toda outra cor do Portal,
+   e por isso ela nao reusa o farolCor. */
+const M_CRITICO = 0.50;
+const M_ATENCAO = 0.45;
+function corM(x){
+  if(x === null || x === undefined) return 'var(--muted)';
+  return x > M_CRITICO ? '#D64550' : x > M_ATENCAO ? '#E0A800' : '#1BA466';
+}
+function farolM(x){
+  const cor = corM(x);
+  return '<span title="M ' + pct(x) + (x > M_CRITICO ? ' — crítico' : '') +
+    '" style="display:inline-block;width:14px;height:14px;border-radius:50%;' +
+    'background:' + cor + ';box-shadow:0 0 0 3px ' + cor + '33;' +
+    'vertical-align:middle"></span>';
+}
+window.corM = corM; window.farolM = farolM;
+
 /* O MOTOR DAS CONTAS FICA AQUI, e a tabela e o CSV usam os DOIS o mesmo.
    Se a exportação recalculasse por conta própria, um dia divergiria da tela -
    e "qual dos dois está certo" é a pergunta que custa caro. */
@@ -5050,6 +5078,10 @@ function shrMotor(D, qual, modo){
   const ehPct = (qual === 'pct');
   const ehTic = (modo === 'tic');
   const ehMrg = (modo === 'mrg');
+  /* M = CMV / faturamento liquido. NAO e o inverso da 'Margem liquida' ao lado:
+     aquela desconta imposto, frete, comissao e contrato; esta e so custo sobre
+     preco. Sao duas perguntas diferentes e as duas cabem na mesma tela. */
+  const ehM = (modo === 'mcu');
   const cru = (o, m, campo) => (o && o[m]) ? (o[m][campo] || 0) : 0;
   /* No modo ticket o valor da célula é uma razão: sem volume não existe ticket,
      e devolver 0 mentiria (0 é "vendeu de graça", não "não vendeu"). */
@@ -5059,6 +5091,10 @@ function shrMotor(D, qual, modo){
     if(ehMrg){
       const b = cru(o, m, 'liq');
       return b ? cru(o, m, 'luc') / b : null;
+    }
+    if(ehM){
+      const b = cru(o, m, 'fat');
+      return b ? cru(o, m, 'cmv') / b : null;
     }
     if(!ehTic) return cru(o, m, modo);
     const v = cru(o, m, 'vol');
@@ -5082,6 +5118,13 @@ function shrMotor(D, qual, modo){
       D.meses.forEach(m => { l += cru(o, m, 'luc'); b += cru(o, m, 'liq'); });
       return b ? l / b : null;
     }
+    if(ehM){
+      /* ponderada pelo faturamento, mesma razao da margem: media de
+         percentuais daria o mesmo peso a um mes de R$ 2 mil e a um de R$ 100 mil */
+      let c = 0, f = 0;
+      D.meses.forEach(m => { c += cru(o, m, 'cmv'); f += cru(o, m, 'fat'); });
+      return f ? c / f : null;
+    }
     if(ehTic){
       let f = 0, v = 0;
       D.meses.forEach(m => { f += cru(o, m, 'fat'); v += cru(o, m, 'vol'); });
@@ -5095,13 +5138,27 @@ function shrMotor(D, qual, modo){
      A cor de fundo (subiu/caiu) continua, porque ela mostra direcao e nao
      valor. */
   const mrgNum = ehMrg && veMargemCatEmNumero();
-  return {ehPct, ehTic, ehMrg, celula, media,
-          casas: (ehPct || ehMrg) ? 3 : ehTic ? 2 : 0,
+  const mNum = ehM && veMargemCatEmNumero();
+  /* O M TEM REGUA PROPRIA, e eu cheguei a errar isso.
+     Primeiro tentei reusar o farol da rentabilidade pelo complemento
+     (farolCor(1 - M)). O teste mostrou o problema: M de 52% vira "48% de
+     margem", que na regua de RENTABILIDADE e verde folgado - quando 52% e
+     exatamente o que o Igor chama de critico.
+     Sao grandezas diferentes: aquela regua mede lucro final (verde >= 25%),
+     esta mede custo sobre preco. O corte e o do Igor (13/10/2026): acima de
+     50% e critico. O amarelo em 45% sai da media medida da casa, 46,9% - ou
+     seja, passar da media ja acende a luz. */
+  return {ehPct, ehTic, ehMrg, ehM, celula, media,
+          casas: (ehPct || ehMrg || ehM) ? 3 : ehTic ? 2 : 0,
           fmt: (x) => x === null ? '—'
             : ehMrg ? (mrgNum
                         ? '<span style="color:' + farolCor(x) + ';font-weight:700">'
                           + pct(x) + '</span>'
                         : farol(x, false))
+            : ehM ? (mNum
+                        ? '<span style="color:' + corM(x) + ';font-weight:700">'
+                          + pct(x) + '</span>'
+                        : farolM(x))
             : ehPct ? pct(x) : ehTic ? brl2(x)
             : (modo === 'fat' ? brl(x) : n0(x))};
 }
@@ -5118,7 +5175,12 @@ function shrTabela(qual){
   const ehTic = M.ehTic, fmt = M.fmt, media = M.media, casas = M.casas;
   /* margem nunca e "share": se alguem chegar aqui com o par errado, volta para
      faturamento em vez de desenhar uma coluna sem significado */
-  if(ehPct && M.ehMrg){ modo = SHARE_MODO[qual] = 'fat'; return shrTabela(qual); }
+  /* 'Share de M' nao e grandeza: os M das categorias nao somam o M do total,
+     entao o quadro de percentuais volta para faturamento - mesma razao da
+     margem e do ticket. */
+  if(ehPct && (M.ehMrg || M.ehM)){
+    modo = SHARE_MODO[qual] = 'fat'; return shrTabela(qual);
+  }
   const valor = (o, m) => M.celula(o, m);
   const share = valor;
 
@@ -5167,7 +5229,7 @@ function shrTabela(qual){
   tdsTot += '<td class="mono shr-media">' +
     fmt(ehPct ? 1 : media(D.tot)) + '</td>';
 
-  const rotTot = ehPct ? 'Total' : M.ehMrg ? 'Margem do mês'
+  const rotTot = ehPct ? 'Total' : M.ehM ? 'M do mês' : M.ehMrg ? 'Margem do mês'
                : ehTic ? 'Ticket do mês' : 'Total do mês';
   return '<table class="shr-tbl"><thead><tr><th>Categoria</th>' +
     D.meses.map(m => '<th>' + m.substring(0, 3) + '</th>').join('') +
@@ -5182,7 +5244,8 @@ function shrCard(qual, titulo, dica, ns){
   let modo = SHARE_MODO[qual];
   /* Se o usuario perdeu o direito a margem entre um render e outro (troca de
      conta), o botao some e o modo tem de voltar para algo que ele possa ver. */
-  if(modo === 'mrg' && !veMargemCat()) modo = SHARE_MODO[qual] = 'fat';
+  if((modo === 'mrg' || modo === 'mcu') && !veMargemCat())
+    modo = SHARE_MODO[qual] = 'fat';
   /* O botão de ticket médio só existe no quadro de valores - ver o cabeçalho
      do shrTabela para o motivo. */
   const bt = (m, rot) => '<button data-shr-modo="' + m + '"' +
@@ -5199,6 +5262,7 @@ function shrCard(qual, titulo, dica, ns){
     bt('fat', 'Faturamento') + bt('vol', 'Volume') +
     (qual === 'abs' ? bt('tic', 'Ticket médio') : '') +
     (qual === 'abs' && veMargemCat() ? bt('mrg', 'Margem líquida') : '') +
+    (qual === 'abs' && veMargemCat() ? bt('mcu', 'M · custo/preço') : '') +
     '</span>' +
     '<button class="btn-y" data-shr-xls="' + qual + '" style="margin-left:10px;' +
     'font-size:12px;padding:6px 12px">Extrair Excel</button>' +
@@ -5261,10 +5325,10 @@ function shrExtrair(qual){
   const ROTULO = (qual === 'pct')
     ? {fat: 'Share faturamento (%)', vol: 'Share volume (%)'}
     : {fat: 'Faturamento (R$)', vol: 'Volume (un)', tic: 'Ticket médio (R$)',
-       mrg: 'Margem líquida (%)'};
+       mrg: 'Margem líquida (%)', mcu: 'M · custo/preço (%)'};
   /* O moderador ve margem em FAROL na tela; deixar o CSV sair com o numero
      seria a mesma informacao por outra porta. Quem ve bolinha nao extrai. */
-  if(SHARE_MODO[qual] === 'mrg' && !veMargemCatEmNumero()){
+  if((SHARE_MODO[qual] === 'mrg' || SHARE_MODO[qual] === 'mcu') && !veMargemCatEmNumero()){
     alert('A margem líquida aparece em farol no seu perfil, sem o número. ' +
           'Escolha Faturamento, Volume ou Ticket médio para extrair.');
     return null;
@@ -5283,8 +5347,8 @@ function shrExtrair(qual){
   medidas.forEach(([modo, rotulo]) => {
     const M = shrMotor(D, qual, modo);
     /* percentual sai em pontos (58,3); valor e volume saem crus */
-    const casas = (M.ehPct || M.ehMrg) ? 1 : (modo === 'vol' ? 0 : 2);
-    const conv = (x) => x === null ? null : ((M.ehPct || M.ehMrg) ? x * 100 : x);
+    const casas = (M.ehPct || M.ehMrg || M.ehM) ? 1 : (modo === 'vol' ? 0 : 2);
+    const conv = (x) => x === null ? null : ((M.ehPct || M.ehMrg || M.ehM) ? x * 100 : x);
     D.cats.forEach(c => {
       push(...[rotulo, 'Categoria', c, '']
         .concat(D.meses.map(m => nx(conv(M.celula(D.cat[c], m)), casas)))
@@ -11728,6 +11792,288 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
       d.id = 'v-acessos';
       irmao.parentNode.insertBefore(d, irmao);
     }
+  }
+}
+
+/* ==========================================================================
+   SKUs CRÍTICOS  (pedido do Igor em 13/10/2026)
+   ==========================================================================
+
+   M = CMV / faturamento liquido. Acima do corte, o SKU esta "critico": o custo
+   come mais da metade do preco. A lista abre em tres niveis:
+
+       SKU  ->  canal  ->  clientes, com o preco que cada um paga
+
+   POR QUE TRES NIVEIS E NAO UMA TABELA SO: um SKU tem M alto por causa de UM
+   canal, e o canal por causa de UNS CLIENTES. Uma tabela plana com SKU x canal
+   x cliente teria milhares de linhas e esconderia justamente a hierarquia que
+   responde "quem esta puxando".
+
+   O CORTE E EDITAVEL, com 50% de padrao. Medido em 13/10/2026: com 50% sao 28
+   SKUs de 101, somando 36,5% do faturamento - ou seja, nao e uma lista de
+   excecoes, e um terco do negocio, com os carros-chefe no topo. Deixar o numero
+   na mao do Igor e melhor que eu escolher um corte que parece limpo.
+
+   PERMISSAO: M nasce do CMV. Quem ja ve rentabilidade em numero ve o M em
+   numero; os demais veem o FAROL e o PRECO. O preco o vendedor ja conhece - e
+   ele que negocia - entao ele consegue agir ("esse cliente esta no vermelho,
+   preciso apertar") sem que o custo vaze.
+   ========================================================================== */
+let SKU_CRIT = {corte: 0.50, sku: null, canal: null};
+
+/* Soma por chave, so venda e devolucao: M e custo sobre RECEITA, e
+   bonificacao/amostra nao tem receita. */
+function skuCritAgrupar(rows, chaveDe){
+  const m = {};
+  rows.forEach(r => {
+    if(!(r.venda || r.tipo === 0)) return;
+    const k = chaveDe(r);
+    if(k === null || k === undefined || k === '') return;
+    const o = m[k] = m[k] || {fat: 0, cmv: 0, q: 0};
+    o.fat += r.fat; o.cmv += r.cmv; o.q += r.q;
+  });
+  Object.values(m).forEach(o => { o.M = o.fat > 0 ? o.cmv / o.fat : null; });
+  return m;
+}
+
+function skuCritCelula(M){
+  if(M === null || M === undefined) return '<span style="color:var(--muted)">—</span>';
+  return verNumeroRent()
+    ? '<span class="mono" style="color:' + corM(M) + ';font-weight:700">' +
+      pct(M) + '</span>'
+    : farolM(M);
+}
+
+function montarSkusCriticos(){
+  /* getElementById direto, e nao el()/el2(): o el2 vive dentro de outro bloco
+     de script e nao e global - descobri isso no teste, com um
+     "el2 is not defined" vindo daqui. Dependencia a menos. */
+  const view = document.getElementById('v-resumo');
+  if(!view) return;
+  const mapa = view.querySelector('#resMapa');
+  const antes = mapa ? mapa.closest('.card') : null;
+
+  const L = linhas();
+  const porSku = skuCritAgrupar(L, r => r.sk);
+  const corte = SKU_CRIT.corte;
+  const criticos = Object.entries(porSku)
+    .filter(([, o]) => o.M !== null && o.M > corte)
+    .sort((a, b) => b[1].fat - a[1].fat);
+  const totFat = Object.values(porSku).reduce((a, o) => a + o.fat, 0);
+  const fatCrit = criticos.reduce((a, par) => a + par[1].fat, 0);
+
+  const cabecalho =
+    '<div class="card" id="cardSkuCrit"><div class="card-h">' +
+    '<h3>SKUs críticos</h3>' +
+    '<span class="hint">M = custo ÷ preço de venda · clique para abrir por canal</span>' +
+    '<span style="margin-left:auto;display:flex;align-items:center;gap:8px">' +
+    '<label style="font-size:11px;color:var(--muted);font-weight:600">M acima de</label>' +
+    '<input id="skuCritCorte" type="number" min="1" max="99" step="1" ' +
+    'value="' + Math.round(corte * 100) + '" style="width:64px;padding:5px 8px;' +
+    'border:1px solid var(--line);border-radius:7px;font-size:13px">' +
+    '<span style="font-size:12px;color:var(--muted)">%</span></span>' +
+    '</div>';
+
+  if(!criticos.length){
+    skuCritInserir(view, antes, cabecalho +
+      '<div class="empty">Nenhum SKU com M acima de ' + pct(corte) +
+      ' no recorte atual.</div></div>');
+    return;
+  }
+
+  const linhasHtml = criticos.map(par => {
+    const sk = par[0], o = par[1];
+    const aberto = (SKU_CRIT.sku === sk);
+    return '<tr class="skucrit-sku" data-sku="' + metasEsc(sk) + '" ' +
+      'style="cursor:pointer' + (aberto ? ';background:#F0F3FA' : '') + '">' +
+      '<td class="rowlab">' + (aberto ? '\u25be ' : '\u25b8 ') +
+        metasEsc(prodName(sk).substring(0, 42)) + '</td>' +
+      '<td class="mono" style="text-align:right">' + brl(o.fat) + '</td>' +
+      '<td class="mono" style="text-align:right">' + n0(o.q) + '</td>' +
+      '<td style="text-align:right">' + skuCritCelula(o.M) + '</td></tr>' +
+      (aberto ? skuCritCanais(L, sk) : '');
+  }).join('');
+
+  skuCritInserir(view, antes, cabecalho +
+    '<div class="scroll"><table><thead><tr>' +
+    '<th>Produto</th><th style="text-align:right">Faturamento</th>' +
+    '<th style="text-align:right">Volume</th>' +
+    '<th style="text-align:right">M</th></tr></thead><tbody>' +
+    linhasHtml + '</tbody></table></div>' +
+    '<div class="fonte">' + criticos.length + ' SKU(s) acima de ' + pct(corte) +
+    ', somando ' + brl(fatCrit) +
+    (totFat > 0 ? ' \u2014 ' + pct(fatCrit / totFat) + ' do faturamento do recorte' : '') +
+    '.</div></div>');
+}
+
+/* Inserido ANTES do mapa, como o Igor pediu. Se o mapa nao estiver na tela, vai
+   para o fim - melhor no lugar errado que sumido. */
+function skuCritInserir(view, antes, html){
+  const velho = view.querySelector('#cardSkuCrit');
+  if(velho) velho.remove();
+  if(antes) antes.insertAdjacentHTML('beforebegin', html);
+  else view.insertAdjacentHTML('beforeend', html);
+  skuCritLigar(view);
+}
+
+function skuCritCanais(L, sk){
+  const doSku = L.filter(r => r.sk === sk);
+  const porCanal = skuCritAgrupar(doSku, r => r.ca || '(sem canal)');
+  return Object.entries(porCanal)
+    .sort((a, b) => b[1].fat - a[1].fat)
+    .map(par => {
+      const ca = par[0], o = par[1];
+      const aberto = (SKU_CRIT.sku === sk && SKU_CRIT.canal === ca);
+      return '<tr class="skucrit-canal" data-sku="' + metasEsc(sk) + '" ' +
+        'data-canal="' + metasEsc(ca) + '" style="cursor:pointer;background:' +
+        (aberto ? '#E8EEF9' : '#FAFBFE') + '">' +
+        '<td style="padding-left:34px;color:var(--navy)">' +
+          (aberto ? '\u25be ' : '\u25b8 ') + metasEsc(ca) + '</td>' +
+        '<td class="mono" style="text-align:right">' + brl(o.fat) + '</td>' +
+        '<td class="mono" style="text-align:right">' + n0(o.q) + '</td>' +
+        '<td style="text-align:right">' + skuCritCelula(o.M) + '</td></tr>' +
+        (aberto ? skuCritClientes(doSku, ca) : '');
+    }).join('');
+}
+
+function skuCritClientes(doSku, ca){
+  const doCanal = doSku.filter(r => (r.ca || '(sem canal)') === ca);
+  const porCli = skuCritAgrupar(doCanal, r => r.cn || '(sem CNPJ)');
+  /* ORDENA PELO M, decrescente: aqui a pergunta nao e quem compra mais, e quem
+     esta puxando a margem para baixo. */
+  const arr = Object.entries(porCli)
+    .filter(par => par[1].M !== null)
+    .sort((a, b) => b[1].M - a[1].M);
+  if(!arr.length) return '';
+  return arr.map(par => {
+    const cn = par[0], o = par[1];
+    /* preco medio pago POR UNIDADE no recorte - e o numero que o vendedor
+       reconhece e sobre o qual ele negocia */
+    const preco = o.q > 0 ? o.fat / o.q : null;
+    return '<tr style="background:#fff">' +
+      '<td style="padding-left:58px;font-size:12px">' +
+        metasEsc(String(cliName(cn) || cn).substring(0, 40)) + '</td>' +
+      '<td class="mono" style="text-align:right;font-size:12px">' + brl(o.fat) + '</td>' +
+      '<td class="mono" style="text-align:right;font-size:12px" ' +
+        'title="preço médio por unidade no período">' +
+        (preco !== null ? brl2(preco) : '\u2014') + '</td>' +
+      '<td style="text-align:right">' + skuCritCelula(o.M) + '</td></tr>';
+  }).join('');
+}
+
+function skuCritLigar(view){
+  const card = view.querySelector('#cardSkuCrit');
+  if(!card || card.dataset.ligado) return;
+  card.dataset.ligado = '1';
+  card.addEventListener('click', ev => {
+    const canal = ev.target.closest('.skucrit-canal');
+    if(canal){
+      SKU_CRIT.canal = (SKU_CRIT.canal === canal.dataset.canal)
+                         ? null : canal.dataset.canal;
+      montarSkusCriticos();
+      return;
+    }
+    const sku = ev.target.closest('.skucrit-sku');
+    if(sku){
+      SKU_CRIT.sku = (SKU_CRIT.sku === sku.dataset.sku) ? null : sku.dataset.sku;
+      SKU_CRIT.canal = null;      /* trocar de SKU fecha o canal aberto */
+      montarSkusCriticos();
+    }
+  });
+  const inp = card.querySelector('#skuCritCorte');
+  if(inp) inp.addEventListener('change', () => {
+    const v = parseFloat(inp.value);
+    if(isFinite(v) && v > 0 && v < 100){
+      SKU_CRIT.corte = v / 100;
+      SKU_CRIT.sku = SKU_CRIT.canal = null;
+      montarSkusCriticos();
+    }
+  });
+}
+window.montarSkusCriticos = montarSkusCriticos;
+
+/* Pendurado por FORA do vResumo, como as outras adicoes deste arquivo: assim
+   nenhuma funcao de render precisa ser editada - e foi editar render em arquivo
+   com funcao repetida que me custou caro em 05/10. */
+if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
+  const _regRes = VIEWS.find(v => v.id === 'resumo');
+  if(_regRes && !_regRes._comSkuCrit){
+    const _antesSkuCrit = _regRes.fn;
+    _regRes.fn = function(){
+      _antesSkuCrit();
+      try{ montarSkusCriticos(); }
+      catch(e){ console.error('SKUs criticos:', e); }
+    };
+    _regRes._comSkuCrit = true;
+  }
+}
+
+/* ==========================================================================
+   LINKS ÚTEIS  (pedido do Igor em 13/10/2026)
+   ==========================================================================
+
+   Botoes que abrem OUTRAS ferramentas da Dobro em aba nova. Nenhum dado passa
+   por aqui - e uma lista de enderecos.
+
+   `rel="noopener noreferrer"` nao e enfeite: sem o noopener a pagina aberta
+   recebe window.opener e pode navegar o Portal para onde quiser; sem o
+   noreferrer ela recebe a URL de origem. Sao sites nossos, mas a regra vale
+   para qualquer link externo e nao custa nada.
+
+   ESTES ENDERECOS SAO PUBLICOS. O index.html esta num repositorio aberto, entao
+   quem ler o codigo le os tres. Avisado ao Igor em 13/10/2026: a protecao tem
+   de estar no login de cada um desses sistemas, nunca no segredo da URL. */
+const LINKS_UTEIS = [
+  {nome: 'Fluxo de inadimplência',
+   desc: 'Recebimentos e cobrança, por visão mensal',
+   url:  'https://dobros-cashflow-keeper.lovable.app/app?recebimentosVisao=mensal'},
+  {nome: 'Recursos Humanos',
+   desc: 'Portal de RH da Dobro',
+   url:  'https://employee-joy-site.lovable.app/'},
+  {nome: 'Gestão de entrega',
+   desc: 'Acompanhamento de entregas e operação',
+   url:  'https://r-dbr-opera-central.vercel.app/'}
+];
+
+function vLinks(){
+  const box = el('v-links');
+  if(!box) return;
+  box.innerHTML =
+    '<div class="card"><div class="card-h"><h3>Links úteis</h3>' +
+    '<span class="hint">abrem em uma nova aba — você continua no Portal</span>' +
+    '</div><div style="padding:18px;display:flex;flex-direction:column;gap:12px">' +
+    LINKS_UTEIS.map(l =>
+      '<a href="' + metasEsc(l.url) + '" target="_blank" rel="noopener noreferrer" ' +
+      'class="link-util">' +
+      '<span style="flex:1">' +
+      '<span style="display:block;font-weight:700;color:var(--navy);font-size:15px">' +
+      metasEsc(l.nome) + '</span>' +
+      '<span style="display:block;font-size:12px;color:var(--muted);margin-top:3px">' +
+      metasEsc(l.desc) + '</span></span>' +
+      '<span style="color:var(--sky);font-weight:700;font-size:18px">\u2197</span>' +
+      '</a>').join('') +
+    '</div></div>' +
+    '<div class="fonte">São sistemas separados do Portal: cada um pede o ' +
+    'próprio login.</div>';
+}
+window.vLinks = vLinks;
+
+if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
+  if(!VIEWS.some(v => v.id === 'links')){
+    VIEWS.push({id: 'links', lab: 'Links úteis', fn: vLinks});
+  }
+  if(!document.getElementById('v-links')){
+    const irmao = document.querySelector('.view');
+    if(irmao && irmao.parentNode){
+      const d = document.createElement('div');
+      d.className = 'view';
+      d.id = 'v-links';
+      irmao.parentNode.insertBefore(d, irmao);
+    }
+  }
+  if(typeof buildNav === 'function'){
+    const nav = document.getElementById('nav');
+    if(nav && nav.children.length) buildNav();
   }
 }
 
