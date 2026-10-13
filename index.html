@@ -187,6 +187,24 @@ table.mapa-tbl th{position:sticky;top:0;background:var(--navy);color:#fff;paddin
 table.mapa-tbl td{padding:5px 8px;border-bottom:1px solid var(--line)}
 table.mapa-tbl tr.ufrow-hi td{background:#FFF7D6}
 table.mapa-tbl tbody tr:hover td{background:#F0F3FA}
+
+/* ---- Quadro gerencial da carteira (13/10/2026) ----
+   Mesma linguagem da cart-tbl logo abaixo dele: so muda o tamanho, porque sao
+   quatro numeros e nao vinte colunas. O thead NAO e sticky aqui de proposito -
+   o quadro tem uma linha por vendedor e cabe na tela; sticky dentro de um card
+   curto so faria o cabecalho tremer ao rolar a pagina. */
+table.qg-tbl{border-collapse:collapse;font-size:12.5px;width:100%}
+table.qg-tbl th{padding:8px 12px;background:var(--navy);color:#fff;font-size:11px;
+  white-space:nowrap;line-height:1.25}
+table.qg-tbl td{padding:7px 12px;border-bottom:1px solid var(--line)}
+table.qg-tbl tbody tr:hover > td{background:#F8FAFE}
+table.qg-tbl tbody tr[style*="--navy"]:hover > td{background:transparent}
+table.qg-tbl td.qg-cel:hover{background:#E8EEF9 !important}
+table.qg-tbl tr.qg-exp:hover > td{background:#FAFBFE}
+table.qg-lista{border-collapse:collapse;font-size:11.5px;width:100%}
+table.qg-lista th{padding:5px 8px;background:#EEF1F8;color:var(--navy);
+  font-size:10px;position:sticky;top:0;z-index:1}
+table.qg-lista td{padding:4px 8px;border-bottom:1px solid var(--line)}
 </style>
 <style>
 /* ===========================================================================
@@ -1404,6 +1422,200 @@ let CART_VEND='(todos)';
 let CART_PAGE=0;
 let CART_BUSCA='';
 const CART_POR_PAG=250;
+
+/* ===================== QUADRO GERENCIAL DA CARTEIRA =======================
+   Pedido do Igor em 13/10/2026: acima da lista, um quadro por vendedor com
+   carteira total, ativos (0 a 120 dias), inativos (120 ou mais) e quem nao
+   comprou no ano - e cada numero abre a lista de quem sao.
+
+   A REGUA AQUI E DE DIAS CORRIDOS, do CART_DATAS (data real do ultimo pedido
+   no Consolidado), e NAO a regua de meses que o Resumo usa. As duas respondem
+   coisas diferentes e as duas estao certas no lugar onde estao:
+
+     Resumo    -> janela de 4 meses ANCORADA NO MES DO FILTRO. Serve para
+                  perguntar "como estava a carteira em Maio?".
+     Carteira  -> dias corridos ate hoje. E a mesma regua da coluna Status e da
+                  coluna "Dias do últ. pedido" que ficam nesta mesma tela.
+
+   Se eu usasse a regua de meses aqui, um cliente com "Dias do últ. pedido = 30"
+   podia cair no balde de inativo e pareceria bug. Elas divergem de verdade: em
+   13/10/2026 a casa tem 900 ativos por dias corridos e 651 pela regua de meses,
+   porque o Consolidado tem pedidos de clientes que nem chegam ao FATO.
+   ========================================================================== */
+const CART_DIAS_INATIVO = 120;
+let CART_QG = {v:null, b:null};     // vendedor e balde abertos no quadro
+
+/* Ano do DADO, nao o do relogio (mesma licao do metasAno). */
+function cartAnoDado(){
+  const g = (typeof _Z === 'object' && _Z && _Z.META) ? _Z.META.gerado_em : null;
+  const a = g ? parseInt(String(g).slice(0,4), 10) : NaN;
+  return isFinite(a) ? a : (new Date()).getFullYear();
+}
+function cartDataBR(iso){
+  if(!iso) return '—';
+  const p = String(iso).split('-');
+  return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : String(iso);
+}
+/* Em qual dos tres baldes o cliente cai. Os tres sao exclusivos e somam a
+   carteira - foi assim que o Igor desenhou o quadro. */
+function cartBalde(cn, ano){
+  const D = (typeof CART_DATAS === 'object' && CART_DATAS) ? CART_DATAS[cn] : null;
+  const u  = (D && D.ult) ? D.ult : null;
+  const ds = (D && D.diassem !== null && D.diassem !== undefined) ? D.diassem : null;
+  if(u){
+    if(parseInt(String(u).slice(0,4), 10) < ano) return 'semano';
+    return (ds !== null && ds <= CART_DIAS_INATIVO) ? 'ativo' : 'inativo';
+  }
+  /* SEM DATA NO CONSOLIDADO -> CAI PARA A REGUA DE MESES.
+     Peguei isto no teste: a linha "A definir" saía 76 / 0 / 0 / 76, ou seja,
+     76 clientes que faturaram em 2026 marcados como "não compraram em 2026".
+     Sao CPFs - o arquivo de datas e indexado pelo CNPJ do Consolidado e a
+     carteira so cobre PJ, entao eles existem no FATO e nao tem data nenhuma.
+     Dizer "nao comprou" de quem comprou e o pior erro possivel nesta tela.
+
+     Entao, SO para quem nao tem data, a classificacao vem do statusCarteira -
+     a janela de meses do FATO. E uma regua diferente, usada so onde a primeira
+     nao tem o que responder; o rodape do cartao diz quantos sao. */
+  if(typeof statusCarteira === 'function'){
+    const s = statusCarteira(cn);
+    if(s === 'Ativo')   return 'ativo';
+    if(s === 'Inativo') return 'inativo';
+  }
+  return 'semano';
+}
+function cartDiasDe(cn){
+  const D = (typeof CART_DATAS === 'object' && CART_DATAS) ? CART_DATAS[cn] : null;
+  return (D && D.diassem !== null && D.diassem !== undefined) ? D.diassem : null;
+}
+function cartUltDe(cn){
+  const D = (typeof CART_DATAS === 'object' && CART_DATAS) ? CART_DATAS[cn] : null;
+  return (D && D.ult) ? D.ult : null;
+}
+
+const CART_QG_MAX = 500;            // teto da lista expandida
+const CART_QG_BALDES = ['cart','ativo','inativo','semano'];
+
+/* Recebe a MESMA lista que alimenta a tabela ANTES da busca por texto: o quadro
+   descreve a carteira recortada pelos filtros, nao o resultado de quem digitou
+   "muffato" na caixa de busca. */
+function cartQuadroGerencial(base){
+  const ano = cartAnoDado();
+  const porV = {};
+  let semData = 0;          // quantos cairam na regua de meses por falta de data
+  base.forEach(c => {
+    const o = porV[c.v] = porV[c.v] || {cart:[], ativo:[], inativo:[], semano:[]};
+    o.cart.push(c);
+    if(!cartUltDe(c.cn)) semData++;
+    o[cartBalde(c.cn, ano)].push(c);
+  });
+  const vends = Object.keys(porV).sort((a,b) => porV[b].cart.length - porV[a].cart.length);
+  const todos = {cart:[], ativo:[], inativo:[], semano:[]};
+  vends.forEach(v => CART_QG_BALDES.forEach(b => { todos[b] = todos[b].concat(porV[v][b]); }));
+  porV['(todos)'] = todos;
+
+  /* O ATRIBUTO CHAMA data-vend E NAO data-v DE PROPOSITO: `data-v` e a convencao
+     do exportador de CSV para "valor cru desta celula". Com data-v="RCA - Luisa
+     Helena" o arquivo saia com o nome do vendedor em todas as quatro colunas de
+     numero. Peguei no teste; o nome colidia calado. */
+  const cel = (v, b, n, cor) => {
+    const aberto = (CART_QG.v === v && CART_QG.b === b);
+    /* data-v leva o numero CRU: e a convencao do exportador, e e ela que impede
+       o "▾" da celula aberta de ir parar dentro do CSV. */
+    return '<td class="qg-cel mono" data-vend="' + encodeURIComponent(v) + '" data-b="' + b +
+      '" data-v="' + n + '" style="text-align:right;cursor:pointer;font-weight:700' +
+      (cor ? ';color:' + cor : '') + (aberto ? ';background:#E8EEF9' : '') +
+      '" title="clique para ver quem são">' + n0(n) + (aberto ? ' ▾' : '') + '</td>';
+  };
+
+  const ROT = {cart:'Carteira total', ativo:'Clientes ativos (0 a ' + CART_DIAS_INATIVO +
+              ' dias)', inativo:'Clientes inativos (' + CART_DIAS_INATIVO +
+              ' ou + dias)', semano:'Não compraram em ' + ano};
+
+  /* A lista sai do MAIS FRIO para o mais quente, em todos os baldes. No balde
+     de ativos isso coloca em cima justamente quem esta prestes a virar inativo,
+     que e a lista que se quer trabalhar - e nao os que compraram ontem. */
+  const lista = (v, b) => {
+    const arr = (porV[v] || {})[b] || [];
+    /* Sem data vai para o FIM, e nao para o topo: numa lista ordenada do mais
+       frio para o mais quente, quem aparece em primeiro lugar e lido como "o
+       mais parado de todos" - e quem nao tem data nao e parado, e desconhecido. */
+    const ord = arr.slice().sort((x, y) => {
+      const dx = cartDiasDe(x.cn), dy = cartDiasDe(y.cn);
+      return (dy === null ? -1 : dy) - (dx === null ? -1 : dx);
+    });
+    const corta = ord.slice(0, CART_QG_MAX);
+    const linhasCli = corta.map(c => {
+      const d = cartDiasDe(c.cn), u = cartUltDe(c.cn);
+      return '<tr><td class="rowlab" title="' + c.cn + '">' +
+        String(c.rz || '').substring(0, 44) + '</td>' +
+        '<td class="rowlab">' + ((c.ci ? c.ci.substring(0, 20) : '—') +
+          (c.uf ? ' / ' + c.uf : '')) + '</td>' +
+        '<td class="rowlab">' + (c.ca ? c.ca.substring(0, 18) : '—') + '</td>' +
+        '<td class="mono" style="text-align:right;white-space:nowrap">' +
+          cartDataBR(u) + '</td>' +
+        '<td class="mono" style="text-align:right' +
+          (d === null ? '' : (d > CART_DIAS_INATIVO ? ';color:#C0392B' : ';color:#1BA466')) +
+          '">' + (d !== null ? n0(d) + 'd' : '—') + '</td></tr>';
+    }).join('');
+    return '<tr class="qg-exp" data-sem-export="1"><td colspan="5" style="padding:0;background:#FAFBFE">' +
+      '<div style="padding:10px 14px 4px;font-size:12px;color:var(--muted)">' +
+      '<b>' + (v === '(todos)' ? 'Todos os vendedores' : v) + '</b> · ' + ROT[b] +
+      ' · ' + n0(arr.length) + ' cliente(s)' +
+      (ord.length > CART_QG_MAX ? ' — mostrando os ' + CART_QG_MAX +
+        ' mais frios; use a busca da tabela abaixo para os demais' : '') +
+      '</div><div style="max-height:360px;overflow:auto;padding:0 8px 10px">' +
+      '<table class="qg-lista"><thead><tr><th style="text-align:left">Cliente</th>' +
+      '<th style="text-align:left">Cidade / UF</th><th style="text-align:left">Canal</th>' +
+      '<th style="text-align:right">Último pedido</th>' +
+      '<th style="text-align:right">Dias</th></tr></thead><tbody>' +
+      (linhasCli || '<tr><td colspan="5" style="color:var(--muted);padding:8px">' +
+        'Nenhum cliente neste grupo.</td></tr>') +
+      '</tbody></table></div></td></tr>';
+  };
+
+  const linhaVend = (v) => {
+    const o = porV[v];
+    const nome = (v === '(todos)') ? 'Todos' : v;
+    const tr = '<tr' + (v === '(todos)'
+        ? ' style="background:var(--navy);color:#fff;font-weight:700"' : '') +
+      '><td class="rowlab"' + (v === '(todos)' ? ' style="color:#fff"' : '') + '>' +
+      nome + '</td>' +
+      cel(v, 'cart',    o.cart.length,    v === '(todos)' ? '#fff' : 'var(--muted)') +
+      cel(v, 'ativo',   o.ativo.length,   v === '(todos)' ? '#fff' : '#1BA466') +
+      cel(v, 'inativo', o.inativo.length, v === '(todos)' ? '#fff' : '#C0392B') +
+      cel(v, 'semano',  o.semano.length,  v === '(todos)' ? '#fff' : '#7A7F8C') + '</tr>';
+    return tr + ((CART_QG.v === v && CART_QG.b) ? lista(v, CART_QG.b) : '');
+  };
+
+  return '<div class="card" id="cardCartQG"><div class="card-h">' +
+    '<h3>Quadro gerencial por vendedor</h3>' +
+    '<span class="hint">dias corridos desde o último pedido · clique num número ' +
+    'para ver quem são · não segue a busca da tabela</span></div>' +
+    '<div class="scroll"><table class="qg-tbl"><thead><tr>' +
+    '<th style="text-align:left">Vendedor</th>' +
+    /* Cabecalho em UMA linha, sem <br> com subtitulo: o exportador le o
+       textContent da celula, e "Clientes ativos" + "0 a 120 dias" em duas
+       linhas virava "Clientes ativos0 a 120 dias" dentro do CSV. Sao cinco
+       colunas; cabe inteiro. */
+    '<th style="text-align:right">Carteira total</th>' +
+    '<th style="text-align:right">Clientes ativos (0 a ' + CART_DIAS_INATIVO + ' dias)</th>' +
+    '<th style="text-align:right">Clientes inativos (' + CART_DIAS_INATIVO + ' ou + dias)</th>' +
+    '<th style="text-align:right">Não compraram em ' + ano + '</th>' +
+    '</tr></thead><tbody>' +
+    linhaVend('(todos)') + vends.map(linhaVend).join('') +
+    '</tbody></table></div>' +
+    '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">' +
+    'Os três grupos são exclusivos e somam a carteira do vendedor. ' +
+    '"Não compraram em ' + ano + '" inclui quem nunca comprou. Esta régua conta ' +
+    'DIAS CORRIDOS até hoje — a coluna Ativos/Inativos do Resumo usa a janela de ' +
+    'meses ancorada no filtro, e por isso os dois números não são iguais.' +
+    (semData ? ' ' + n0(semData) + ' cliente(s) não têm data de pedido no ' +
+      'consolidado (em geral CPF, que a carteira não cobre): esses foram ' +
+      'classificados pelo mês da nota, e aparecem com "—" na coluna Último ' +
+      'pedido.' : '') +
+    '</div></div>';
+}
+
 function vCarteira(){
   // vendas líquidas por CNPJ e por mês (venda − devolução), respeitando isolamento
   const L=linhas();
@@ -1486,9 +1698,17 @@ function vCarteira(){
       // oportunidade = atraso vs. recorrência habitual, MAS nunca se já faturou no mês filtrado
       if(rec!==null && diasUlt!==null && diasUlt>rec && !faturouNoFiltro) oport=true;
     }
+    /* DATA DO ULTIMO PEDIDO (13/10/2026, pedido do Igor). Vem do CART_DATAS e
+       NAO do CART_MET: o CART_MET so existe para quem tem linha no FATO (1.427
+       CNPJs), enquanto o CART_DATAS cobre 3.062. Puxando do CART_MET, metade da
+       carteira ficaria com a coluna vazia sem motivo visivel. */
+    const D = (typeof CART_DATAS === 'object' && CART_DATAS) ? CART_DATAS[c.cn] : null;
+    const ult = (D && D.ult) ? D.ult : null;
+    const diasCorr = (D && D.diassem !== null && D.diassem !== undefined)
+                       ? D.diassem : null;
     return {cn:c.cn, rz:c.rz, v:c.v, ci:c.ci||'', uf:c.uf||'', ca:c.ca||'',
             ytd:vendaYTD[c.cn]||0, meses:porMes,
-            rent, ticket, rec, diasUlt, oport, status};
+            rent, ticket, rec, diasUlt, ult, diasCorr, oport, status};
   });
   // busca por CNPJ ou razão social
   if(CART_BUSCA){
@@ -1512,6 +1732,12 @@ function vCarteira(){
     else if(key==='rent'){va=nz(a.rent);vb=nz(b.rent);}
     else if(key==='ticket'){va=a.ticket;vb=b.ticket;}
     else if(key==='rec'){va=nz(a.rec);vb=nz(b.rec);}
+    /* As duas colunas novas ordenam pelo MESMO numero (dias corridos), em
+       sentidos opostos: "Último pedido" decrescente = o mais recente primeiro,
+       que e o que se espera de uma coluna de data. */
+    else if(key==='ult'){va=nz(a.diasCorr===null?null:-a.diasCorr);
+                         vb=nz(b.diasCorr===null?null:-b.diasCorr);}
+    else if(key==='dias'){va=nz(a.diasCorr);vb=nz(b.diasCorr);}
     else if(key==='oport'){va=a.oport?1:0;vb=b.oport?1:0;}
     else if(key==='status'){va=a.status==='Inativo'?1:0;vb=b.status==='Inativo'?1:0;}
     else { const mi=parseInt(key.substring(1)); va=a.meses[mi]; vb=b.meses[mi]; }
@@ -1546,6 +1772,8 @@ function vCarteira(){
     ${thS('rent','Rentab.')}
     ${thS('ticket','Ticket médio')}
     ${thS('rec','Recorrência')}
+    ${thS('ult','Último pedido')}
+    ${thS('dias','Dias do últ. pedido')}
     ${thS('oport','Oportun.','center')}
     ${thS('status','Status','center')}
     ${meses.map((m,i)=>thS('m'+i,m.substring(0,3))).join('')}</tr></thead>`;
@@ -1564,6 +1792,8 @@ function vCarteira(){
     <td style="text-align:right">${cellRent(r)}</td>
     <td class="mono" style="text-align:right">${r.ticket?brl(r.ticket):'—'}</td>
     <td class="mono" style="text-align:right">${r.rec!==null?Math.round(r.rec)+'d':'—'}</td>
+    <td class="mono" style="text-align:right;white-space:nowrap">${r.ult?cartDataBR(r.ult):'<span style="color:var(--line)">—</span>'}</td>
+    <td class="mono"${r.diasCorr!==null?` data-v="${r.diasCorr}"`:''} style="text-align:right${r.diasCorr===null?'':(r.diasCorr>CART_DIAS_INATIVO?';color:#C0392B':';color:#1BA466')}">${r.diasCorr!==null?n0(r.diasCorr)+'d':'<span style="color:var(--line)">—</span>'}</td>
     <td style="text-align:center">${r.oport?'<span class="pill-op">● oportunidade</span>':'<span style="color:var(--line)">—</span>'}</td>
     <td style="text-align:center">${r.status==='Inativo'?'<span class="pill-inativo">Inativo</span>':(r.status==='Ativo'?'<span class="pill-ativo">Ativo</span>':'<span style="color:var(--line)">—</span>')}</td>
     ${r.meses.map(v=>`<td class="mono" style="text-align:right${v<0?';color:var(--neg)':v===0?';color:var(--line)':''}">${v?brl(v):'·'}</td>`).join('')}</tr>`).join('');
@@ -1587,6 +1817,15 @@ function vCarteira(){
   let recNum=0, recDen=0;
   rows.forEach(r=>{ const M=CART_MET[r.cn]; if(M && M.rec!==null && M.nped>0){ recNum+=M.rec*M.nped; recDen+=M.nped; } });
   const recTot = recDen>0 ? recNum/recDen : null;
+  /* No TOTAL, "Último pedido" e a data mais recente da carteira filtrada, e
+     "Dias" e a MEDIANA e nao a media: a cauda de clientes parados ha 600 dias
+     puxaria a media para um numero que nao descreve ninguem. */
+  const ultTot = rows.reduce((a,r)=> (r.ult && (!a || r.ult>a)) ? r.ult : a, null);
+  const diasOrd = rows.map(r=>r.diasCorr).filter(d=>d!==null).sort((a,b)=>a-b);
+  const medDias = diasOrd.length
+    ? (diasOrd.length%2 ? diasOrd[(diasOrd.length-1)/2]
+       : Math.round((diasOrd[diasOrd.length/2-1]+diasOrd[diasOrd.length/2])/2))
+    : null;
   const rentTotCell = dTot.fatLiq>0 ? (verNum
       ? `<span class="mono" style="color:${farolCor(dTot.rent)};font-weight:700">${pct(dTot.rent)}</span>`
       : farol(dTot.rent,false)) : '—';
@@ -1601,12 +1840,15 @@ function vCarteira(){
     <td style="text-align:right">${rentTotCell}</td>
     <td class="mono" style="text-align:right">${dTot.ticket?brl(dTot.ticket):'—'}</td>
     <td class="mono" style="text-align:right">${recTot!==null?Math.round(recTot)+'d':'—'}</td>
+    <td class="mono" style="text-align:right">${ultTot?cartDataBR(ultTot):'—'}</td>
+    <td class="mono" style="text-align:right">${medDias!==null?n0(medDias)+'d':'—'}</td>
     <td style="text-align:center">—</td>
     <td style="text-align:center">—</td>
     ${mesesTot.map(v=>`<td class="mono" style="text-align:right">${v?brl(v):'·'}</td>`).join('')}</tr>`;
 
   el('v-carteira').innerHTML=`
    <div class="note"><b>Carteira</b> — segmentação completa com vendas líquidas (venda − devolução). ${SESSION.isAdmin?'Filtre por vendedor e clique':'Clique'} nos cabeçalhos de vendas para ordenar.</div>
+   ${cartQuadroGerencial(base)}
    <div class="card"><div class="card-h"><h3>Clientes da carteira</h3><span class="hint">${rows.length} CNPJs · ${semVenda} sem venda no período</span></div>
      <div style="padding:0 20px 12px;display:flex;align-items:center;flex-wrap:wrap;gap:8px">
        ${vendSel}
@@ -1614,8 +1856,19 @@ function vCarteira(){
      </div>
      ${pag}
      <div class="scroll"><table class="cart-tbl">${head}<tbody>${totalRow}${body}</tbody></table></div>
-     <div style="padding:8px 14px;font-size:11px;color:var(--muted)">· = sem venda no mês · valores em vermelho = devolução líquida · 250 por página · primeira linha "Todos" = total da carteira filtrada (todas as páginas) · clientes sem vendedor mapeado aparecem como "A definir".</div>
+     <div style="padding:8px 14px;font-size:11px;color:var(--muted)">· = sem venda no mês · valores em vermelho = devolução líquida · 250 por página · primeira linha "Todos" = total da carteira filtrada (todas as páginas) · clientes sem vendedor mapeado aparecem como "A definir" · "Último pedido" é a data real do pedido no consolidado, e "Dias do últ. pedido" conta dias corridos até hoje (verde ≤ ${CART_DIAS_INATIVO}d, vermelho acima); na linha "Todos" a data é a mais recente da carteira filtrada e os dias são a <b>mediana</b>, não a média.</div>
    </div>`;
+  /* Clique no quadro gerencial: um ouvinte so, delegado no cartao. Clicar na
+     celula ja aberta FECHA - senao nao haveria como voltar a tela limpa. */
+  const qg=el('cardCartQG');
+  if(qg) qg.addEventListener('click',ev=>{
+    const td=ev.target.closest('.qg-cel');
+    if(!td) return;
+    const v=decodeURIComponent(td.getAttribute('data-vend')), b=td.getAttribute('data-b');
+    if(CART_QG.v===v && CART_QG.b===b){ CART_QG={v:null,b:null}; }
+    else { CART_QG={v:v,b:b}; }
+    vCarteira();
+  });
   document.querySelectorAll('.cart-th').forEach(t=>t.addEventListener('click',()=>{
     const k=t.getAttribute('data-k');
     if(CART_SORT.key===k) CART_SORT.dir*=-1; else CART_SORT={key:k,dir:-1};
@@ -2512,6 +2765,7 @@ function doLogout(){
   FILTER={period:'mes',mes:null,de:null,ate:null,vend:'(todos)',mod:'(todos)',reg:'(todos)',uf:'(todos)',canal:'(todos)'};
   RANK_SORT={key:'fat',dir:-1};
   CART_SORT={key:'ytd',dir:-1}; CART_VEND='(todos)'; CART_PAGE=0; CART_BUSCA='';
+  CART_QG={v:null,b:null};   // o quadro gerencial volta fechado ao trocar de user
 }
 
 /* ============ INIT ============ */
@@ -3372,12 +3626,21 @@ function vResumoNovo(){
 
   carteiraFiltrada.forEach(c => {
     const o = porVend[c.v] = porVend[c.v] || {cart:0, ativos:0, inativos:0,
-                                              compraram:0,
+                                              semAno:0, compraram:0,
                                               fat:0, pedidos:new Set(), novos:0};
     o.cart++;
     if(compraramNoPeriodo.has(c.cn)) o.compraram++;
     const s = statusCarteira(c.cn);
-    if(s === 'Ativo') o.ativos++; else if(s === 'Inativo') o.inativos++;
+    /* O TERCEIRO BALDE TEM NOME AGORA (13/10/2026, pedido do Igor).
+       Ele sempre existiu calado: statusCarteira devolve 'sem histórico' para
+       quem nao tem NENHUMA compra ate o mes de referencia, e esse resto nunca
+       aparecia na tabela - Ativos + Inativos nao fechava a Carteira e nao havia
+       onde ler a diferenca. Como o FATO comeca em Janeiro e vai so ate o ano
+       corrente, "sem histórico" e literalmente "nao comprou em " + o ano do
+       dado. Entao o balde vira coluna, e as tres somam a carteira do vendedor. */
+    if(s === 'Ativo') o.ativos++;
+    else if(s === 'Inativo') o.inativos++;
+    else o.semAno++;
   });
   // faturamento, pedidos e novos por vendedor, no periodo
   const primeira = {};
@@ -3391,7 +3654,7 @@ function vResumoNovo(){
   L.forEach(r => {
     if(!r.venda) return;
     const o = porVend[r.v] = porVend[r.v] || {cart:0, ativos:0, inativos:0,
-                                              compraram:0,
+                                              semAno:0, compraram:0,
                                               fat:0, pedidos:new Set(), novos:0};
     o.fat += r.fat;
     if(r.cn) o.pedidos.add(r.cn + '|' + r.m);
@@ -3470,7 +3733,7 @@ function vResumoNovo(){
     const d = descPorVend[v];
     return {
       v, cart:o.cart, ativos:o.ativos, inativos:o.inativos,
-      compraram:o.compraram||0, novos:o.novos,
+      semAno:o.semAno||0, compraram:o.compraram||0, novos:o.novos,
       fat:o.fat, ticket: o.pedidos.size ? o.fat / o.pedidos.size : 0,
       dev: dv.dev, boni: dv.boni, rent: dv.rent, fatLiq: dv.fatLiq,
       lucro: dv.lucro,
@@ -3533,15 +3796,30 @@ function vResumoNovo(){
 
   const tot = arr.reduce((a,r) => ({
     cart:a.cart+r.cart, ativos:a.ativos+r.ativos, inativos:a.inativos+r.inativos,
-    compraram:a.compraram+(r.compraram||0),
+    semAno:a.semAno+(r.semAno||0), compraram:a.compraram+(r.compraram||0),
     novos:a.novos+r.novos, fat:a.fat+r.fat, dev:a.dev+r.dev, boni:a.boni+r.boni
-  }), {cart:0,ativos:0,inativos:0,novos:0,fat:0,dev:0,boni:0});
+  /* `compraram` FALTAVA na semente deste reduce desde que a coluna nasceu, em
+     28/09/2026: `undefined + 0` e NaN, e o total da conversao vinha NaN.
+     Passava despercebido porque so a celula de percentual usava o numero e um
+     "NaN%" no rodape se parece com um travessao de relance. Com a coluna
+     "Compraram no período" na tela, o NaN ficou visivel - e corrigido. */
+  }), {cart:0,ativos:0,inativos:0,semAno:0,compraram:0,novos:0,fat:0,dev:0,boni:0});
   const totDre = dre(L);
+
+  /* O ano do DADO, nao o do relogio: o rotulo "Não compraram em 2026" tem que
+     seguir o pacote. Se alguem abrir um JSON de 2026 em 2027, o cabecalho ainda
+     fala do ano certo. */
+  const anoDado = (() => {
+    const g = (typeof _Z === 'object' && _Z && _Z.META) ? _Z.META.gerado_em : null;
+    const a = g ? parseInt(String(g).slice(0,4), 10) : NaN;
+    return isFinite(a) ? a : (new Date()).getFullYear();
+  })();
 
   const tabela =
     '<div class="card" id="cardVendResumo"><div class="card-h">' +
-    '<h3>Por vendedor</h3><span class="hint">ticket médio no período · carteira pela régua de ' +
-    DIAS_INATIVO + ' dias · desconto sobre o preço de consumidor, ponderado por receita' +
+    '<h3>Por vendedor</h3><span class="hint">ticket médio no período · desconto ' +
+    'sobre o preço de consumidor, ponderado por receita · carteira = ativos + ' +
+    'inativos + não compraram em ' + anoDado +
     '</span></div>' +
     '<div class="scroll"><table class="tbl-vend"><thead><tr>' +
     '<th>Vendedor</th><th style="text-align:right">Faturamento</th>' +
@@ -3554,13 +3832,29 @@ function vResumoNovo(){
       'faturamento líquido — mesmo critério do cartão do Resumo">% bonif.</th>' +
     '<th style="text-align:right">Rentab.</th>' +
     '<th style="text-align:right">Desc. médio</th>' +
-    '<th style="text-align:right">Novos clientes</th>' +
-    '<th style="text-align:right">Ativos</th><th style="text-align:right">Inativos</th>' +
-    '<th style="text-align:right">Carteira</th>' +
-    '<th style="text-align:right" title="Clientes da carteira que compraram ' +
-    'no período do filtro, sobre o total da carteira dele. Não é o mesmo que ' +
-    'Ativos: aquela coluna usa a régua de ' + DIAS_INATIVO + ' dias, que não ' +
-    'olha o período selecionado.">Conversão</th></tr></thead><tbody>' +
+    /* ORDEM NOVA (13/10/2026, pedido do Igor): depois do desconto vem o bloco
+       de CLIENTES, do todo para a parte - carteira, como ela se divide nas tres
+       faixas, quantos compraram no periodo e a conversao. "Novos clientes" saiu
+       da tabela por pedido dele; o KPI clicavel "Novos clientes" continua no
+       alto da aba, com a lista de quem sao. */
+    '<th style="text-align:right" title="Total de clientes na carteira dele, ' +
+      'pelo cadastro da segmentação.">Carteira</th>' +
+    '<th style="text-align:right" title="Compraram há menos de ' + DIAS_INATIVO +
+      ' dias (' + JANELA_MESES + ' meses de dado), contados a partir do último ' +
+      'mês selecionado no filtro.">Ativos &lt;' + DIAS_INATIVO + 'd</th>' +
+    '<th style="text-align:right" title="Já compraram em ' + anoDado + ', mas a ' +
+      'última compra foi há mais de ' + DIAS_INATIVO + ' dias.">Inativos &gt;' +
+      DIAS_INATIVO + 'd</th>' +
+    '<th style="text-align:right" title="Estão na carteira e não têm nenhuma ' +
+      'compra em ' + anoDado + ' até o mês de referência. Carteira = Ativos + ' +
+      'Inativos + esta coluna.">Não compraram em ' + anoDado + '</th>' +
+    '<th style="text-align:right" title="Clientes da carteira dele que ' +
+      'faturaram no período do filtro. Muda com o mês selecionado.">' +
+      'Compraram no período</th>' +
+    '<th style="text-align:right" title="Compraram no período ÷ carteira. ' +
+      'Muda com o período do filtro. Não é o mesmo que Ativos: aquela coluna ' +
+      'usa a régua de ' + DIAS_INATIVO + ' dias, que não olha o período ' +
+      'selecionado.">Conversão</th></tr></thead><tbody>' +
     arr.map(r =>
       '<tr><td class="rowlab">' + r.v + '</td>' +
       '<td class="mono" style="text-align:right">' + brl(r.fat) + '</td>' +
@@ -3574,10 +3868,14 @@ function vResumoNovo(){
       '<td style="text-align:right">' + celulaPboni(r) + '</td>' +
       '<td style="text-align:right">' + celulaRent(r) + '</td>' +
       '<td style="text-align:right">' + celulaDesc(r) + '</td>' +
-      '<td class="mono" style="text-align:right">' + n0(r.novos) + '</td>' +
+      '<td class="mono" style="text-align:right;color:var(--muted)">' + n0(r.cart) + '</td>' +
       '<td class="mono" style="text-align:right;color:#1BA466">' + n0(r.ativos) + '</td>' +
       '<td class="mono" style="text-align:right;color:#C0392B">' + n0(r.inativos) + '</td>' +
-      '<td class="mono" style="text-align:right;color:var(--muted)">' + n0(r.cart) + '</td>' +
+      /* Cinza escuro, nao vermelho: quem nao compra no ano inteiro ja nao e um
+         alerta de retomada, e base fria. Pintar de vermelho junto com os
+         inativos faria as duas colunas competirem pela mesma atencao. */
+      '<td class="mono" style="text-align:right;color:#7A7F8C">' + n0(r.semAno) + '</td>' +
+      '<td class="mono" style="text-align:right">' + n0(r.compraram) + '</td>' +
       /* Ativos sobre a carteira DELE. Carteira zero devolve travessao e nao 0%:
          vendedor sem carteira nao tem conversao ruim, tem conversao
          indefinida - e 0% seria lido como desempenho. */
@@ -3607,10 +3905,11 @@ function vResumoNovo(){
       Object.values(descPorVend).forEach(d => { real += d.real; tab += d.tab; });
       return tab > 0 ? pct(1 - real / tab) : '—';
     })() + '</td>' +
-    '<td class="mono tot" style="text-align:right">' + n0(tot.novos) + '</td>' +
+    '<td class="mono tot" style="text-align:right">' + n0(tot.cart) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.ativos) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.inativos) + '</td>' +
-    '<td class="mono tot" style="text-align:right">' + n0(tot.cart) + '</td>' +
+    '<td class="mono tot" style="text-align:right">' + n0(tot.semAno) + '</td>' +
+    '<td class="mono tot" style="text-align:right">' + n0(tot.compraram) + '</td>' +
     /* O total NAO e a media das conversoes: e a soma dos ativos sobre a soma
        das carteiras. Media de percentuais daria o mesmo peso a quem tem 5
        clientes e a quem tem 242 - e o RCA - Thiago, com 5 na carteira,
@@ -12135,12 +12434,24 @@ function expValor(td){
 function expLinhas(tabela){
   const linhas = [];
   tabela.querySelectorAll('tr').forEach(tr => {
+    /* TABELA DENTRO DE TABELA NAO ENTRA (13/10/2026). O querySelectorAll pega
+       descendentes, e o quadro gerencial da Carteira abre a lista de clientes
+       numa tabela aninhada dentro de um <td>. Sem esta linha o CSV sairia com
+       linhas de 5 colunas do quadro misturadas com linhas de 5 colunas de
+       cliente, que sao outra coisa. */
+    if(tr.closest('table') !== tabela) return;
+    /* porta de saida para a linha que so serve de moldura (o <td colspan> que
+       hospeda a tabela aninhada): sem isso ela vira uma linha vazia no CSV */
+    if(tr.hasAttribute('data-sem-export')) return;
     /* linha escondida por filtro de tela nao entra: o arquivo tem de ser o que
        a pessoa esta vendo, nao o que esta no HTML */
     if(tr.offsetParent === null && tr.closest('thead') === null) return;
-    const cs = tr.querySelectorAll('th,td');
+    /* so as celulas DESTA linha, pelo mesmo motivo: a linha que hospeda a
+       tabela aninhada tem um <td colspan>, e sem este filtro ela saia com as
+       centenas de celulas de dentro dela */
+    const cs = [...tr.querySelectorAll('th,td')].filter(c => c.closest('tr') === tr);
     if(!cs.length) return;
-    linhas.push([...cs].map(expValor));
+    linhas.push(cs.map(expValor));
   });
   return linhas;
 }
