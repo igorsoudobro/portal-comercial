@@ -3894,6 +3894,26 @@ function vResumoNovo(){
   const mRef = mesReferencia();
   carteiraFiltrada.forEach(c => { fx[faixaNoMes(c.cn, mRef)]++; });
 
+  /* QUANTO HISTORICO EXISTE ATE O MES DE REFERENCIA (14/10/2026).
+
+     O Igor selecionou Janeiro e viu Atenção = 0 e Inativos = 0. Os dois numeros
+     estao certos pela definicao - "ultima compra no 3o mes antes de Janeiro"
+     nao existe, porque o FATO comeca em Janeiro - e sao exatamente o tipo de
+     zero que se le como "ninguem esta em atenção", que e outra coisa.
+
+     Com N meses de historico ate o mes escolhido:
+         Atenção  precisa do mes mRef-3  -> so faz sentido com N >= 4
+         Inativos precisa de algo antes  -> so faz sentido com N >= 5
+     Abaixo disso o certo nao e zero, e TRAVESSAO: nao da para saber. */
+  const _iIni = MESES.length ? MESES_ORD.indexOf(MESES[0]) : 0;
+  const profund = mRef - _iIni + 1;
+  const fxTxt = (v, minProf) =>
+    (profund >= minProf)
+      ? n0(v)
+      : '<span style="color:var(--line)" title="o faturamento começa em ' +
+        metasEsc(MESES[0] || '?') + ': não há histórico suficiente para separar ' +
+        'esta faixa no mês escolhido">—</span>';
+
   /* SEIS CARTOES, MENORES (14/10/2026, pedido do Igor): os dois do periodo mais
      as quatro faixas da carteira. A classe `kpi-mini` encolhe a coluna minima de
      170 para 120 px - com quatro cartoes a linha ficava larga demais para o que
@@ -3912,19 +3932,26 @@ function vResumoNovo(){
     '<div class="kpi pos"><div class="lab">Ativos</div><div class="val">' +
       n0(fx.ativo) + '</div><div class="sub">compra há até 90 dias</div></div>' +
     '<div class="kpi sens"><div class="lab">Atenção</div><div class="val">' +
-      n0(fx.atencao) + '</div><div class="sub">91 a 120 dias sem comprar</div></div>' +
+      fxTxt(fx.atencao, 4) + '</div><div class="sub">91 a 120 dias sem comprar</div></div>' +
     '<div class="kpi"><div class="lab">Inativos</div><div class="val">' +
-      n0(fx.inativo) + '</div><div class="sub">121 dias ou mais</div></div>' +
+      fxTxt(fx.inativo, 5) + '</div><div class="sub">121 dias ou mais</div></div>' +
     '<div class="kpi"><div class="lab">Não compraram em ' + anoKpi + '</div>' +
       '<div class="val">' + n0(fx.semano) + '</div>' +
-      '<div class="sub">nenhuma compra no ano</div></div>' +
+      '<div class="sub">nenhuma compra até ' + metasEsc(MESES_ORD[mRef] || '') +
+      '</div></div>' +
     '</div>' +
     '<div class="note" style="margin-top:6px"><b>Duas réguas de propósito:</b> os ' +
     'dois primeiros seguem o mês/período filtrado. As quatro faixas seguem o ' +
     '<b>mês de referência</b> do filtro (até 90 dias = o mês e os 2 anteriores) e ' +
     'somam ' + n0(carteiraFiltrada.length) + ' — a carteira filtrada. Na aba ' +
     'Carteira a mesma divisão conta <b>dias corridos até hoje</b>, e por isso os ' +
-    'números de lá são um pouco diferentes.</div>';
+    'números de lá são um pouco diferentes.' +
+    (profund < 5
+      ? ' <b>Atenção:</b> o faturamento começa em ' + metasEsc(MESES[0] || '?') +
+        ', então no mês escolhido não há histórico anterior suficiente para ' +
+        'separar todas as faixas — as que aparecem com travessão não são zero, ' +
+        'são desconhecidas, e caem em "não compraram".'
+      : '') + '</div>';
 
   /* --- tabela por vendedor --- */
   const porVend = {};
@@ -4195,8 +4222,10 @@ function vResumoNovo(){
       '<td style="text-align:right">' + celulaDesc(r) + '</td>' +
       '<td class="mono" style="text-align:right;color:var(--muted)">' + n0(r.cart) + '</td>' +
       '<td class="mono" style="text-align:right;color:#1BA466">' + n0(r.ativos) + '</td>' +
-      '<td class="mono" style="text-align:right;color:#E0A800">' + n0(r.atencao) + '</td>' +
-      '<td class="mono" style="text-align:right;color:#C0392B">' + n0(r.inativos) + '</td>' +
+      '<td class="mono" style="text-align:right;color:#E0A800">' +
+        (profund >= 4 ? n0(r.atencao) : '—') + '</td>' +
+      '<td class="mono" style="text-align:right;color:#C0392B">' +
+        (profund >= 5 ? n0(r.inativos) : '—') + '</td>' +
       /* Cinza escuro, nao vermelho: quem nao compra no ano inteiro ja nao e um
          alerta de retomada, e base fria. Pintar de vermelho junto com os
          inativos faria as duas colunas competirem pela mesma atencao. */
@@ -4233,8 +4262,10 @@ function vResumoNovo(){
     })() + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.cart) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.ativos) + '</td>' +
-    '<td class="mono tot" style="text-align:right">' + n0(tot.atencao) + '</td>' +
-    '<td class="mono tot" style="text-align:right">' + n0(tot.inativos) + '</td>' +
+    '<td class="mono tot" style="text-align:right">' +
+      (profund >= 4 ? n0(tot.atencao) : '—') + '</td>' +
+    '<td class="mono tot" style="text-align:right">' +
+      (profund >= 5 ? n0(tot.inativos) : '—') + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.semAno) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.compraram) + '</td>' +
     /* O total NAO e a media das conversoes: e a soma dos ativos sobre a soma
