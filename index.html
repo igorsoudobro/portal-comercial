@@ -1680,7 +1680,8 @@ function cartQuadroGerencial(base){
     const mails = [];
     ord.forEach(c => { const ct = contatoDe(c.cn);
       if(ct && ct.e && mails.indexOf(ct.e) < 0) mails.push(ct.e); });
-    const modelo = ord.length ? msgMontar(b, ord[0]) : {assunto:'', texto:''};
+    const modelo = ord.length ? msgMontar('email', b, ord[0])
+                              : {assunto:'', texto:''};
     const btLote = (b !== 'cart' && mails.length)
       ? '<button class="bt-lote" data-lote="' + encodeURIComponent(JSON.stringify(
           {mails: mails, assunto: modelo.assunto, texto: modelo.texto})) +
@@ -12565,9 +12566,17 @@ function cartCliente(cn){
 /* ---------------------------------------------------------------- mensagem */
 /* Os marcadores sao trocados AQUI e nao no Python porque so a tela sabe quem e
    o vendedor logado e quantos dias o cliente esta parado hoje. */
-function msgMontar(grupo, cliente){
-  if(!MSG_D || !MSG_D[grupo]) return {assunto: '', texto: ''};
-  const porCanal = MSG_D[grupo];
+function msgMontar(meio, grupo, cliente){
+  /* O pacote passou a separar WhatsApp de e-mail em 14/10/2026, quando o Igor
+     pediu duas abas na planilha. Um JSON gerado antes disso vem na forma
+     antiga, {grupo: {canal: ...}}, e cairia aqui como "sem texto" - entao
+     aceito as duas, em vez de o Portal ficar mudo entre publicar o HTML e
+     rodar o pipeline. */
+  if(!MSG_D) return {assunto: '', texto: ''};
+  const raiz = (MSG_D[meio] && typeof MSG_D[meio] === 'object' &&
+                !MSG_D[meio].texto) ? MSG_D[meio] : MSG_D;
+  if(!raiz[grupo]) return {assunto: '', texto: ''};
+  const porCanal = raiz[grupo];
   /* canal especifico vence o geral - e assim que se escreve um texto so para
      Body Shop sem duplicar os outros */
   const bloco = (cliente.ca && porCanal[cliente.ca]) || porCanal[''] ||
@@ -12670,13 +12679,14 @@ document.addEventListener('click', ev => {
   const c = (typeof CART_POR_CN === 'object' && CART_POR_CN && CART_POR_CN[cn]) ||
             {cn: cn, rz: cliName(cn)};
   const ct = contatoDe(cn);
-  const m = msgMontar(grupo, c);
 
   if(alvo.classList.contains('bt-mail')){
     if(!ct || !ct.e) return;
-    window.location.href = mailLink(ct.e, m.assunto, m.texto);
+    const me = msgMontar('email', grupo, c);
+    window.location.href = mailLink(ct.e, me.assunto, me.texto);
     return;
   }
+  const m = msgMontar('whats', grupo, c);
   /* WhatsApp: o limitador entra AQUI, antes de abrir */
   const porque = waBloqueio();
   if(porque){ alert('WhatsApp: ' + porque + '.'); return; }
@@ -12715,21 +12725,23 @@ const MSG_GRUPOS = [
   ['inativo', 'Inativos (121+)'],
   ['semano',  'Não compraram no ano']
 ];
-let MSG_EDIT = {grupo: 'ativo', aberto: false};
+const MSG_MEIOS = [['whats', 'WhatsApp'], ['email', 'E-mail']];
+let MSG_EDIT = {meio: 'whats', grupo: 'ativo', aberto: false};
 
-function msgRascunhoChave(g){ return 'dobro_msg_' + g; }
-function msgTextoAtual(g){
+function msgRascunhoChave(m, g){ return 'dobro_msg_' + m + '_' + g; }
+function msgTextoAtual(m, g){
   try{
-    const r = localStorage.getItem(msgRascunhoChave(g));
+    const r = localStorage.getItem(msgRascunhoChave(m, g));
     if(r !== null) return JSON.parse(r);
   }catch(e){}
-  const b = (MSG_D && MSG_D[g] && (MSG_D[g][''] ||
-             MSG_D[g][Object.keys(MSG_D[g])[0]])) || null;
+  const raiz = (MSG_D && MSG_D[m] && !MSG_D[m].texto) ? MSG_D[m] : MSG_D;
+  const b = (raiz && raiz[g] && (raiz[g][''] ||
+             raiz[g][Object.keys(raiz[g])[0]])) || null;
   return b ? {assunto: b.assunto || '', texto: b.texto || ''}
            : {assunto: '', texto: ''};
 }
-function msgTemRascunho(g){
-  try{ return localStorage.getItem(msgRascunhoChave(g)) !== null; }
+function msgTemRascunho(m, g){
+  try{ return localStorage.getItem(msgRascunhoChave(m, g)) !== null; }
   catch(e){ return false; }
 }
 
@@ -12751,36 +12763,44 @@ function msgEditorHtml(){
       '<button id="msgAbrir" class="btn-nav" style="margin-left:auto">' +
       'Editar textos</button></div></div>';
   }
-  const g = MSG_EDIT.grupo;
-  const at = msgTextoAtual(g);
+  const meio = MSG_EDIT.meio, g = MSG_EDIT.grupo;
+  const at = msgTextoAtual(meio, g);
   const ex = msgExemplo(g);
   const prev = ex ? (() => {
       const antes = MSG_D;
       /* a previa usa o RASCUNHO, nao o publicado - senao ele digitaria e nao
          veria diferenca nenhuma */
       MSG_D = Object.assign({}, MSG_D || {});
-      MSG_D[g] = {'': {assunto: at.assunto, texto: at.texto}};
-      const m = msgMontar(g, ex);
+      MSG_D[meio] = Object.assign({}, MSG_D[meio] || {});
+      MSG_D[meio][g] = {'': {assunto: at.assunto, texto: at.texto}};
+      const m = msgMontar(meio, g, ex);
       MSG_D = antes;
       return m;
     })() : {assunto: '', texto: ''};
 
   return '<div class="card" id="cardMsgEditor"><div class="card-h">' +
     '<h3>Mensagens de WhatsApp e e-mail</h3>' +
-    '<span class="hint">edite, veja a prévia com um cliente real e publique</span>' +
+    '<span class="hint">edite, veja a prévia com um cliente real e leve para a planilha</span>' +
     '<button id="msgFechar" class="btn-nav" style="margin-left:auto">Fechar</button>' +
     '</div>' +
-    '<div style="padding:12px 18px 4px;display:flex;gap:6px;flex-wrap:wrap">' +
+    '<div style="padding:12px 18px 0;display:flex;gap:6px;flex-wrap:wrap">' +
+    MSG_MEIOS.map(([k, lab]) =>
+      '<button class="msg-meio btn-nav' + (k === meio ? ' on' : '') +
+      '" data-m="' + k + '" style="font-weight:700">' + lab + '</button>').join('') +
+    '</div>' +
+    '<div style="padding:8px 18px 4px;display:flex;gap:6px;flex-wrap:wrap">' +
     MSG_GRUPOS.map(([k, lab]) =>
       '<button class="msg-aba btn-nav' + (k === g ? ' on' : '') + '" data-g="' + k +
-      '">' + lab + (msgTemRascunho(k) ? ' •' : '') + '</button>').join('') +
+      '">' + lab + (msgTemRascunho(meio, k) ? ' •' : '') + '</button>').join('') +
     '</div>' +
     '<div style="padding:8px 18px 16px;display:flex;gap:16px;flex-wrap:wrap">' +
     '<div style="flex:1 1 420px;min-width:320px">' +
-    '<label style="font-size:11px;color:var(--muted);font-weight:600">' +
-    'ASSUNTO (só e-mail)</label>' +
-    '<input id="msgAssunto" class="inp" style="width:100%;padding:7px 10px;' +
-    'margin:4px 0 10px" value="' + metasEsc(at.assunto) + '">' +
+    (meio === 'email'
+      ? '<label style="font-size:11px;color:var(--muted);font-weight:600">' +
+        'ASSUNTO</label>' +
+        '<input id="msgAssunto" class="inp" style="width:100%;padding:7px 10px;' +
+        'margin:4px 0 10px" value="' + metasEsc(at.assunto) + '">'
+      : '') +
     '<label style="font-size:11px;color:var(--muted);font-weight:600">' +
     'MENSAGEM</label>' +
     '<textarea id="msgTexto" style="width:100%;height:220px;padding:9px 11px;' +
@@ -12809,12 +12829,20 @@ function msgEditorHtml(){
     '</div></div>' +
     '<div style="padding:0 18px 16px;display:flex;gap:8px;align-items:center;' +
     'flex-wrap:wrap">' +
-    '<button id="msgPublicar" class="btn-nav" style="font-weight:700">' +
-    'Baixar mensagens.csv</button>' +
+    '<button id="msgCopiar" class="btn-nav" style="font-weight:700">' +
+    'Copiar as linhas</button>' +
     '<button id="msgDescartar" class="btn-nav">Descartar rascunho</button>' +
-    '<span style="font-size:11px;color:var(--muted)">Salve o arquivo em ' +
-    '<code>planilhas\\mensagens.csv</code>. Os vendedores veem o texto novo ' +
-    'no próximo refresh do JSON.</span>' +
+    /* NAO HA BOTAO DE "BAIXAR A PLANILHA" e isso e decisao, nao falta:
+       a planilha tem abas, cores e celulas mescladas, e o navegador nao escreve
+       xlsx formatado sem carregar uma biblioteca de 1 MB - que ainda por cima
+       geraria o arquivo SEM a formatacao, apagando o trabalho a cada publicacao.
+       Entao o Portal entrega as LINHAS prontas para colar, e a planilha dele
+       continua inteira. */
+    '<span style="font-size:11px;color:var(--muted)">Abra ' +
+    '<code>planilhas\\mensagens.xlsx</code>, aba <b>' +
+    (meio === 'whats' ? 'WhatsApp' : 'E-mail') + '</b>, clique na primeira ' +
+    'célula da mensagem deste grupo e cole. Os vendedores veem o texto novo no ' +
+    'próximo refresh do JSON.</span>' +
     '</div></div>';
 }
 
@@ -12831,6 +12859,12 @@ function msgLigarEditor(){
       MSG_EDIT.grupo = b.getAttribute('data-g');
       vCarteira();
     }));
+  card.querySelectorAll('.msg-meio').forEach(b =>
+    b.addEventListener('click', () => {
+      msgSalvarRascunho();
+      MSG_EDIT.meio = b.getAttribute('data-m');
+      vCarteira();
+    }));
   /* a previa so se atualiza quando o campo perde o foco ou a cada 600 ms de
      silencio - redesenhar a cada tecla reconstruiria a aba Carteira inteira */
   let t = null;
@@ -12841,14 +12875,30 @@ function msgLigarEditor(){
   const tx = el('msgTexto'), asn = el('msgAssunto');
   if(tx) tx.addEventListener('input', mexeu);
   if(asn) asn.addEventListener('input', mexeu);
-  const pb = el('msgPublicar');
-  if(pb) pb.addEventListener('click', () => { msgSalvarRascunho(); msgBaixarCsv(); });
+  const cp = el('msgCopiar');
+  if(cp) cp.addEventListener('click', () => {
+    msgSalvarRascunho();
+    const o = msgTextoAtual(MSG_EDIT.meio, MSG_EDIT.grupo);
+    /* O texto vai com as quebras de linha intactas: colado no Excel, cada
+       linha cai numa celula para baixo, que e exatamente o formato da planilha.
+       E por isso que o "copiar" resolve sem precisar gerar arquivo. */
+    const pronto = String(o.texto || '');
+    const ok = () => {
+      cp.textContent = 'copiado ✓';
+      setTimeout(() => { cp.textContent = 'Copiar as linhas'; }, 1800);
+    };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(pronto).then(ok, () => msgCopiarNaMao(pronto, ok));
+    }else{
+      msgCopiarNaMao(pronto, ok);
+    }
+  });
   const ds = el('msgDescartar');
   if(ds) ds.addEventListener('click', () => {
     if(!confirm('Descartar o rascunho de todos os grupos e voltar ao que está ' +
                 'publicado na planilha?')) return;
-    MSG_GRUPOS.forEach(([k]) => { try{ localStorage.removeItem(msgRascunhoChave(k)); }
-                                  catch(e){} });
+    MSG_MEIOS.forEach(([m]) => MSG_GRUPOS.forEach(([k]) => {
+      try{ localStorage.removeItem(msgRascunhoChave(m, k)); }catch(e){} }));
     vCarteira();
   });
   /* devolve o cursor para onde estava: sem isto, cada atualizacao da previa
@@ -12865,29 +12915,28 @@ function msgSalvarRascunho(){
   MSG_EDIT._foco = (document.activeElement === tx);
   MSG_EDIT._pos = tx.selectionStart || 0;
   try{
-    localStorage.setItem(msgRascunhoChave(MSG_EDIT.grupo),
+    localStorage.setItem(msgRascunhoChave(MSG_EDIT.meio, MSG_EDIT.grupo),
       JSON.stringify({assunto: asn ? asn.value : '', texto: tx.value}));
   }catch(e){}
 }
 
-function msgBaixarCsv(){
-  const linhas = [['grupo', 'canal', 'assunto', 'linha']];
-  MSG_GRUPOS.forEach(([k]) => {
-    const o = msgTextoAtual(k);
-    const partes = String(o.texto || '').split('\n');
-    partes.forEach((l, i) => linhas.push([k, '', i === 0 ? (o.assunto || '') : '', l]));
-  });
-  const esc = v => {
-    const s = String(v == null ? '' : v);
-    return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  };
-  const csv = '﻿' + linhas.map(l => l.map(esc).join(';')).join('\r\n');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
-  a.download = 'mensagens.csv';
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+/* O navigator.clipboard so funciona em contexto seguro (https ou localhost) e
+   pode ser negado pelo navegador. O caminho antigo - textarea escondida +
+   execCommand - continua funcionando em todos eles, entao fica como reserva em
+   vez de o botao nao fazer nada. */
+function msgCopiarNaMao(texto, aoDarCerto){
+  const t = document.createElement('textarea');
+  t.value = texto;
+  t.style.position = 'fixed';
+  t.style.opacity = '0';
+  document.body.appendChild(t);
+  t.select();
+  let ok = false;
+  try{ ok = document.execCommand('copy'); }catch(e){}
+  t.remove();
+  if(ok) aoDarCerto();
+  else alert('Não consegui copiar sozinho. Selecione o texto da caixa de ' +
+             'edição e use Ctrl+C.');
 }
 
 function waPintarContador(){
