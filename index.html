@@ -221,6 +221,7 @@ table.cart-tbl tbody tr:hover{background:#F8FAFE}
 .pill-op{background:#FFF4D6;color:#8A6D00;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;white-space:nowrap}
 .pill-inativo{background:#FCEAEA;color:#C0392B;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px}
 .pill-ativo{background:#E8F6EE;color:#1BA466;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px}
+.pill-atencao{background:#FFF4D6;color:#8A6D00;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px}
 table.mapa-tbl{border-collapse:collapse;font-size:12px;width:100%}
 table.mapa-tbl th{position:sticky;top:0;background:var(--navy);color:#fff;padding:6px 8px;font-size:10px;font-weight:700}
 table.mapa-tbl td{padding:5px 8px;border-bottom:1px solid var(--line)}
@@ -244,6 +245,19 @@ table.qg-lista{border-collapse:collapse;font-size:11.5px;width:100%}
 table.qg-lista th{padding:5px 8px;background:#EEF1F8;color:var(--navy);
   font-size:10px;position:sticky;top:0;z-index:1}
 table.qg-lista td{padding:4px 8px;border-bottom:1px solid var(--line)}
+
+/* ---- Botões de contato (14/10/2026) ---- */
+.bt-wa,.bt-mail,.bt-lote{border:1px solid var(--line);background:#fff;
+  border-radius:6px;padding:3px 9px;font-size:11px;font-weight:700;
+  cursor:pointer;margin-left:5px;white-space:nowrap}
+.bt-wa{color:#128C7E;border-color:#BFE3DC}
+.bt-wa:hover{background:#E8F6F3}
+.bt-mail{color:#0f6cbd;border-color:#CBDDF2}
+.bt-mail:hover{background:#EDF4FC}
+.bt-lote{color:#0f6cbd;border-color:#CBDDF2;margin-left:0}
+.bt-lote:hover{background:#EDF4FC}
+.bt-off{font-size:10px;color:var(--muted);background:var(--grey);
+  border-radius:6px;padding:3px 8px;margin-left:5px;white-space:nowrap}
 
 /* ---- Gestão geográfica (14/10/2026) ---- */
 table.geo-tbl{border-collapse:collapse;font-size:12.5px;width:100%}
@@ -679,6 +693,7 @@ async function _baixarOsDados(){
 }
 let FATO,CALC,BR_SVG,CARTEIRA,CART_MET,CART_DATAS;
 let METAS_D=null;   /* metas por vendedor; null quando o pacote nao tem o bloco */
+let CONTATOS_D=null, MSG_D=null;   /* telefone/e-mail por CNPJ e textos prontos */
 let D,ROWS,CNPJ_CLI={},MESES,DATA_READY=false;
 async function _unz(b64){
   const bin=atob(b64), bytes=new Uint8Array(bin.length);
@@ -730,6 +745,12 @@ async function _loadData(){
      faria os dois blocos de meta aparecerem meio segundo depois dos outros -
      ou nao aparecerem, se a aba fosse trocada no meio. Sao 1 KB; nao pesa. */
   METAS_D = _Z.METAS ? await _unz(_Z.METAS) : null;
+  /* Contatos e mensagens vem junto, pelo mesmo motivo das metas: a aba Carteira
+     monta os botoes de forma sincrona, e uma promessa no meio faria os botoes
+     aparecerem meio segundo depois - ou nao aparecerem, se a aba trocasse. Sao
+     uns 60 KB somados. Ausentes, a aba funciona como sempre funcionou. */
+  CONTATOS_D = _Z.CONTATOS ? await _unz(_Z.CONTATOS) : null;
+  MSG_D      = _Z.MENSAGENS ? await _unz(_Z.MENSAGENS) : null;
   DATA_READY=true;
 }
 let USERS={};   /* vem de Parametros!AM:AO via JSON */
@@ -1499,7 +1520,16 @@ const CART_POR_PAG=250;
    13/10/2026 a casa tem 900 ativos por dias corridos e 651 pela regua de meses,
    porque o Consolidado tem pedidos de clientes que nem chegam ao FATO.
    ========================================================================== */
-const CART_DIAS_INATIVO = 120;
+/* TRES FAIXAS, nao duas (14/10/2026, pedido do Igor):
+       ate 90 dias  = Ativo
+       91 a 120     = Atenção   <- a faixa nova; e o cliente que esta escorregando
+       121 ou mais  = Inativo
+   A faixa do meio e o ponto da tela: ate aqui o cliente de 118 dias aparecia
+   verde, igual ao que comprou ontem, e virava vermelho de um dia para o outro.
+   Os limites sao INCLUSIVOS nas pontas e nao deixam buraco: 90 e ativo, 120 e
+   atenção, 121 e inativo. */
+const CART_DIAS_ATIVO   = 90;
+const CART_DIAS_ATENCAO = 120;
 let CART_QG = {v:null, b:null};     // vendedor e balde abertos no quadro
 
 /* Ano do DADO, nao o do relogio (mesma licao do metasAno). */
@@ -1521,7 +1551,10 @@ function cartBalde(cn, ano){
   const ds = (D && D.diassem !== null && D.diassem !== undefined) ? D.diassem : null;
   if(u){
     if(parseInt(String(u).slice(0,4), 10) < ano) return 'semano';
-    return (ds !== null && ds <= CART_DIAS_INATIVO) ? 'ativo' : 'inativo';
+    if(ds === null) return 'inativo';
+    if(ds <= CART_DIAS_ATIVO)   return 'ativo';
+    if(ds <= CART_DIAS_ATENCAO) return 'atencao';
+    return 'inativo';
   }
   /* SEM DATA NO CONSOLIDADO -> CAI PARA A REGUA DE MESES.
      Peguei isto no teste: a linha "A definir" saía 76 / 0 / 0 / 76, ou seja,
@@ -1550,7 +1583,16 @@ function cartUltDe(cn){
 }
 
 const CART_QG_MAX = 500;            // teto da lista expandida
-const CART_QG_BALDES = ['cart','ativo','inativo','semano'];
+const CART_QG_BALDES = ['cart','ativo','atencao','inativo','semano'];
+
+/* cor e faixa de um numero de dias, numa regra so - usada na coluna "Dias do
+   últ. pedido", nas pilulas de Status e na lista expandida do quadro */
+function cartFaixa(d){
+  if(d === null || d === undefined) return null;
+  if(d <= CART_DIAS_ATIVO)   return {k:'ativo',   lab:'Ativo',    cor:'#1BA466'};
+  if(d <= CART_DIAS_ATENCAO) return {k:'atencao', lab:'Atenção',  cor:'#E0A800'};
+  return {k:'inativo', lab:'Inativo', cor:'#C0392B'};
+}
 
 /* Recebe a MESMA lista que alimenta a tabela ANTES da busca por texto: o quadro
    descreve a carteira recortada pelos filtros, nao o resultado de quem digitou
@@ -1560,14 +1602,24 @@ function cartQuadroGerencial(base){
   const porV = {};
   let semData = 0;          // quantos cairam na regua de meses por falta de data
   base.forEach(c => {
-    const o = porV[c.v] = porV[c.v] || {cart:[], ativo:[], inativo:[], semano:[]};
+    const o = porV[c.v] = porV[c.v] ||
+              {cart:[], ativo:[], atencao:[], inativo:[], semano:[]};
     o.cart.push(c);
     if(!cartUltDe(c.cn)) semData++;
     o[cartBalde(c.cn, ano)].push(c);
   });
   const vends = Object.keys(porV).sort((a,b) => porV[b].cart.length - porV[a].cart.length);
-  const todos = {cart:[], ativo:[], inativo:[], semano:[]};
-  vends.forEach(v => CART_QG_BALDES.forEach(b => { todos[b] = todos[b].concat(porV[v][b]); }));
+
+  /* O TOTAL CONTA SO A CARTEIRA CADASTRADA (14/10/2026, pedido do Igor).
+     Antes ele somava tambem os "A definir" - CNPJs que faturaram no periodo e
+     nao estao na segmentacao, quase todos CPF. Como esse grupo depende do
+     filtro (8 em Outubro, 76 no ano inteiro), a "Carteira total" dancava: 3.035
+     num filtro, 3.103 em outro, sem nada ter mudado na carteira de verdade.
+     Agora o total e fixo e os de fora aparecem numa linha propria, embaixo. */
+  const VEND_FORA = 'A definir';
+  const dentro = vends.filter(v => v !== VEND_FORA);
+  const todos = {cart:[], ativo:[], atencao:[], inativo:[], semano:[]};
+  dentro.forEach(v => CART_QG_BALDES.forEach(b => { todos[b] = todos[b].concat(porV[v][b]); }));
   porV['(todos)'] = todos;
 
   /* O ATRIBUTO CHAMA data-vend E NAO data-v DE PROPOSITO: `data-v` e a convencao
@@ -1584,9 +1636,12 @@ function cartQuadroGerencial(base){
       '" title="clique para ver quem são">' + n0(n) + (aberto ? ' ▾' : '') + '</td>';
   };
 
-  const ROT = {cart:'Carteira total', ativo:'Clientes ativos (0 a ' + CART_DIAS_INATIVO +
-              ' dias)', inativo:'Clientes inativos (' + CART_DIAS_INATIVO +
-              ' ou + dias)', semano:'Não compraram em ' + ano};
+  const ROT = {
+    cart:    'Carteira total',
+    ativo:   'Clientes ativos (até ' + CART_DIAS_ATIVO + ' dias)',
+    atencao: 'Atenção (' + (CART_DIAS_ATIVO + 1) + ' a ' + CART_DIAS_ATENCAO + ' dias)',
+    inativo: 'Clientes inativos (' + (CART_DIAS_ATENCAO + 1) + ' dias ou mais)',
+    semano:  'Não compraram em ' + ano};
 
   /* A lista sai do MAIS FRIO para o mais quente, em todos os baldes. No balde
      de ativos isso coloca em cima justamente quem esta prestes a virar inativo,
@@ -1602,7 +1657,7 @@ function cartQuadroGerencial(base){
     });
     const corta = ord.slice(0, CART_QG_MAX);
     const linhasCli = corta.map(c => {
-      const d = cartDiasDe(c.cn), u = cartUltDe(c.cn);
+      const d = cartDiasDe(c.cn), u = cartUltDe(c.cn), f = cartFaixa(d);
       return '<tr><td class="rowlab" title="' + c.cn + '">' +
         String(c.rz || '').substring(0, 44) + '</td>' +
         '<td class="rowlab">' + ((c.ci ? c.ci.substring(0, 20) : '—') +
@@ -1611,21 +1666,46 @@ function cartQuadroGerencial(base){
         '<td class="mono" style="text-align:right;white-space:nowrap">' +
           cartDataBR(u) + '</td>' +
         '<td class="mono" style="text-align:right' +
-          (d === null ? '' : (d > CART_DIAS_INATIVO ? ';color:#C0392B' : ';color:#1BA466')) +
-          '">' + (d !== null ? n0(d) + 'd' : '—') + '</td></tr>';
+          (f ? ';color:' + f.cor : '') +
+          '">' + (d !== null ? n0(d) + 'd' : '—') + '</td>' +
+        /* o balde 'cart' junta os quatro enquadramentos, entao nao existe UMA
+           mensagem certa para ele - os botoes so aparecem nos grupos */
+        '<td style="text-align:right;white-space:nowrap">' +
+          (b === 'cart' ? '<span style="color:var(--line);font-size:11px" ' +
+             'title="abra um dos grupos para ter a mensagem certa">—</span>'
+           : botoesContato(c, b)) + '</td></tr>';
     }).join('');
-    return '<tr class="qg-exp" data-sem-export="1"><td colspan="5" style="padding:0;background:#FAFBFE">' +
-      '<div style="padding:10px 14px 4px;font-size:12px;color:var(--muted)">' +
-      '<b>' + (v === '(todos)' ? 'Todos os vendedores' : v) + '</b> · ' + ROT[b] +
+
+    /* lote de e-mail: so os clientes DESTE grupo que tem e-mail */
+    const mails = [];
+    ord.forEach(c => { const ct = contatoDe(c.cn);
+      if(ct && ct.e && mails.indexOf(ct.e) < 0) mails.push(ct.e); });
+    const modelo = ord.length ? msgMontar(b, ord[0]) : {assunto:'', texto:''};
+    const btLote = (b !== 'cart' && mails.length)
+      ? '<button class="bt-lote" data-lote="' + encodeURIComponent(JSON.stringify(
+          {mails: mails, assunto: modelo.assunto, texto: modelo.texto})) +
+        '" title="Abre o Outlook com todos em cópia oculta. O texto é o do ' +
+        'grupo, sem os marcadores de cliente — em lote não dá para ' +
+        'personalizar um a um.">E-mail para ' + mails.length + '</button>'
+      : '';
+
+    return '<tr class="qg-exp" data-sem-export="1"><td colspan="6" style="padding:0;background:#FAFBFE">' +
+      '<div style="padding:10px 14px 4px;font-size:12px;color:var(--muted);' +
+      'display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+      '<span><b>' + (v === '(todos)' ? 'Todos os vendedores' : v) + '</b> · ' + ROT[b] +
       ' · ' + n0(arr.length) + ' cliente(s)' +
       (ord.length > CART_QG_MAX ? ' — mostrando os ' + CART_QG_MAX +
-        ' mais frios; use a busca da tabela abaixo para os demais' : '') +
-      '</div><div style="max-height:360px;overflow:auto;padding:0 8px 10px">' +
+        ' mais frios; use a busca da tabela abaixo para os demais' : '') + '</span>' +
+      (btLote ? '<span style="margin-left:auto">' + btLote + '</span>' : '') +
+      '</div>' +
+      '<div id="waContador" style="padding:0 14px 6px;font-size:11px;color:var(--muted)"></div>' +
+      '<div style="max-height:360px;overflow:auto;padding:0 8px 10px">' +
       '<table class="qg-lista"><thead><tr><th style="text-align:left">Cliente</th>' +
       '<th style="text-align:left">Cidade / UF</th><th style="text-align:left">Canal</th>' +
       '<th style="text-align:right">Último pedido</th>' +
-      '<th style="text-align:right">Dias</th></tr></thead><tbody>' +
-      (linhasCli || '<tr><td colspan="5" style="color:var(--muted);padding:8px">' +
+      '<th style="text-align:right">Dias</th>' +
+      '<th style="text-align:right">Contato</th></tr></thead><tbody>' +
+      (linhasCli || '<tr><td colspan="6" style="color:var(--muted);padding:8px">' +
         'Nenhum cliente neste grupo.</td></tr>') +
       '</tbody></table></div></td></tr>';
   };
@@ -1639,6 +1719,7 @@ function cartQuadroGerencial(base){
       nome + '</td>' +
       cel(v, 'cart',    o.cart.length,    v === '(todos)' ? '#fff' : 'var(--muted)') +
       cel(v, 'ativo',   o.ativo.length,   v === '(todos)' ? '#fff' : '#1BA466') +
+      cel(v, 'atencao', o.atencao.length, v === '(todos)' ? '#fff' : '#E0A800') +
       cel(v, 'inativo', o.inativo.length, v === '(todos)' ? '#fff' : '#C0392B') +
       cel(v, 'semano',  o.semano.length,  v === '(todos)' ? '#fff' : '#7A7F8C') + '</tr>';
     return tr + ((CART_QG.v === v && CART_QG.b) ? lista(v, CART_QG.b) : '');
@@ -1654,15 +1735,28 @@ function cartQuadroGerencial(base){
        textContent da celula, e "Clientes ativos" + "0 a 120 dias" em duas
        linhas virava "Clientes ativos0 a 120 dias" dentro do CSV. Sao cinco
        colunas; cabe inteiro. */
-    '<th style="text-align:right">Carteira total</th>' +
-    '<th style="text-align:right">Clientes ativos (0 a ' + CART_DIAS_INATIVO + ' dias)</th>' +
-    '<th style="text-align:right">Clientes inativos (' + CART_DIAS_INATIVO + ' ou + dias)</th>' +
-    '<th style="text-align:right">Não compraram em ' + ano + '</th>' +
+    '<th style="text-align:right">' + ROT.cart + '</th>' +
+    '<th style="text-align:right">' + ROT.ativo + '</th>' +
+    '<th style="text-align:right">' + ROT.atencao + '</th>' +
+    '<th style="text-align:right">' + ROT.inativo + '</th>' +
+    '<th style="text-align:right">' + ROT.semano + '</th>' +
     '</tr></thead><tbody>' +
-    linhaVend('(todos)') + vends.map(linhaVend).join('') +
+    linhaVend('(todos)') + dentro.map(linhaVend).join('') +
+    /* "A definir" FORA do total, com uma faixa separando: ele e informacao
+       (quem esta faturando sem estar na segmentacao), mas nao e carteira. */
+    (porV[VEND_FORA]
+      ? '<tr data-sem-export="1"><td colspan="6" style="padding:4px 12px;background:#F4F6FA;' +
+        'font-size:11px;color:var(--muted);border-top:2px solid var(--line)">' +
+        'Fora da carteira — faturaram no período e não estão na segmentação ' +
+        '(quase todos CPF). Não entram no total acima e variam com o filtro.' +
+        '</td></tr>' + linhaVend(VEND_FORA)
+      : '') +
     '</tbody></table></div>' +
     '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">' +
-    'Os três grupos são exclusivos e somam a carteira do vendedor. ' +
+    'Os quatro grupos são exclusivos e somam a carteira do vendedor: ativo até ' +
+    CART_DIAS_ATIVO + ' dias, atenção de ' + (CART_DIAS_ATIVO + 1) + ' a ' +
+    CART_DIAS_ATENCAO + ', inativo de ' + (CART_DIAS_ATENCAO + 1) + ' em diante. ' +
+    'O total conta só a carteira cadastrada, por isso não muda com o filtro. ' +
     '"Não compraram em ' + ano + '" inclui quem nunca comprou. Esta régua conta ' +
     'DIAS CORRIDOS até hoje — a coluna Ativos/Inativos do Resumo usa a janela de ' +
     'meses ancorada no filtro, e por isso os dois números não são iguais.' +
@@ -1739,7 +1833,7 @@ function vCarteira(){
     const porMes=meses.map(m=>mm[m]||0);
     const M=CART_MET[c.cn];
     // rentabilidade e ticket: MESMO cálculo do DRE por CNPJ (dre() sobre o FATO)
-    let rent=null, ticket=0, rec=null, diasUlt=null, oport=false, status='Inativo';
+    let rent=null, ticket=0, rec=null, diasUlt=null, oport=false, status='';
     const lins=linsCn[c.cn];
     if(lins && lins.length){
       const dd=dre(lins);
@@ -1751,7 +1845,8 @@ function vCarteira(){
     // datas: só o CART_MET tem (consolidado); usado para recorrência/último pedido/status
     if(M){
       rec=M.rec; diasUlt=M.diasUlt;
-      if(diasUlt!==null) status = diasUlt>120 ? 'Inativo' : 'Ativo';
+      /* o status pela regua de tres faixas sai mais abaixo, do diasCorr, que
+         cobre 3.062 CNPJs contra os 1.427 do CART_MET */
       // oportunidade = atraso vs. recorrência habitual, MAS nunca se já faturou no mês filtrado
       if(rec!==null && diasUlt!==null && diasUlt>rec && !faturouNoFiltro) oport=true;
     }
@@ -1763,6 +1858,13 @@ function vCarteira(){
     const ult = (D && D.ult) ? D.ult : null;
     const diasCorr = (D && D.diassem !== null && D.diassem !== undefined)
                        ? D.diassem : null;
+    /* STATUS PELAS TRES FAIXAS, e calculado do diasCorr (14/10/2026).
+       Antes saia do CART_MET, que so existe para quem tem linha no FATO: os
+       outros ~1.600 ficavam com 'Inativo' por padrao, mesmo os que tinham
+       comprado ha pouco. Com a coluna "Dias do últ. pedido" do lado, isso
+       viraria contradicao na mesma linha - "Inativo" ao lado de "12d". */
+    const _f = cartFaixa(diasCorr !== null ? diasCorr : diasUlt);
+    status = _f ? _f.lab : '';
     return {cn:c.cn, rz:c.rz, v:c.v, ci:c.ci||'', uf:c.uf||'', ca:c.ca||'',
             ytd:vendaYTD[c.cn]||0, meses:porMes,
             rent, ticket, rec, diasUlt, ult, diasCorr, oport, status};
@@ -1796,7 +1898,11 @@ function vCarteira(){
                          vb=nz(b.diasCorr===null?null:-b.diasCorr);}
     else if(key==='dias'){va=nz(a.diasCorr);vb=nz(b.diasCorr);}
     else if(key==='oport'){va=a.oport?1:0;vb=b.oport?1:0;}
-    else if(key==='status'){va=a.status==='Inativo'?1:0;vb=b.status==='Inativo'?1:0;}
+    /* ordena pela TEMPERATURA (ativo < atenção < inativo), nao por "é inativo
+       sim ou não": com tres faixas o booleano antigo juntava atenção e ativo */
+    else if(key==='status'){const g={'Ativo':0,'Atenção':1,'Inativo':2};
+      va=g[a.status]===undefined?-1:g[a.status];
+      vb=g[b.status]===undefined?-1:g[b.status];}
     else { const mi=parseInt(key.substring(1)); va=a.meses[mi]; vb=b.meses[mi]; }
     return (va-vb)*dir;
   });
@@ -1850,9 +1956,9 @@ function vCarteira(){
     <td class="mono" style="text-align:right">${r.ticket?brl(r.ticket):'—'}</td>
     <td class="mono" style="text-align:right">${r.rec!==null?Math.round(r.rec)+'d':'—'}</td>
     <td class="mono" style="text-align:right;white-space:nowrap">${r.ult?cartDataBR(r.ult):'<span style="color:var(--line)">—</span>'}</td>
-    <td class="mono"${r.diasCorr!==null?` data-v="${r.diasCorr}"`:''} style="text-align:right${r.diasCorr===null?'':(r.diasCorr>CART_DIAS_INATIVO?';color:#C0392B':';color:#1BA466')}">${r.diasCorr!==null?n0(r.diasCorr)+'d':'<span style="color:var(--line)">—</span>'}</td>
+    <td class="mono"${r.diasCorr!==null?` data-v="${r.diasCorr}"`:''} style="text-align:right${cartFaixa(r.diasCorr)?';color:'+cartFaixa(r.diasCorr).cor:''}">${r.diasCorr!==null?n0(r.diasCorr)+'d':'<span style="color:var(--line)">—</span>'}</td>
     <td style="text-align:center">${r.oport?'<span class="pill-op">● oportunidade</span>':'<span style="color:var(--line)">—</span>'}</td>
-    <td style="text-align:center">${r.status==='Inativo'?'<span class="pill-inativo">Inativo</span>':(r.status==='Ativo'?'<span class="pill-ativo">Ativo</span>':'<span style="color:var(--line)">—</span>')}</td>
+    <td style="text-align:center">${r.status==='Inativo'?'<span class="pill-inativo">Inativo</span>':r.status==='Atenção'?'<span class="pill-atencao">Atenção</span>':r.status==='Ativo'?'<span class="pill-ativo">Ativo</span>':'<span style="color:var(--line)">—</span>'}</td>
     ${r.meses.map(v=>`<td class="mono" style="text-align:right${v<0?';color:var(--neg)':v===0?';color:var(--line)':''}">${v?brl(v):'·'}</td>`).join('')}</tr>`).join('');
 
   const semVenda=rows.filter(r=>r.ytd===0).length;
@@ -1905,6 +2011,7 @@ function vCarteira(){
 
   el('v-carteira').innerHTML=`
    <div class="note"><b>Carteira</b> — segmentação completa com vendas líquidas (venda − devolução). ${SESSION.isAdmin?'Filtre por vendedor e clique':'Clique'} nos cabeçalhos de vendas para ordenar.</div>
+   ${(typeof msgEditorHtml==='function') ? msgEditorHtml() : ''}
    ${cartQuadroGerencial(base)}
    <div class="card"><div class="card-h"><h3>Clientes da carteira</h3><span class="hint">${rows.length} CNPJs · ${semVenda} sem venda no período</span></div>
      <div style="padding:0 20px 12px;display:flex;align-items:center;flex-wrap:wrap;gap:8px">
@@ -1913,7 +2020,7 @@ function vCarteira(){
      </div>
      ${pag}
      <div class="scroll"><table class="cart-tbl">${head}<tbody>${totalRow}${body}</tbody></table></div>
-     <div style="padding:8px 14px;font-size:11px;color:var(--muted)">· = sem venda no mês · valores em vermelho = devolução líquida · 250 por página · primeira linha "Todos" = total da carteira filtrada (todas as páginas) · clientes sem vendedor mapeado aparecem como "A definir" · "Último pedido" é a data real do pedido no consolidado, e "Dias do últ. pedido" conta dias corridos até hoje (verde ≤ ${CART_DIAS_INATIVO}d, vermelho acima); na linha "Todos" a data é a mais recente da carteira filtrada e os dias são a <b>mediana</b>, não a média.</div>
+     <div style="padding:8px 14px;font-size:11px;color:var(--muted)">· = sem venda no mês · valores em vermelho = devolução líquida · 250 por página · primeira linha "Todos" = total da carteira filtrada (todas as páginas) · clientes sem vendedor mapeado aparecem como "A definir" · "Último pedido" é a data real do pedido no consolidado, e "Dias do últ. pedido" conta dias corridos até hoje (verde até ${CART_DIAS_ATIVO}d, amarelo de ${CART_DIAS_ATIVO+1} a ${CART_DIAS_ATENCAO}, vermelho de ${CART_DIAS_ATENCAO+1} em diante); na linha "Todos" a data é a mais recente da carteira filtrada e os dias são a <b>mediana</b>, não a média.</div>
    </div>`;
   /* Clique no quadro gerencial: um ouvinte so, delegado no cartao. Clicar na
      celula ja aberta FECHA - senao nao haveria como voltar a tela limpa. */
@@ -1926,6 +2033,9 @@ function vCarteira(){
     else { CART_QG={v:v,b:b}; }
     vCarteira();
   });
+  /* o contador do WhatsApp so existe quando ha um grupo aberto */
+  if(typeof waPintarContador === 'function'){ try{ waPintarContador(); }catch(e){} }
+  if(typeof msgLigarEditor === 'function'){ try{ msgLigarEditor(); }catch(e){ console.error('editor de mensagens:', e); } }
   document.querySelectorAll('.cart-th').forEach(t=>t.addEventListener('click',()=>{
     const k=t.getAttribute('data-k');
     if(CART_SORT.key===k) CART_SORT.dir*=-1; else CART_SORT={key:k,dir:-1};
@@ -12374,6 +12484,424 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
     _regRes._comSkuCrit = true;
   }
 }
+
+/* ==========================================================================
+   CONTATO DO CLIENTE: WHATSAPP E E-MAIL  (pedido do Igor em 14/10/2026)
+   ==========================================================================
+
+   Botao ao lado de cada cliente no quadro gerencial da Carteira, com a mensagem
+   do enquadramento dele ja escrita. O e-mail tambem vai em lote, por grupo.
+
+   O QUE ESTES BOTOES FAZEM, EXATAMENTE: eles ABREM. O wa.me abre a conversa com
+   o texto digitado e o vendedor aperta enviar; o mailto: abre o Outlook dele
+   com destinatario, assunto e corpo prontos. Nada e disparado por aqui, e isso
+   nao e limitacao de preguica: mandar de verdade exigiria a API do WhatsApp
+   Business (paga, com modelo aprovado, e pelo numero da EMPRESA e nao do
+   vendedor). Como abre no aplicativo de quem esta logado, a mensagem sai do
+   numero e do e-mail do proprio vendedor - que era o pedido.
+
+   O LIMITADOR DE 30/DIA E 1 MINUTO E DISCIPLINA, NAO TRANCA. Ele mora no
+   localStorage do navegador: quem limpar os dados zera o contador, e ele nao
+   tem como saber se a mensagem foi mesmo enviada - so que o botao foi clicado.
+   Serve para o vendedor nao disparar 80 seguidas sem perceber. O que derruba
+   numero no WhatsApp, alias, nao e tanto o ritmo: e o cliente BLOQUEAR ou
+   DENUNCIAR mensagem que nao pediu.
+   ========================================================================== */
+const WA_LIMITE_DIA = 30;
+const WA_ESPERA_SEG = 60;
+
+function waChaveDia(){
+  const d = new Date();
+  const dia = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') +
+              '-' + String(d.getDate()).padStart(2,'0');
+  let quem = 'dobro';
+  try{ quem = String((SESSION && SESSION.user) || 'dobro'); }catch(e){}
+  return 'dobro_wa_' + quem + '_' + dia;
+}
+/* Toda leitura do localStorage em try/catch: em janela anonima ou com dados de
+   site bloqueados o acessor ESTOURA, e um botao de WhatsApp nao pode derrubar a
+   aba Carteira inteira por causa disso. */
+function waLer(){
+  try{
+    return {n: parseInt(localStorage.getItem(waChaveDia()) || '0', 10) || 0,
+            ult: parseInt(localStorage.getItem('dobro_wa_ultimo') || '0', 10) || 0};
+  }catch(e){ return {n: 0, ult: 0}; }
+}
+function waRegistrar(){
+  try{
+    const s = waLer();
+    localStorage.setItem(waChaveDia(), String(s.n + 1));
+    localStorage.setItem('dobro_wa_ultimo', String(Date.now()));
+  }catch(e){}
+}
+/* null = pode mandar; string = o motivo de nao poder */
+function waBloqueio(){
+  const s = waLer();
+  if(s.n >= WA_LIMITE_DIA)
+    return 'limite de ' + WA_LIMITE_DIA + ' mensagens por dia atingido';
+  const falta = Math.ceil((WA_ESPERA_SEG * 1000 - (Date.now() - s.ult)) / 1000);
+  if(s.ult && falta > 0)
+    return 'espere ' + falta + 's antes da próxima';
+  return null;
+}
+
+function contatoDe(cn){
+  return (CONTATOS_D && CONTATOS_D[cn]) || null;
+}
+
+/* Indice proprio da carteira por CNPJ. O CART_POR_CN que ja existe mora dentro
+   do bloco de melhorias de 29/07, que e uma IIFE - daqui ele nao se enxerga.
+   Repetir o indice e mais barato que furar o encapsulamento daquele bloco. */
+let _CART_IX = null;
+function cartCliente(cn){
+  if(!_CART_IX){
+    _CART_IX = {};
+    (typeof CARTEIRA !== 'undefined' && CARTEIRA || [])
+      .forEach(c => { _CART_IX[c.cn] = c; });
+  }
+  return _CART_IX[cn] || {cn: cn, rz: cliName(cn), v: '', ci: '', uf: '', ca: ''};
+}
+
+/* ---------------------------------------------------------------- mensagem */
+/* Os marcadores sao trocados AQUI e nao no Python porque so a tela sabe quem e
+   o vendedor logado e quantos dias o cliente esta parado hoje. */
+function msgMontar(grupo, cliente){
+  if(!MSG_D || !MSG_D[grupo]) return {assunto: '', texto: ''};
+  const porCanal = MSG_D[grupo];
+  /* canal especifico vence o geral - e assim que se escreve um texto so para
+     Body Shop sem duplicar os outros */
+  const bloco = (cliente.ca && porCanal[cliente.ca]) || porCanal[''] ||
+                porCanal[Object.keys(porCanal)[0]];
+  if(!bloco) return {assunto: '', texto: ''};
+  const d = cartDiasDe(cliente.cn), u = cartUltDe(cliente.cn);
+  const ct = contatoDe(cliente.cn);
+  const campos = {
+    cliente:  cliente.rz || cliente.cn,
+    vendedor: cliente.v || '',
+    cidade:   cliente.ci || '',
+    uf:       cliente.uf || '',
+    canal:    cliente.ca || '',
+    contato:  (ct && ct.n) || '',
+    dias:     d === null ? '' : String(d),
+    ultimo_pedido: cartDataBR(u)
+  };
+  /* Marcador que eu nao conheco fica como esta, de proposito: some seria o Igor
+     achar que funcionou. Aparecendo "{descnto}" na previa, ele ve o erro. */
+  const troca = (s) => String(s || '').replace(/\{(\w+)\}/g,
+    (todo, k) => (k in campos) ? campos[k] : todo);
+  return {assunto: troca(bloco.assunto), texto: troca(bloco.texto)};
+}
+
+function waLink(num, texto){
+  return 'https://wa.me/55' + num +
+         (texto ? '?text=' + encodeURIComponent(texto) : '');
+}
+function mailLink(para, assunto, corpo){
+  const q = [];
+  if(assunto) q.push('subject=' + encodeURIComponent(assunto));
+  if(corpo)   q.push('body=' + encodeURIComponent(corpo));
+  return 'mailto:' + (para || '') + (q.length ? '?' + q.join('&') : '');
+}
+
+/* O mailto vai para o SHELL do Windows, que corta a linha de comando perto de
+   2.000 caracteres. Estourar nao da erro: o Outlook abre com o corpo cortado no
+   meio de uma frase. Entao o lote tem teto, e o teto e dito na tela. */
+const MAIL_LOTE_MAX = 30;
+const MAIL_URL_MAX = 1900;
+
+function mailLote(lista, assunto, corpo){
+  /* virgula, nao ponto-e-virgula: e o separador do RFC 6068. O Outlook aceita
+     os dois, mas outros clientes so aceitam a virgula. */
+  let usados = [];
+  for(const e of lista){
+    const tentativa = usados.concat([e]);
+    if(mailLink('', assunto, corpo).length +
+       tentativa.join(',').length + 5 > MAIL_URL_MAX) break;
+    if(tentativa.length > MAIL_LOTE_MAX) break;
+    usados = tentativa;
+  }
+  return {url: 'mailto:?bcc=' + encodeURIComponent(usados.join(',')) +
+               '&' + mailLink('', assunto, corpo).replace('mailto:?', ''),
+          n: usados.length, total: lista.length};
+}
+
+/* --------------------------------------------------------------- os botoes */
+function botoesContato(c, grupo){
+  const ct = contatoDe(c.cn);
+  if(!ct) return '<span style="color:var(--line);font-size:11px" ' +
+    'title="sem telefone nem e-mail no cadastro do OMIE">—</span>';
+  let h = '';
+  if(ct.w){
+    h += '<button class="bt-wa" data-cn="' + metasEsc(c.cn) + '" data-g="' + grupo +
+         '" title="Abre o WhatsApp com a mensagem pronta — você confere e envia">' +
+         'WhatsApp</button>';
+  }else if(ct.f){
+    h += '<span class="bt-off" title="o cadastro só tem telefone fixo (' +
+         ct.f + '), que não tem WhatsApp">fixo</span>';
+  }
+  if(ct.e){
+    h += '<button class="bt-mail" data-cn="' + metasEsc(c.cn) + '" data-g="' + grupo +
+         '" title="' + metasEsc(ct.e) + '">E-mail</button>';
+  }
+  return h || '<span style="color:var(--line);font-size:11px">—</span>';
+}
+
+/* Um ouvinte so, no documento: os botoes nascem e morrem a cada render. */
+document.addEventListener('click', ev => {
+  const alvo = ev.target && ev.target.closest &&
+               ev.target.closest('.bt-wa, .bt-mail, .bt-lote');
+  if(!alvo) return;
+  ev.preventDefault();
+
+  if(alvo.classList.contains('bt-lote')){
+    const dados = JSON.parse(decodeURIComponent(alvo.getAttribute('data-lote')));
+    const r = mailLote(dados.mails, dados.assunto, dados.texto);
+    if(!r.n){ alert('Nenhum e-mail neste grupo.'); return; }
+    if(r.n < r.total && !confirm(
+        'São ' + r.total + ' clientes com e-mail, mas cabem ' + r.n +
+        ' por vez (o Windows corta o endereço do e-mail acima de ~2.000 ' +
+        'caracteres).\n\nAbrir com os ' + r.n + ' primeiros?')) return;
+    window.location.href = r.url;
+    return;
+  }
+
+  const cn = alvo.getAttribute('data-cn');
+  const grupo = alvo.getAttribute('data-g');
+  const c = (typeof CART_POR_CN === 'object' && CART_POR_CN && CART_POR_CN[cn]) ||
+            {cn: cn, rz: cliName(cn)};
+  const ct = contatoDe(cn);
+  const m = msgMontar(grupo, c);
+
+  if(alvo.classList.contains('bt-mail')){
+    if(!ct || !ct.e) return;
+    window.location.href = mailLink(ct.e, m.assunto, m.texto);
+    return;
+  }
+  /* WhatsApp: o limitador entra AQUI, antes de abrir */
+  const porque = waBloqueio();
+  if(porque){ alert('WhatsApp: ' + porque + '.'); return; }
+  if(!ct || !ct.w) return;
+  waRegistrar();
+  const antes = alvo.textContent;
+  alvo.textContent = 'aberto';
+  setTimeout(() => { alvo.textContent = antes; waPintarContador(); }, 1500);
+  window.open(waLink(ct.w, m.texto), '_blank', 'noopener');
+});
+
+/* ==========================================================================
+   EDITOR DE MENSAGENS  (visão de admin)
+   ==========================================================================
+
+   O Igor edita AQUI e publica numa PLANILHA. A pagina e estatica: nao ha onde
+   guardar texto do lado do servidor, e as duas alternativas perdem.
+
+   Guardar so no navegador (localStorage) daria o ao-vivo, mas o texto ficaria
+   na maquina dele e nenhum vendedor veria. Gravar de volta no SharePoint
+   exigiria Files.ReadWrite no aplicativo do Entra, com aprovacao de admin - dar
+   ao Portal o poder de escrever no JSON que ele hoje so le, por causa de um
+   campo de texto.
+
+   Entao: o rascunho mora no navegador enquanto ele mexe, a previa roda com um
+   cliente DE VERDADE do grupo, e "publicar" baixa o mensagens.csv para ele
+   salvar na pasta planilhas. A fonte unica continua sendo o arquivo.
+
+   O FORMATO E UMA LINHA DO TEXTO POR LINHA DO CSV, pelo mesmo motivo explicado
+   no mensagens.py: texto multilinha dentro de celula de CSV e o Excel estragam
+   um ao outro, e o estrago aparece como mensagem cortada no celular do cliente.
+   ========================================================================== */
+const MSG_GRUPOS = [
+  ['ativo',   'Ativos (até 90 dias)'],
+  ['atencao', 'Atenção (91 a 120)'],
+  ['inativo', 'Inativos (121+)'],
+  ['semano',  'Não compraram no ano']
+];
+let MSG_EDIT = {grupo: 'ativo', aberto: false};
+
+function msgRascunhoChave(g){ return 'dobro_msg_' + g; }
+function msgTextoAtual(g){
+  try{
+    const r = localStorage.getItem(msgRascunhoChave(g));
+    if(r !== null) return JSON.parse(r);
+  }catch(e){}
+  const b = (MSG_D && MSG_D[g] && (MSG_D[g][''] ||
+             MSG_D[g][Object.keys(MSG_D[g])[0]])) || null;
+  return b ? {assunto: b.assunto || '', texto: b.texto || ''}
+           : {assunto: '', texto: ''};
+}
+function msgTemRascunho(g){
+  try{ return localStorage.getItem(msgRascunhoChave(g)) !== null; }
+  catch(e){ return false; }
+}
+
+/* Um cliente de verdade daquele grupo, para a previa. Sem cliente real a previa
+   mostraria "{cliente}" e nao serviria para nada. */
+function msgExemplo(g){
+  const ano = cartAnoDado();
+  const lista = (typeof CARTEIRA !== 'undefined' && CARTEIRA || [])
+    .filter(c => cartBalde(c.cn, ano) === g);
+  return lista.length ? lista[Math.floor(lista.length / 2)] : null;
+}
+
+function msgEditorHtml(){
+  if(!SESSION || !SESSION.isAdmin) return '';
+  if(!MSG_EDIT.aberto){
+    return '<div class="card" id="cardMsgEditor"><div class="card-h">' +
+      '<h3>Mensagens de WhatsApp e e-mail</h3>' +
+      '<span class="hint">textos que os botões usam, por enquadramento</span>' +
+      '<button id="msgAbrir" class="btn-nav" style="margin-left:auto">' +
+      'Editar textos</button></div></div>';
+  }
+  const g = MSG_EDIT.grupo;
+  const at = msgTextoAtual(g);
+  const ex = msgExemplo(g);
+  const prev = ex ? (() => {
+      const antes = MSG_D;
+      /* a previa usa o RASCUNHO, nao o publicado - senao ele digitaria e nao
+         veria diferenca nenhuma */
+      MSG_D = Object.assign({}, MSG_D || {});
+      MSG_D[g] = {'': {assunto: at.assunto, texto: at.texto}};
+      const m = msgMontar(g, ex);
+      MSG_D = antes;
+      return m;
+    })() : {assunto: '', texto: ''};
+
+  return '<div class="card" id="cardMsgEditor"><div class="card-h">' +
+    '<h3>Mensagens de WhatsApp e e-mail</h3>' +
+    '<span class="hint">edite, veja a prévia com um cliente real e publique</span>' +
+    '<button id="msgFechar" class="btn-nav" style="margin-left:auto">Fechar</button>' +
+    '</div>' +
+    '<div style="padding:12px 18px 4px;display:flex;gap:6px;flex-wrap:wrap">' +
+    MSG_GRUPOS.map(([k, lab]) =>
+      '<button class="msg-aba btn-nav' + (k === g ? ' on' : '') + '" data-g="' + k +
+      '">' + lab + (msgTemRascunho(k) ? ' •' : '') + '</button>').join('') +
+    '</div>' +
+    '<div style="padding:8px 18px 16px;display:flex;gap:16px;flex-wrap:wrap">' +
+    '<div style="flex:1 1 420px;min-width:320px">' +
+    '<label style="font-size:11px;color:var(--muted);font-weight:600">' +
+    'ASSUNTO (só e-mail)</label>' +
+    '<input id="msgAssunto" class="inp" style="width:100%;padding:7px 10px;' +
+    'margin:4px 0 10px" value="' + metasEsc(at.assunto) + '">' +
+    '<label style="font-size:11px;color:var(--muted);font-weight:600">' +
+    'MENSAGEM</label>' +
+    '<textarea id="msgTexto" style="width:100%;height:220px;padding:9px 11px;' +
+    'margin-top:4px;border:1.5px solid var(--line);border-radius:8px;' +
+    'font-family:inherit;font-size:13px;line-height:1.5;resize:vertical">' +
+    metasEsc(at.texto) + '</textarea>' +
+    '<div style="font-size:11px;color:var(--muted);margin-top:6px">' +
+    'Marcadores: ' + ['cliente','vendedor','cidade','uf','canal','contato',
+      'dias','ultimo_pedido'].map(x => '<code>{' + x + '}</code>').join(' ') +
+    '</div></div>' +
+    '<div style="flex:1 1 300px;min-width:280px">' +
+    '<label style="font-size:11px;color:var(--muted);font-weight:600">PRÉVIA' +
+    (ex ? ' — ' + metasEsc(String(ex.rz || '').substring(0, 34)) : '') +
+    '</label>' +
+    '<div style="margin-top:4px;background:#E7FFDB;border:1px solid #CDEBC0;' +
+    'border-radius:10px;padding:11px 13px;font-size:13px;line-height:1.5;' +
+    'white-space:pre-wrap;min-height:160px">' +
+    (prev.texto ? metasEsc(prev.texto)
+                : '<span style="color:var(--muted)">escreva a mensagem ao lado</span>') +
+    '</div>' +
+    (prev.assunto ? '<div style="font-size:11px;color:var(--muted);margin-top:6px">' +
+      'Assunto do e-mail: <b>' + metasEsc(prev.assunto) + '</b></div>' : '') +
+    (ex ? '' : '<div style="font-size:11px;color:#C0392B;margin-top:6px">' +
+      'Nenhum cliente neste grupo no recorte atual — a prévia fica sem exemplo.' +
+      '</div>') +
+    '</div></div>' +
+    '<div style="padding:0 18px 16px;display:flex;gap:8px;align-items:center;' +
+    'flex-wrap:wrap">' +
+    '<button id="msgPublicar" class="btn-nav" style="font-weight:700">' +
+    'Baixar mensagens.csv</button>' +
+    '<button id="msgDescartar" class="btn-nav">Descartar rascunho</button>' +
+    '<span style="font-size:11px;color:var(--muted)">Salve o arquivo em ' +
+    '<code>planilhas\\mensagens.csv</code>. Os vendedores veem o texto novo ' +
+    'no próximo refresh do JSON.</span>' +
+    '</div></div>';
+}
+
+function msgLigarEditor(){
+  const card = el('cardMsgEditor');
+  if(!card) return;
+  const ab = el('msgAbrir');
+  if(ab) ab.addEventListener('click', () => { MSG_EDIT.aberto = true; vCarteira(); });
+  const fe = el('msgFechar');
+  if(fe) fe.addEventListener('click', () => { MSG_EDIT.aberto = false; vCarteira(); });
+  card.querySelectorAll('.msg-aba').forEach(b =>
+    b.addEventListener('click', () => {
+      msgSalvarRascunho();
+      MSG_EDIT.grupo = b.getAttribute('data-g');
+      vCarteira();
+    }));
+  /* a previa so se atualiza quando o campo perde o foco ou a cada 600 ms de
+     silencio - redesenhar a cada tecla reconstruiria a aba Carteira inteira */
+  let t = null;
+  const mexeu = () => {
+    if(t) clearTimeout(t);
+    t = setTimeout(() => { msgSalvarRascunho(); vCarteira(); }, 600);
+  };
+  const tx = el('msgTexto'), asn = el('msgAssunto');
+  if(tx) tx.addEventListener('input', mexeu);
+  if(asn) asn.addEventListener('input', mexeu);
+  const pb = el('msgPublicar');
+  if(pb) pb.addEventListener('click', () => { msgSalvarRascunho(); msgBaixarCsv(); });
+  const ds = el('msgDescartar');
+  if(ds) ds.addEventListener('click', () => {
+    if(!confirm('Descartar o rascunho de todos os grupos e voltar ao que está ' +
+                'publicado na planilha?')) return;
+    MSG_GRUPOS.forEach(([k]) => { try{ localStorage.removeItem(msgRascunhoChave(k)); }
+                                  catch(e){} });
+    vCarteira();
+  });
+  /* devolve o cursor para onde estava: sem isto, cada atualizacao da previa
+     jogaria o foco fora do textarea no meio da frase */
+  if(MSG_EDIT._foco && tx){
+    tx.focus();
+    try{ tx.setSelectionRange(MSG_EDIT._pos, MSG_EDIT._pos); }catch(e){}
+  }
+}
+
+function msgSalvarRascunho(){
+  const tx = el('msgTexto'), asn = el('msgAssunto');
+  if(!tx) return;
+  MSG_EDIT._foco = (document.activeElement === tx);
+  MSG_EDIT._pos = tx.selectionStart || 0;
+  try{
+    localStorage.setItem(msgRascunhoChave(MSG_EDIT.grupo),
+      JSON.stringify({assunto: asn ? asn.value : '', texto: tx.value}));
+  }catch(e){}
+}
+
+function msgBaixarCsv(){
+  const linhas = [['grupo', 'canal', 'assunto', 'linha']];
+  MSG_GRUPOS.forEach(([k]) => {
+    const o = msgTextoAtual(k);
+    const partes = String(o.texto || '').split('\n');
+    partes.forEach((l, i) => linhas.push([k, '', i === 0 ? (o.assunto || '') : '', l]));
+  });
+  const esc = v => {
+    const s = String(v == null ? '' : v);
+    return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const csv = '﻿' + linhas.map(l => l.map(esc).join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
+  a.download = 'mensagens.csv';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+
+function waPintarContador(){
+  const b = document.getElementById('waContador');
+  if(!b) return;
+  const s = waLer();
+  const falta = WA_LIMITE_DIA - s.n;
+  b.innerHTML = 'WhatsApp hoje: <b>' + s.n + ' de ' + WA_LIMITE_DIA + '</b>' +
+    (falta <= 0 ? ' — limite atingido' : '') +
+    ' <span style="opacity:.7">· 1 min entre mensagens · contagem só deste ' +
+    'navegador</span>';
+  b.style.color = falta <= 0 ? '#C0392B' : 'var(--muted)';
+}
+window.waPintarContador = waPintarContador;
 
 /* ==========================================================================
    GESTÃO GEOGRÁFICA  (pedido do Igor em 14/10/2026)
