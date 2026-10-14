@@ -1726,10 +1726,24 @@ function cartQuadroGerencial(base){
     return tr + ((CART_QG.v === v && CART_QG.b) ? lista(v, CART_QG.b) : '');
   };
 
+  /* Os controles de mensagem moram AQUI, no cabecalho do quadro gerencial, e
+     nao no da lista de clientes: e deste quadro que saem os botoes de WhatsApp
+     e e-mail, entao e aqui que se mexe no texto deles. Entram ANTES do
+     "Exportar", que o observador do CSV acrescenta no fim de cada cabecalho -
+     por isso ficam colados nele. */
+  const btsMsg = (typeof msgPodeEditar === 'function' && msgPodeEditar())
+    ? '<button id="msgReler" class="btn-nav" style="margin-left:auto;' +
+      'font-size:12px" title="Baixa o JSON de novo e relê as mensagens e os ' +
+      'contatos. O texto só muda aqui depois que o pipeline rodar.">' +
+      'Reler mensagens</button>' +
+      '<button id="msgAbrir" class="btn-nav" style="font-size:12px">' +
+      'Editar textos</button>'
+    : '';
+
   return '<div class="card" id="cardCartQG"><div class="card-h">' +
     '<h3>Quadro gerencial por vendedor</h3>' +
     '<span class="hint">dias corridos desde o último pedido · clique num número ' +
-    'para ver quem são · não segue a busca da tabela</span></div>' +
+    'para ver quem são · não segue a busca da tabela</span>' + btsMsg + '</div>' +
     '<div class="scroll"><table class="qg-tbl"><thead><tr>' +
     '<th style="text-align:left">Vendedor</th>' +
     /* Cabecalho em UMA linha, sem <br> com subtitulo: o exportador le o
@@ -7186,30 +7200,11 @@ function ligarCliquesExtras(){
     const h = (document.getElementById('cardClientesCarteira') || cart)
                 .querySelector('.card-h') || cart.querySelector('.card-h');
     if(h){
-      /* Os controles de mensagem ficam colados no "Extrair carteira", como o
-         Igor pediu - e so para quem publica texto. */
-      const meus = msgPodeEditar()
-        ? '<button id="msgReler" class="btn-nav" style="margin-left:auto;' +
-          'font-size:12px" title="Baixa o JSON de novo e relê as mensagens e os ' +
-          'contatos. O texto só muda aqui depois que o pipeline rodar.">' +
-          'Reler mensagens</button>' +
-          '<button id="msgAbrir" class="btn-nav" style="font-size:12px">' +
-          'Editar textos</button>'
-        : '';
-      h.insertAdjacentHTML('beforeend', meus +
-        '<button id="btnExtrairCarteira" class="btn-y" style="' +
-        (meus ? '' : 'margin-left:auto;') +
+      h.insertAdjacentHTML('beforeend',
+        '<button id="btnExtrairCarteira" class="btn-y" style="margin-left:auto;' +
         'font-size:12px;padding:6px 12px">Extrair carteira</button>');
       const b = document.getElementById('btnExtrairCarteira');
       if(b) b.addEventListener('click', extrairCarteira);
-      const ab = document.getElementById('msgAbrir');
-      if(ab) ab.addEventListener('click', () => {
-        MSG_EDIT.aberto = true; vCarteira();
-        const c = document.getElementById('cardMsgEditor');
-        if(c) c.scrollIntoView({block:'start', behavior:'smooth'});
-      });
-      const rl = document.getElementById('msgReler');
-      if(rl) rl.addEventListener('click', () => msgReler(rl));
     }
   }
 }
@@ -12917,11 +12912,31 @@ function msgEditorHtml(){
     '</div></div>';
 }
 
+/* Os dois botoes do cabecalho do quadro gerencial. Ficam fora do
+   msgLigarEditor porque existem mesmo com o editor fechado. O `dataset.ligado`
+   evita empilhar ouvinte: o quadro se redesenha a cada clique de grupo. */
+function msgLigarBotoes(){
+  const ab = el('msgAbrir');
+  if(ab && !ab.dataset.ligado){
+    ab.dataset.ligado = '1';
+    ab.addEventListener('click', () => {
+      MSG_EDIT.aberto = true;
+      vCarteira();
+      const c = el('cardMsgEditor');
+      if(c) c.scrollIntoView({block: 'start', behavior: 'smooth'});
+    });
+  }
+  const rl = el('msgReler');
+  if(rl && !rl.dataset.ligado){
+    rl.dataset.ligado = '1';
+    rl.addEventListener('click', () => msgReler(rl));
+  }
+}
+
 function msgLigarEditor(){
+  msgLigarBotoes();
   const card = el('cardMsgEditor');
-  if(!card) return;        /* fechado: o "Editar textos" mora no outro cabecalho
-                              e e ligado la, uma vez por redesenho - ligar aqui
-                              tambem empilharia um ouvinte a cada render */
+  if(!card) return;        /* editor fechado: so os botoes do cabecalho */
   const fe = el('msgFechar');
   if(fe) fe.addEventListener('click', () => { MSG_EDIT.aberto = false; vCarteira(); });
   card.querySelectorAll('.msg-aba').forEach(b =>
