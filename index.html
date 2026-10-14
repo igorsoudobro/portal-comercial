@@ -2014,7 +2014,7 @@ function vCarteira(){
    <div class="note"><b>Carteira</b> — segmentação completa com vendas líquidas (venda − devolução). ${SESSION.isAdmin?'Filtre por vendedor e clique':'Clique'} nos cabeçalhos de vendas para ordenar.</div>
    ${(typeof msgEditorHtml==='function') ? msgEditorHtml() : ''}
    ${cartQuadroGerencial(base)}
-   <div class="card"><div class="card-h"><h3>Clientes da carteira</h3><span class="hint">${rows.length} CNPJs · ${semVenda} sem venda no período</span></div>
+   <div class="card" id="cardClientesCarteira"><div class="card-h"><h3>Clientes da carteira</h3><span class="hint">${rows.length} CNPJs · ${semVenda} sem venda no período</span></div>
      <div style="padding:0 20px 12px;display:flex;align-items:center;flex-wrap:wrap;gap:8px">
        ${vendSel}
        <input id="cartBusca" class="inp" placeholder="Buscar por CNPJ, razão social, cidade ou UF" style="min-width:280px;padding:6px 10px" value="${CART_BUSCA}">
@@ -7177,14 +7177,75 @@ function ligarCliquesExtras(){
 
   const cart = document.getElementById('v-carteira');
   if(cart && !document.getElementById('btnExtrairCarteira')){
-    const h = cart.querySelector('.card-h');
+    /* ANCORADO NO CARTAO CERTO, e nao no primeiro .card-h da aba (14/10/2026).
+       Quando nasceu, "Clientes da carteira" era o unico cartao da view. Hoje
+       nao e: o quadro gerencial e o editor de mensagens vieram antes dele, e o
+       botao passou a aparecer no cabecalho de quem estivesse no topo - que
+       muda conforme o usuario, porque o editor so existe para um. O id torna a
+       posicao a mesma para todo mundo. */
+    const h = (document.getElementById('cardClientesCarteira') || cart)
+                .querySelector('.card-h') || cart.querySelector('.card-h');
     if(h){
-      h.insertAdjacentHTML('beforeend',
-        '<button id="btnExtrairCarteira" class="btn-y" style="margin-left:auto;' +
+      /* Os controles de mensagem ficam colados no "Extrair carteira", como o
+         Igor pediu - e so para quem publica texto. */
+      const meus = msgPodeEditar()
+        ? '<button id="msgReler" class="btn-nav" style="margin-left:auto;' +
+          'font-size:12px" title="Baixa o JSON de novo e relê as mensagens e os ' +
+          'contatos. O texto só muda aqui depois que o pipeline rodar.">' +
+          'Reler mensagens</button>' +
+          '<button id="msgAbrir" class="btn-nav" style="font-size:12px">' +
+          'Editar textos</button>'
+        : '';
+      h.insertAdjacentHTML('beforeend', meus +
+        '<button id="btnExtrairCarteira" class="btn-y" style="' +
+        (meus ? '' : 'margin-left:auto;') +
         'font-size:12px;padding:6px 12px">Extrair carteira</button>');
       const b = document.getElementById('btnExtrairCarteira');
       if(b) b.addEventListener('click', extrairCarteira);
+      const ab = document.getElementById('msgAbrir');
+      if(ab) ab.addEventListener('click', () => {
+        MSG_EDIT.aberto = true; vCarteira();
+        const c = document.getElementById('cardMsgEditor');
+        if(c) c.scrollIntoView({block:'start', behavior:'smooth'});
+      });
+      const rl = document.getElementById('msgReler');
+      if(rl) rl.addEventListener('click', () => msgReler(rl));
     }
+  }
+}
+
+/* "RELER MENSAGENS" (14/10/2026, pedido do Igor)
+   =============================================
+   Ele perguntou quanto tempo o Portal leva para ver o texto novo. A resposta
+   honesta e: o Portal nao le a planilha - ele le o JSON. A planilha vira JSON
+   quando o PIPELINE roda. Entao este botao resolve metade do caminho, e e
+   melhor dizer qual metade do que deixar parecendo que resolve tudo:
+
+     planilhas/mensagens.xlsx  --[pipeline]-->  dados_dashboard.json  --[botao]--> tela
+
+   Ele rebaixa o pacote e troca so MENSAGENS, CONTATOS e o carimbo. Nao mexe no
+   FATO nem na carteira de proposito: varios indices do Portal sao montados uma
+   vez e guardados dentro de blocos fechados, e trocar o dado por baixo deles
+   deixaria a tela mentindo. Para recarregar tudo, F5. */
+async function msgReler(btn){
+  const antes = btn.textContent;
+  btn.textContent = 'lendo…';
+  btn.disabled = true;
+  try{
+    const novo = await _baixarOsDados();
+    if(!novo) throw new Error('não consegui baixar o JSON');
+    _Z = novo;
+    MSG_D = _Z.MENSAGENS ? await _unz(_Z.MENSAGENS) : null;
+    CONTATOS_D = _Z.CONTATOS ? await _unz(_Z.CONTATOS) : null;
+    btn.textContent = 'lido ✓';
+    try{ if(typeof mostrarCarimbo === 'function') mostrarCarimbo(); }catch(e){}
+    setTimeout(() => { vCarteira(); }, 400);
+  }catch(e){
+    console.error('reler mensagens:', e);
+    btn.textContent = 'erro';
+    alert('Não consegui reler o JSON: ' + (e.message || e));
+  }finally{
+    setTimeout(() => { btn.textContent = antes; btn.disabled = false; }, 1600);
   }
 }
 
@@ -12728,6 +12789,18 @@ const MSG_GRUPOS = [
 const MSG_MEIOS = [['whats', 'WhatsApp'], ['email', 'E-mail']];
 let MSG_EDIT = {meio: 'whats', grupo: 'ativo', aberto: false};
 
+/* QUEM VE OS CONTROLES DE MENSAGEM.
+   Nao basta `isAdmin`: sao SEIS admins no Parametros (Enzo, Fabio, Igor, Julia,
+   Pedro e Rodrigo) e o Igor pediu que o editor e o "reler" aparecessem so para
+   ele - quem publica o texto e um so, e botao que todo admin ve e botao que
+   alguem clica sem saber o que faz. Lista nomeada em vez de `user === '...'`
+   espalhado: acrescentar alguem e mexer aqui e em mais nada. */
+const MSG_DONOS = ['Igor Supino'];
+function msgPodeEditar(){
+  try{ return !!SESSION && MSG_DONOS.indexOf(SESSION.user) >= 0; }
+  catch(e){ return false; }
+}
+
 function msgRascunhoChave(m, g){ return 'dobro_msg_' + m + '_' + g; }
 function msgTextoAtual(m, g){
   try{
@@ -12755,14 +12828,12 @@ function msgExemplo(g){
 }
 
 function msgEditorHtml(){
-  if(!SESSION || !SESSION.isAdmin) return '';
-  if(!MSG_EDIT.aberto){
-    return '<div class="card" id="cardMsgEditor"><div class="card-h">' +
-      '<h3>Mensagens de WhatsApp e e-mail</h3>' +
-      '<span class="hint">textos que os botões usam, por enquadramento</span>' +
-      '<button id="msgAbrir" class="btn-nav" style="margin-left:auto">' +
-      'Editar textos</button></div></div>';
-  }
+  /* Fechado nao desenha NADA. Antes eu deixava um cartao so com o botao
+     "Editar textos" no topo da aba, e ele virou o primeiro .card-h da view - o
+     que arrastou o botao amarelo "Extrair carteira" para dentro dele, porque a
+     injecao daquele botao procura justamente o primeiro .card-h. Os tres botoes
+     agora moram juntos no cabecalho de "Clientes da carteira". */
+  if(!msgPodeEditar() || !MSG_EDIT.aberto) return '';
   const meio = MSG_EDIT.meio, g = MSG_EDIT.grupo;
   const at = msgTextoAtual(meio, g);
   const ex = msgExemplo(g);
@@ -12848,9 +12919,9 @@ function msgEditorHtml(){
 
 function msgLigarEditor(){
   const card = el('cardMsgEditor');
-  if(!card) return;
-  const ab = el('msgAbrir');
-  if(ab) ab.addEventListener('click', () => { MSG_EDIT.aberto = true; vCarteira(); });
+  if(!card) return;        /* fechado: o "Editar textos" mora no outro cabecalho
+                              e e ligado la, uma vez por redesenho - ligar aqui
+                              tambem empilharia um ouvinte a cada render */
   const fe = el('msgFechar');
   if(fe) fe.addEventListener('click', () => { MSG_EDIT.aberto = false; vCarteira(); });
   card.querySelectorAll('.msg-aba').forEach(b =>
