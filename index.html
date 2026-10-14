@@ -76,15 +76,25 @@ input,select{font-family:inherit}
    filtros QUEBRA EM DUAS LINHAS quando o admin tem os cinco selects e a janela
    e estreita, e um numero fixo deixaria a coluna passando por baixo do topo
    exatamente nesse caso. */
-.shell{display:flex;align-items:flex-start;gap:0;max-width:1600px;margin:0 auto}
-.nav{display:flex;flex-direction:column;gap:1px;padding:14px 10px 20px;
+/* A coluna e COLADA NA BORDA e vai ate o fim da tela (14/10/2026, pedido do
+   Igor, com o print da Promotoria de referencia). Duas coisas faziam ela flutuar
+   no meio:
+     - o .shell tinha max-width com margin auto, entao numa tela de 1885px
+       sobravam 142px de folga antes da coluna;
+     - a altura era `max-height`, que para no ultimo botao - o branco acabava
+       no "Orçamento" e o fundo cinza da pagina aparecia embaixo.
+   Agora o shell ocupa a largura inteira e a coluna tem ALTURA FIXA de uma tela
+   (menos o topo), grudada com sticky: role quanto rolar, ela vai da barra de
+   filtros ate a borda de baixo. */
+.shell{display:flex;align-items:flex-start;gap:0;max-width:none;margin:0}
+.nav{display:flex;flex-direction:column;gap:1px;padding:14px 10px 20px 0;
      background:#fff;border-right:1px solid var(--line);
      width:214px;flex:0 0 214px;
-     position:sticky;top:calc(var(--topo-h, 118px) + 2px);
-     max-height:calc(100vh - var(--topo-h, 118px) - 10px);overflow-y:auto;
+     position:sticky;top:var(--topo-h, 118px);
+     height:calc(100vh - var(--topo-h, 118px));overflow-y:auto;
      align-self:flex-start;z-index:39}
 .nav button{border:none;background:transparent;text-align:left;
-     padding:9px 12px;font-size:13px;font-weight:600;color:var(--muted);
+     padding:9px 14px;font-size:13px;font-weight:600;color:var(--muted);
      border-left:3px solid transparent;border-radius:0 7px 7px 0;
      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
 .nav button:hover{color:var(--navy);background:#F4F7FD}
@@ -94,7 +104,8 @@ input,select{font-family:inherit}
 /* Abaixo de 900px a coluna deita de novo: num celular ela comeria a tela. */
 @media (max-width:900px){
   .shell{display:block}
-  .nav{flex-direction:row;width:auto;flex:none;position:static;max-height:none;
+  .nav{flex-direction:row;width:auto;flex:none;position:static;
+       height:auto;max-height:none;
        overflow-x:auto;overflow-y:hidden;padding:0 16px;gap:2px;
        border-right:none;border-bottom:2px solid var(--line)}
   .nav button{width:auto;padding:12px 14px;border-left:none;border-radius:0;
