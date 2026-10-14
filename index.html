@@ -67,11 +67,40 @@ input,select{font-family:inherit}
 .seg button{border:none;background:transparent;padding:6px 13px;border-radius:6px;font-size:12.5px;font-weight:600;color:var(--muted)}
 .seg button.on{background:#fff;color:var(--navy);box-shadow:0 1px 2px rgba(0,0,0,.08)}
 
-/* NAV TABS */
-.nav{display:flex;gap:2px;padding:0 22px;background:#fff;border-bottom:2px solid var(--line);overflow-x:auto;position:sticky;top:107px;z-index:39}
-.nav button{border:none;background:transparent;padding:13px 16px;font-size:13.5px;font-weight:600;color:var(--muted);border-bottom:3px solid transparent;margin-bottom:-2px;white-space:nowrap}
-.nav button:hover{color:var(--navy)}
-.nav button.on{color:var(--navy);border-bottom-color:var(--yellow)}
+/* NAV — COLUNA DA ESQUERDA (14/10/2026)
+   Era uma fita horizontal grudada embaixo da barra de filtros. Com 18 abas ela
+   ja rolava na horizontal, e aba que precisa de rolagem para ser vista e aba
+   que ninguem abre. Em pe, as 18 cabem juntas.
+
+   O `top` do sticky e calculado no JS (--topo-h) e nao chutado: a barra de
+   filtros QUEBRA EM DUAS LINHAS quando o admin tem os cinco selects e a janela
+   e estreita, e um numero fixo deixaria a coluna passando por baixo do topo
+   exatamente nesse caso. */
+.shell{display:flex;align-items:flex-start;gap:0;max-width:1600px;margin:0 auto}
+.nav{display:flex;flex-direction:column;gap:1px;padding:14px 10px 20px;
+     background:#fff;border-right:1px solid var(--line);
+     width:214px;flex:0 0 214px;
+     position:sticky;top:calc(var(--topo-h, 118px) + 2px);
+     max-height:calc(100vh - var(--topo-h, 118px) - 10px);overflow-y:auto;
+     align-self:flex-start;z-index:39}
+.nav button{border:none;background:transparent;text-align:left;
+     padding:9px 12px;font-size:13px;font-weight:600;color:var(--muted);
+     border-left:3px solid transparent;border-radius:0 7px 7px 0;
+     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
+.nav button:hover{color:var(--navy);background:#F4F7FD}
+.nav button.on{color:var(--navy);background:#EEF2FB;border-left-color:var(--yellow)}
+.shell .content{flex:1 1 auto;min-width:0;max-width:none}
+
+/* Abaixo de 900px a coluna deita de novo: num celular ela comeria a tela. */
+@media (max-width:900px){
+  .shell{display:block}
+  .nav{flex-direction:row;width:auto;flex:none;position:static;max-height:none;
+       overflow-x:auto;overflow-y:hidden;padding:0 16px;gap:2px;
+       border-right:none;border-bottom:2px solid var(--line)}
+  .nav button{width:auto;padding:12px 14px;border-left:none;border-radius:0;
+       border-bottom:3px solid transparent;margin-bottom:-2px}
+  .nav button.on{background:transparent;border-bottom-color:var(--yellow)}
+}
 
 /* TOPO CONGELADO: um sticky so, em vez de tres com `top` calculado na mao.
    Os filhos voltam a ser estaticos - senao cada um continuaria tentando colar
@@ -80,7 +109,6 @@ input,select{font-family:inherit}
            box-shadow:0 2px 12px rgba(30,46,95,.14)}
 .topo-fixo .topbar{position:static;top:auto;box-shadow:none}
 .topo-fixo .filterbar{position:static;top:auto}
-.topo-fixo .nav{position:static;top:auto}
 
 /* CONTENT */
 .content{max-width:1360px;margin:0 auto;padding:24px 22px}
@@ -205,6 +233,14 @@ table.qg-lista{border-collapse:collapse;font-size:11.5px;width:100%}
 table.qg-lista th{padding:5px 8px;background:#EEF1F8;color:var(--navy);
   font-size:10px;position:sticky;top:0;z-index:1}
 table.qg-lista td{padding:4px 8px;border-bottom:1px solid var(--line)}
+
+/* ---- Gestão geográfica (14/10/2026) ---- */
+table.geo-tbl{border-collapse:collapse;font-size:12.5px;width:100%}
+table.geo-tbl th{padding:8px 10px;position:sticky;top:0;background:var(--navy);
+  color:#fff;font-size:11px;white-space:nowrap;z-index:1}
+table.geo-tbl td{padding:6px 10px;border-bottom:1px solid var(--line)}
+table.geo-tbl tbody tr:hover > td{background:#F8FAFE}
+#v-geo .uf-path{transition:opacity .18s}
 </style>
 <style>
 /* ===========================================================================
@@ -512,8 +548,15 @@ table.qg-lista td{padding:4px 8px;border-bottom:1px solid var(--line)}
     <div class="fgroup" id="admCanalGroup" style="display:none"><label>Canal</label><select id="admCanal"></select></div>
   </div>
 
-  <div class="nav" id="nav"></div>
   </div><!-- /topo-fixo -->
+
+  <!-- ABAS NA LATERAL ESQUERDA (14/10/2026, pedido do Igor). O #nav saiu de
+       dentro do .topo-fixo e virou a coluna da esquerda do .shell. O buildNav
+       nao mudou: ele continua escrevendo <button> dentro de #nav; quem decide
+       se a lista deita ou fica em pe e o CSS. Abaixo de 900px ela volta a ser
+       uma fita horizontal, senao no celular a coluna comeria a tela. -->
+  <div class="shell">
+  <nav class="nav" id="nav" aria-label="Seções do portal"></nav>
 
   <div class="content">
     <div class="view" id="v-resumo"></div>
@@ -527,6 +570,7 @@ table.qg-lista td{padding:4px 8px;border-bottom:1px solid var(--line)}
     <div class="view" id="v-calc"></div>
     <div class="foot">Dobro · Portal Comercial — dados processados localmente. Confidencial.</div>
   </div>
+  </div><!-- /shell -->
 </div>
 <script>
 /* ===== dados comprimidos (gzip+base64), descompactados no navegador em runtime ===== */
@@ -926,12 +970,14 @@ function vResumo(){
     <div class="card"><div class="card-h"><h3>Faturamento por canal</h3></div>${barTable(cf,d.fat)}</div>
     <div class="card"><div class="card-h"><h3>Faturamento por categoria</h3></div>${barTable(ctf,d.fat)}</div>
   </div>
-    <div class="card"><div class="card-h"><h3>Mapa por estado</h3><span class="hint">passe o mouse sobre um estado</span></div>
-      <div id="resMapa" style="padding:14px 20px;position:relative"></div>
-    </div>`;
+    `;
+  /* O MAPA SAIU DAQUI em 14/10/2026 (pedido do Igor): ele agora abre a aba
+     "Mapeamento de clientes", onde clicar no estado amplia e abre cidade ->
+     cliente -> o que ele comprou. A funcao renderMapa continua existindo e
+     continua sendo a UNICA que desenha o mapa - quem chama agora e a aba nova.
+     Se um dia o mapa voltar para ca, e so devolver o card e a chamada. */
   el('resBreak').addEventListener('change',()=>renderResChart(L));
   renderResChart(L);
-  renderMapa(L);
 }
 
 // ---- Mapa do Brasil por estado ----
@@ -12149,8 +12195,19 @@ function montarSkusCriticos(){
      "el2 is not defined" vindo daqui. Dependencia a menos. */
   const view = document.getElementById('v-resumo');
   if(!view) return;
+  /* ANCORA NOS DOIS BLOCOS, nao no mapa (14/10/2026, pedido do Igor).
+     O lugar na tela e o mesmo de antes - logo depois de "Faturamento por canal"
+     e "Faturamento por categoria" -, mas agora ele se segura no que o Igor
+     escolheu como referencia, e nao no vizinho de baixo. O mapa vai sair do
+     Resumo para a aba de Mapeamento de clientes; preso nele, este card iria
+     junto sem ninguem pedir. O mapa fica como segunda opcao enquanto existir. */
+  const grids = [...view.querySelectorAll(':scope > .grid2')];
+  const grid = grids.find(g => /faturamento por categoria/i.test(g.textContent))
+               || grids[0] || null;
   const mapa = view.querySelector('#resMapa');
-  const antes = mapa ? mapa.closest('.card') : null;
+  const cardMapa = mapa ? mapa.closest('.card') : null;
+  const onde = grid ? {el: grid, pos: 'afterend'}
+             : (cardMapa ? {el: cardMapa, pos: 'beforebegin'} : null);
 
   const L = linhas();
   const porSku = skuCritAgrupar(L, r => r.sk);
@@ -12174,7 +12231,7 @@ function montarSkusCriticos(){
     '</div>';
 
   if(!criticos.length){
-    skuCritInserir(view, antes, cabecalho +
+    skuCritInserir(view, onde, cabecalho +
       '<div class="empty">Nenhum SKU com M acima de ' + pct(corte) +
       ' no recorte atual.</div></div>');
     return;
@@ -12193,7 +12250,7 @@ function montarSkusCriticos(){
       (aberto ? skuCritCanais(L, sk) : '');
   }).join('');
 
-  skuCritInserir(view, antes, cabecalho +
+  skuCritInserir(view, onde, cabecalho +
     '<div class="scroll"><table><thead><tr>' +
     '<th>Produto</th><th style="text-align:right">Faturamento</th>' +
     '<th style="text-align:right">Volume</th>' +
@@ -12205,12 +12262,12 @@ function montarSkusCriticos(){
     '.</div></div>');
 }
 
-/* Inserido ANTES do mapa, como o Igor pediu. Se o mapa nao estiver na tela, vai
-   para o fim - melhor no lugar errado que sumido. */
-function skuCritInserir(view, antes, html){
+/* `onde` = {el, pos} calculado no montarSkusCriticos. Sem ancora nenhuma vai
+   para o fim da view - melhor no lugar errado que sumido. */
+function skuCritInserir(view, onde, html){
   const velho = view.querySelector('#cardSkuCrit');
   if(velho) velho.remove();
-  if(antes) antes.insertAdjacentHTML('beforebegin', html);
+  if(onde && onde.el) onde.el.insertAdjacentHTML(onde.pos, html);
   else view.insertAdjacentHTML('beforeend', html);
   skuCritLigar(view);
 }
@@ -12308,6 +12365,312 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 }
 
 /* ==========================================================================
+   GESTÃO GEOGRÁFICA  (pedido do Igor em 14/10/2026)
+   ==========================================================================
+
+   O mapa por estado SAIU do Resumo e virou aba propria, com tres niveis
+   abertos por clique:
+
+       estado  ->  cidade  ->  cliente  ->  o que ele comprou
+
+   NAO HA ALFINETE DE CIDADE, e isso foi decidido e nao esquecido. A base nao
+   tem latitude/longitude de cidade; colocar pino exigiria baixar uma tabela de
+   municipios e casar 430 nomes, e nome que nao casa some do mapa calado.
+   Medido em 14/10/2026: so a cidade de Sao Paulo tem 168 clientes e a Grande SP
+   junta 13 cidades a ~13 px uma da outra no mapa nacional - viraria um borrao.
+   Entao o estado AMPLIA (recorte do viewBox no contorno dele) e a lista de
+   cidades aparece ao lado, em texto.
+
+   O MAPA CONTINUA SENDO DESENHADO POR renderMapa(), a mesma funcao de sempre.
+   Eu nao copiei o desenho para ca: se as cores ou o calculo do mapa mudarem um
+   dia, mudam em um lugar so. Esta aba pos-processa o SVG que ela devolve.
+
+   FATURAMENTO AQUI E VENDA BRUTA, igual ao mapa logo acima - de proposito, para
+   a soma das cidades fechar com o numero do estado. A devolucao nao fica
+   escondida por isso: ela tem coluna propria.
+   ========================================================================== */
+let GEO = {uf:null, ci:null, cn:null};
+const GEO_BBOX = {};          /* cache do contorno de cada UF */
+let GEO_CIDADE = null;        /* cn -> cidade do cadastro */
+
+function geoCidadeDe(cn){
+  if(!GEO_CIDADE){
+    GEO_CIDADE = {};
+    (typeof CARTEIRA !== 'undefined' && CARTEIRA || [])
+      .forEach(c => { GEO_CIDADE[c.cn] = c.ci || ''; });
+  }
+  return GEO_CIDADE[cn] || '(sem cidade)';
+}
+
+/* Os 27 contornos usam so M, L e Z (conferido): todo numero e coordenada, e
+   dois a dois formam x,y. Por isso da para achar o retangulo do estado lendo a
+   string, sem precisar do getBBox - que devolveria zero com a aba escondida. */
+function geoBBox(uf){
+  if(GEO_BBOX[uf]) return GEO_BBOX[uf];
+  const d = (typeof BR_SVG === 'object' && BR_SVG && BR_SVG.paths)
+              ? BR_SVG.paths[uf] : null;
+  if(!d) return null;
+  const v = String(d).match(/-?\d+(?:\.\d+)?/g) || [];
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for(let i = 0; i + 1 < v.length; i += 2){
+    const x = +v[i], y = +v[i+1];
+    if(x < x0) x0 = x; if(x > x1) x1 = x;
+    if(y < y0) y0 = y; if(y > y1) y1 = y;
+  }
+  if(!(x1 > x0 && y1 > y0)) return null;
+  return (GEO_BBOX[uf] = {x0, y0, x1, y1});
+}
+
+/* Recorta o viewBox no estado. Como o SVG usa preserveAspectRatio padrao, nao
+   ha distorcao: o navegador encaixa o retangulo e a altura do mapa na tela
+   acompanha. Texto e traco sao divididos pelo fator de ampliacao, senao o nome
+   do estado apareceria 5x maior do que no mapa do Brasil. */
+function geoAplicarZoom(){
+  const box = el('resMapa');
+  const svg = box ? box.querySelector('svg') : null;
+  if(!svg || typeof BR_SVG === 'undefined' || !BR_SVG) return;
+  const S = BR_SVG;
+  const bb = GEO.uf ? geoBBox(GEO.uf) : null;
+  let k = 1;
+  if(bb){
+    const m = Math.max(bb.x1 - bb.x0, bb.y1 - bb.y0) * 0.09;
+    const x = bb.x0 - m, y = bb.y0 - m,
+          w = (bb.x1 - bb.x0) + 2*m, h = (bb.y1 - bb.y0) + 2*m;
+    svg.setAttribute('viewBox', [x, y, w, h].map(n => n.toFixed(1)).join(' '));
+    k = S.w / w;
+  }else{
+    svg.setAttribute('viewBox', '0 0 ' + S.w + ' ' + S.h);
+  }
+  svg.querySelectorAll('.uf-path').forEach(p => {
+    const u = p.getAttribute('data-uf');
+    p.setAttribute('stroke-width', (1/k).toFixed(3));
+    p.style.opacity = (!GEO.uf || u === GEO.uf) ? '1' : '0.25';
+    p.style.cursor = 'pointer';
+  });
+  svg.querySelectorAll('text').forEach(t => {
+    t.setAttribute('font-size', (13/k).toFixed(2));
+    t.style.opacity = (!GEO.uf || t.textContent.trim() === GEO.uf) ? '1' : '0.35';
+  });
+  const volta = el('geoVoltar');
+  if(volta) volta.style.display = GEO.uf ? '' : 'none';
+}
+
+/* venda bruta, devolucao, volume e rentabilidade de um conjunto de linhas.
+   A rentabilidade sai do dre(), a mesma funcao do DRE e do Resumo - nao e uma
+   conta paralela que possa divergir. */
+function geoResumo(lins){
+  let fat = 0, dev = 0, q = 0;
+  const cli = new Set();
+  lins.forEach(r => {
+    if(r.venda){ fat += r.fat; q += r.q; if(r.cn) cli.add(r.cn); }
+    else if(r.tipo === 0){ dev += r.fat; }
+  });
+  const d = dre(lins);
+  return {fat, dev, q, cli: cli.size, rent: d.rent, fatLiq: d.fatLiq};
+}
+
+function geoAgrupar(lins, chave){
+  const m = {};
+  lins.forEach(r => {
+    const k = chave(r);
+    if(k === null || k === undefined || k === '') return;
+    (m[k] = m[k] || []).push(r);
+  });
+  return m;
+}
+
+function geoCelRent(o){
+  if(!(o.fatLiq > 0) || o.rent === null || o.rent === undefined)
+    return '<span style="color:var(--muted)">—</span>';
+  return verNumeroRent()
+    ? '<span class="mono" style="color:' + farolCor(o.rent) +
+      ';font-weight:700">' + pct(o.rent) + '</span>'
+    : farol(o.rent, false);
+}
+
+function geoLinha(nivel, rotulo, o, aberto, attrs, precoMedio){
+  const recuo = [0, 26, 50][nivel];
+  const seta = (nivel < 2) ? (aberto ? '▾ ' : '▸ ') : '';
+  const fundo = aberto ? (nivel === 0 ? '#F0F3FA' : '#E8EEF9')
+                       : (nivel === 1 ? '#FAFBFE' : '#fff');
+  return '<tr ' + attrs + ' style="background:' + fundo +
+      (nivel < 2 ? ';cursor:pointer' : '') + '">' +
+    '<td class="rowlab" style="padding-left:' + (10 + recuo) + 'px' +
+      (nivel ? ';font-size:12px' : '') + '">' + seta + metasEsc(rotulo) + '</td>' +
+    '<td class="mono" style="text-align:right">' +
+      (nivel === 0 ? n0(o.cli) : '<span style="color:var(--line)">—</span>') + '</td>' +
+    '<td class="mono" style="text-align:right">' + brl(o.fat) + '</td>' +
+    '<td class="mono" style="text-align:right' +
+      (o.dev ? ';color:#C0392B' : ';color:var(--line)') + '">' +
+      (o.dev ? brl(o.dev) : '—') + '</td>' +
+    '<td class="mono" style="text-align:right">' + n0(o.q) + '</td>' +
+    '<td class="mono" style="text-align:right">' +
+      (precoMedio !== null && precoMedio !== undefined
+         ? brl2(precoMedio) : '<span style="color:var(--line)">—</span>') + '</td>' +
+    '<td style="text-align:right">' + geoCelRent(o) + '</td></tr>';
+}
+
+function geoDrillHtml(){
+  const alvo = el('geoDrill');
+  if(!alvo) return;
+  if(!GEO.uf){
+    alvo.innerHTML =
+      '<div class="card"><div class="card-h"><h3>Clientes por cidade</h3>' +
+      '<span class="hint">clique num estado no mapa (ou na tabela ao lado)</span>' +
+      '</div><div class="empty">Escolha um estado para abrir as cidades, os ' +
+      'clientes de cada cidade e o que cada cliente comprou.</div></div>';
+    return;
+  }
+  const L = linhas().filter(r => r.uf === GEO.uf && (r.venda || r.tipo === 0 ||
+                                                     r.bonif || r.amostra));
+  const doEstado = geoResumo(L);
+  const porCid = geoAgrupar(L, r => geoCidadeDe(r.cn));
+  const cidades = Object.entries(porCid)
+    .map(([ci, lins]) => [ci, geoResumo(lins), lins])
+    .filter(t => t[1].fat > 0 || t[1].dev !== 0)
+    .sort((a, b) => b[1].fat - a[1].fat);
+
+  let corpo = '';
+  cidades.forEach(([ci, o, linsCi]) => {
+    const abertaCi = (GEO.ci === ci);
+    corpo += geoLinha(0, ci, o, abertaCi,
+      'class="geo-cid" data-ci="' + encodeURIComponent(ci) + '"', null);
+    if(!abertaCi) return;
+    const porCli = geoAgrupar(linsCi, r => r.cn);
+    Object.entries(porCli)
+      .map(([cn, lins]) => [cn, geoResumo(lins), lins])
+      .sort((a, b) => b[1].fat - a[1].fat)
+      .forEach(([cn, oc, linsCn]) => {
+        const abertoCn = (GEO.cn === cn);
+        corpo += geoLinha(1, String(cliName(cn) || cn).substring(0, 46), oc,
+          abertoCn, 'class="geo-cli" data-cn="' + metasEsc(cn) + '"', null);
+        if(!abertoCn) return;
+        const porSku = geoAgrupar(linsCn, r => r.sk);
+        Object.entries(porSku)
+          .map(([sk, lins]) => [sk, geoResumo(lins)])
+          .sort((a, b) => b[1].fat - a[1].fat)
+          .forEach(([sk, op]) => {
+            corpo += geoLinha(2, String(prodName(sk) || sk).substring(0, 48),
+              op, false, '', op.q > 0 ? op.fat / op.q : null);
+          });
+      });
+  });
+
+  alvo.innerHTML =
+    '<div class="card" id="cardGeoDrill"><div class="card-h">' +
+    '<h3>Clientes de ' + metasEsc(GEO.uf) + '</h3>' +
+    '<span class="hint">cidade → cliente → o que ele comprou · faturamento é ' +
+    'venda bruta, igual ao mapa</span></div>' +
+    '<div class="scroll"><table class="geo-tbl"><thead><tr>' +
+    '<th style="text-align:left">Cidade / cliente / produto</th>' +
+    '<th style="text-align:right">Clientes</th>' +
+    '<th style="text-align:right">Faturamento</th>' +
+    '<th style="text-align:right">Devoluções</th>' +
+    '<th style="text-align:right">Volume</th>' +
+    '<th style="text-align:right" title="faturamento ÷ volume, só na linha do ' +
+      'produto">Preço médio</th>' +
+    '<th style="text-align:right">Rentab.</th></tr></thead><tbody>' +
+    corpo +
+    '<tr class="tot"><td class="tot">' + metasEsc(GEO.uf) + ' · total</td>' +
+    '<td class="mono tot" style="text-align:right">' + n0(doEstado.cli) + '</td>' +
+    '<td class="mono tot" style="text-align:right">' + brl(doEstado.fat) + '</td>' +
+    '<td class="mono tot" style="text-align:right">' +
+      (doEstado.dev ? brl(doEstado.dev) : '—') + '</td>' +
+    '<td class="mono tot" style="text-align:right">' + n0(doEstado.q) + '</td>' +
+    '<td class="tot"></td>' +
+    '<td class="mono tot" style="text-align:right">' +
+      (verNumeroRent() && doEstado.fatLiq > 0 ? pct(doEstado.rent) : '') +
+      '</td></tr>' +
+    '</tbody></table></div>' +
+    '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">' +
+    cidades.length + ' cidade(s) com movimento em ' + metasEsc(GEO.uf) +
+    '. A cidade vem do cadastro da carteira, não da nota — quem não tem cidade ' +
+    'cadastrada cai em "(sem cidade)".</div></div>';
+
+  const card = el('cardGeoDrill');
+  if(card) card.addEventListener('click', ev => {
+    const cli = ev.target.closest('.geo-cli');
+    if(cli){
+      const cn = cli.getAttribute('data-cn');
+      GEO.cn = (GEO.cn === cn) ? null : cn;
+      geoDrillHtml();
+      return;
+    }
+    const cid = ev.target.closest('.geo-cid');
+    if(cid){
+      const ci = decodeURIComponent(cid.getAttribute('data-ci'));
+      GEO.ci = (GEO.ci === ci) ? null : ci;
+      GEO.cn = null;              /* trocar de cidade fecha o cliente aberto */
+      geoDrillHtml();
+    }
+  });
+}
+
+function geoSelecionar(uf){
+  GEO.uf = (GEO.uf === uf) ? null : uf;
+  GEO.ci = null; GEO.cn = null;
+  geoAplicarZoom();
+  geoDrillHtml();
+}
+
+function vGeo(){
+  const box = el('v-geo');
+  if(!box) return;
+  box.innerHTML =
+    '<div class="note"><b>Gestão geográfica</b> — o mapa segue os filtros da ' +
+    'barra. Clique num estado para ampliar e abrir os clientes dele.</div>' +
+    '<div class="card"><div class="card-h"><h3>Mapa por estado</h3>' +
+    '<span class="hint">passe o mouse para ver o resumo · clique para abrir</span>' +
+    '<button id="geoVoltar" class="btn-nav" style="margin-left:auto;display:none">' +
+    '‹ Brasil inteiro</button></div>' +
+    '<div id="resMapa" style="padding:14px 20px;position:relative"></div></div>' +
+    '<div id="geoDrill"></div>';
+
+  /* o mapa inteiro continua vindo da renderMapa - esta aba so o pos-processa */
+  try{ renderMapa(linhas()); }
+  catch(e){ console.error('mapa:', e); }
+
+  const mapa = el('resMapa');
+  if(mapa){
+    mapa.querySelectorAll('.uf-path').forEach(p =>
+      p.addEventListener('click', () => geoSelecionar(p.getAttribute('data-uf'))));
+    mapa.querySelectorAll('[data-ufrow]').forEach(tr => {
+      tr.style.cursor = 'pointer';
+      tr.addEventListener('click', () => geoSelecionar(tr.getAttribute('data-ufrow')));
+    });
+  }
+  const volta = el('geoVoltar');
+  if(volta) volta.addEventListener('click', () => {
+    GEO = {uf:null, ci:null, cn:null};
+    geoAplicarZoom(); geoDrillHtml();
+  });
+
+  /* O estado escolhido SOBREVIVE a troca de filtro: quem esta olhando Minas
+     quer continuar em Minas ao trocar o mes. Mas se o recorte novo nao tiver
+     mais aquele estado, o zoom ficaria preso num mapa vazio - entao solta. */
+  if(GEO.uf && !mapa.querySelector('[data-ufrow="' + GEO.uf + '"]'))
+    GEO = {uf:null, ci:null, cn:null};
+  geoAplicarZoom();
+  geoDrillHtml();
+}
+window.vGeo = vGeo;
+
+if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
+  if(!VIEWS.some(v => v.id === 'geo')){
+    VIEWS.push({id:'geo', lab:'Gestão geográfica', fn:vGeo});
+  }
+  if(!document.getElementById('v-geo')){
+    const irmao = document.querySelector('.view');
+    if(irmao && irmao.parentNode){
+      const d = document.createElement('div');
+      d.className = 'view';
+      d.id = 'v-geo';
+      irmao.parentNode.insertBefore(d, irmao);
+    }
+  }
+}
+
+/* ==========================================================================
    LINKS ÚTEIS  (pedido do Igor em 13/10/2026)
    ==========================================================================
 
@@ -12321,7 +12684,16 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 
    ESTES ENDERECOS SAO PUBLICOS. O index.html esta num repositorio aberto, entao
    quem ler o codigo le os tres. Avisado ao Igor em 13/10/2026: a protecao tem
-   de estar no login de cada um desses sistemas, nunca no segredo da URL. */
+   de estar no login de cada um desses sistemas, nunca no segredo da URL.
+
+   OS DOIS LINKS DE SHAREPOINT (14/10/2026) SAO DE OUTRA NATUREZA e o aviso
+   acima nao cobre eles. Um link ".../:f:/g/personal/..." com `?e=` no fim e um
+   link de COMPARTILHAMENTO do OneDrive: dependendo de como a Juliana
+   compartilhou a pasta, ele pode valer como a propria credencial - quem tem o
+   endereco entra, sem login nenhum. Num repositorio aberto isso equivale a
+   publicar a pasta. Dito ao Igor em 14/10/2026: antes de subir, conferir em
+   "Gerenciar acesso" se a pasta esta como "Pessoas em Dobro" (exige login
+   corporativo) e nao como "Qualquer pessoa com o link". */
 const LINKS_UTEIS = [
   {nome: 'Fluxo de inadimplência',
    desc: 'Recebimentos e cobrança, por visão mensal',
@@ -12331,7 +12703,13 @@ const LINKS_UTEIS = [
    url:  'https://employee-joy-site.lovable.app/'},
   {nome: 'Gestão de entrega',
    desc: 'Acompanhamento de entregas e operação',
-   url:  'https://r-dbr-opera-central.vercel.app/'}
+   url:  'https://r-dbr-opera-central.vercel.app/'},
+  {nome: 'MockUps',
+   desc: 'Pasta de mockups no SharePoint — pede login da Dobro',
+   url:  'https://soudobro-my.sharepoint.com/:f:/g/personal/juliana_seta_soudobro_com_br/IgDuSPlQF2aRRr0LSzg0Y-FuAUCN_-PDXXbpx9ooc83iVpc?e=SIDoV2'},
+  {nome: 'Artes ambientadas',
+   desc: 'Pasta de artes ambientadas no SharePoint — pede login da Dobro',
+   url:  'https://soudobro-my.sharepoint.com/:f:/g/personal/juliana_seta_soudobro_com_br/IgCwlTA-V3FvTaxAJTufbsCfAciyTkdVd525VIgk3u-GBi0?e=73sqqS'}
 ];
 
 function vLinks(){
@@ -12418,6 +12796,9 @@ function expValor(td){
   t = t.replace(/−/g, '-');
   /* marcador visual depois do numero: "12 ·mista" -> "12" */
   t = t.replace(/\s*·.*$/, '').trim();
+  /* seta de "clique para abrir" no comeco do rotulo: e affordance de tela, nao
+     dado. Saia no CSV como "▸ Rio de Janeiro" ate 14/10/2026. */
+  t = t.replace(/^[▸▾▶▼▴◂]\s*/, '');
   /* A UNIDADE SO SAI SE ESTIVER NESTA LISTA.
      A tentacao e aceitar "numero + qualquer palavra curta", mas isso
      transformaria "2026 Janeiro" em 2026. Lista explicita nao tem esse risco:
@@ -12574,6 +12955,73 @@ document.addEventListener('click', ev => {
   if(document.readyState === 'loading')
     document.addEventListener('DOMContentLoaded', liga);
   else liga();
+})();
+
+/* ==========================================================================
+   ORDEM E ROTULO DAS ABAS  (pedido do Igor em 14/10/2026)
+   ==========================================================================
+
+   UMA LISTA, NO FIM DO ARQUIVO. Cada bloco deste HTML registra a propria aba
+   com um VIEWS.splice ancorado numa vizinha ("logo depois do SLA", "antes da
+   Calculadora"). Isso funciona para nascer, mas para REORDENAR seria caçar oito
+   splices e torcer para a conta fechar - e a proxima aba nova desarrumaria tudo
+   de novo. Aqui a ordem e declarada de uma vez, depois que todo mundo ja se
+   registrou. Mudar a ordem amanha e mexer nesta lista e em mais nada.
+
+   Quem nao estiver na lista vai para o FIM, mantendo a ordem relativa: uma aba
+   nova aparece em vez de sumir, e o autor dela decide depois onde ela mora.
+   ========================================================================== */
+(function(){
+  if(typeof VIEWS === 'undefined' || !Array.isArray(VIEWS)) return;
+
+  const ORDEM = ['resumo','metas','dre','carteira','crm','gestcat','canais',
+                 'mix','penetracao','geo','cnpj','ranking','sla','calc',
+                 'links','degustacoes','acessos','orcamento'];
+  /* so os rotulos que mudam; o resto fica como o bloco de origem escreveu */
+  const ROTULO = {crm: 'CRM de novos leads',
+                  penetracao: 'Penetração por pedido'};
+
+  const pos = id => { const i = ORDEM.indexOf(id); return i < 0 ? 1e6 : i; };
+  VIEWS.forEach((v, i) => { v._ordem0 = i; });                 /* desempate */
+  VIEWS.sort((a, b) => (pos(a.id) - pos(b.id)) || (a._ordem0 - b._ordem0));
+  VIEWS.forEach(v => { delete v._ordem0; if(ROTULO[v.id]) v.lab = ROTULO[v.id]; });
+
+  /* O nav so existe depois do login; se ja estiver desenhado, redesenha. */
+  if(typeof buildNav === 'function'){
+    const nav = document.getElementById('nav');
+    if(nav && nav.children.length) buildNav();
+  }
+})();
+
+/* --------------------------------------------------------------------------
+   ALTURA DO TOPO FIXO -> --topo-h
+   A coluna de abas gruda LOGO ABAIXO do topo, e a altura do topo muda: a barra
+   de filtros quebra em duas linhas quando o admin tem os cinco selects numa
+   janela estreita. Com numero fixo no CSS, a coluna passaria por baixo do topo
+   exatamente nesse caso. Entao a altura e medida e publicada como variavel.
+   -------------------------------------------------------------------------- */
+(function(){
+  const medir = () => {
+    const topo = document.querySelector('.topo-fixo');
+    if(!topo) return;
+    const h = Math.round(topo.getBoundingClientRect().height);
+    if(h > 0) document.documentElement.style.setProperty('--topo-h', h + 'px');
+  };
+  /* Mede JA e mede de novo no proximo quadro. O rAF sozinho nao servia: ele nao
+     dispara enquanto a aba nao esta sendo desenhada (peguei isso no teste, com
+     o painel do navegador em segundo plano), e ai a coluna ficava com o valor
+     chutado do CSS ate alguem olhar para a tela. A segunda medida existe porque
+     a primeira pode pegar o topo antes do layout final. */
+  const agendar = () => { medir(); requestAnimationFrame(medir); };
+  if(document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', agendar);
+  else agendar();
+  window.addEventListener('resize', agendar);
+  /* o topo so ganha os selects do admin DEPOIS do login, e isso muda a altura */
+  try{
+    const topo = document.querySelector('.topo-fixo');
+    if(topo && window.ResizeObserver) new ResizeObserver(agendar).observe(topo);
+  }catch(e){}
 })();
 
 </script>
