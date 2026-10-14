@@ -10858,6 +10858,56 @@ function metasRender(M){
    tem planilha fica exatamente como era. Quando ha metas mas a comparacao nao
    vale, os blocos APARECEM dizendo isso: sumir calado seria pior, porque quem
    viu o bloco ontem e nao ve hoje pensa que quebrou. */
+/* META DE BLOCO NO RESUMO (14/10/2026, pedido do Igor).
+   ======================================================
+   De janeiro a julho nao existe meta por vendedor, so a do conjunto. Sem isto,
+   o cartao "Meta do período" ficava com travessao em sete meses do ano, embora
+   a meta exista e esteja na planilha.
+
+   QUANDO UM BLOCO VALE: ele e do conjunto, entao so responde quando o recorte
+   na tela TAMBEM e do conjunto. Filtrou um vendedor, um canal, uma UF ou uma
+   regiao? O bloco deixa de descrever o que esta na tela e volta o travessao -
+   melhor sem numero do que com a meta da casa inteira ao lado do faturamento
+   de uma pessoa.
+
+       sem filtro de modelo      -> bloco de modelo vazio  (Comercial total)
+       um modelo so selecionado  -> bloco daquele modelo   (Key Account)
+
+   O BLOCO TEM PREFERENCIA sobre a soma dos vendedores quando os dois existem.
+   Em agosto os dois dao 3.200.000, porque um foi montado do outro; se um dia
+   divergirem, o certo para um cartao da casa e o numero negociado, nao a soma
+   de quem por acaso tem linha na planilha. */
+function metasBlocoDoFiltro(M, meses){
+  const B = (M && M.blocos) || null;
+  if(!B || !Object.keys(B).length) return null;
+  /* qualquer recorte que nao seja de modelo tira o bloco de cena */
+  if(typeof podeFiltrar === 'function' && podeFiltrar()){
+    const preso = (f) => !(f === '(todos)' || f === null || f === undefined ||
+                           (Array.isArray(f) && (!f.length || f.indexOf('(todos)') >= 0)));
+    if(preso(FILTER.vend) || preso(FILTER.canal) || preso(FILTER.uf) ||
+       preso(FILTER.reg)) return null;
+  }
+  if(!SESSION.isAdmin) return null;      /* bloco e numero da casa */
+
+  let mods = FILTER.mod;
+  if(Array.isArray(mods)) mods = mods.filter(x => x && x !== '(todos)');
+  else mods = (mods && mods !== '(todos)') ? [mods] : [];
+  if(mods.length > 1) return null;       /* dois modelos: nao ha bloco que cubra */
+
+  const alvo = mods.length ? String(mods[0]).trim() : '';
+  const nome = Object.keys(B).find(n =>
+    String(B[n].modelo || '').trim().toLowerCase() === alvo.toLowerCase());
+  if(!nome) return null;
+
+  let soma = 0, tem = false;
+  meses.forEach(m => {
+    const ch = metasChave(m);
+    const v = ch ? (B[nome].meses || {})[ch] : null;
+    if(v !== null && v !== undefined){ soma += v; tem = true; }
+  });
+  return tem ? {nome: nome, meta: soma} : null;
+}
+
 function metasResumoItens(){
   if(!METAS_D || !METAS_D.vend) return [];
   const A = metasApurar(METAS_D);
@@ -10870,15 +10920,23 @@ function metasResumoItens(){
   }
   const sub = A.aberto ? ('mês em aberto — ' + A.diaCorte + ' de ' + A.dias + ' dias')
                        : (A.comMeta.length + ' mês(es) fechado(s)');
+  const bl = metasBlocoDoFiltro(METAS_D, A.comMeta);
+  const meta = bl ? bl.meta : (A.temMeta ? A.somaMeta : null);
+  const pct = metasPct(A.somaReal, meta || 0);
   return [
-    {lab: 'Meta do período', val: (A.temMeta ? brl(A.somaMeta) : '—'), cls: '',
-     sub: A.comMeta.join(', '),
-     dica: 'Meta de faturamento líquido, somando os vendedores visíveis no ' +
-           'filtro. Vem da planilha de metas, preenchida à mão.'},
+    {lab: 'Meta do período', val: (meta !== null ? brl(meta) : '—'), cls: '',
+     sub: (bl ? bl.nome + ' · ' : '') + A.comMeta.join(', '),
+     dica: bl
+       ? 'Meta do bloco "' + bl.nome + '", da planilha de metas: vale para o ' +
+         'conjunto e não tem divisão por vendedor. Some um filtro de vendedor, ' +
+         'canal, UF ou região e este cartão volta a ficar sem número, porque o ' +
+         'bloco deixa de descrever o que está na tela.'
+       : 'Meta de faturamento líquido, somando os vendedores visíveis no ' +
+         'filtro. Vem da planilha de metas, preenchida à mão.'},
     /* metaparcial e o cinza do mes em aberto: no dia 18, agosto tinha so 14% do
        mes feito. Um percentual em destaque ali diria 'mes perdido' sobre um mes
        que fechou em 55%. */
-    {lab: 'Atingimento', val: metasPctTxt(A.pct),
+    {lab: 'Atingimento', val: metasPctTxt(pct),
      cls: A.aberto ? 'metaparcial' : '', sub: sub,
      dica: A.aberto
        ? 'O mês ainda não fechou, então este percentual não se compara com um ' +
