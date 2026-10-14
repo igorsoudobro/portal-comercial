@@ -129,6 +129,11 @@ input,select{font-family:inherit}
 
 /* KPI */
 .kpirow{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:22px}
+/* linha de muitos cartoes curtos: so numero e rotulo, nao precisa de 170px */
+.kpirow.kpi-mini{grid-template-columns:repeat(auto-fit,minmax(124px,1fr));gap:10px}
+.kpirow.kpi-mini .kpi{padding:11px 13px}
+.kpirow.kpi-mini .kpi .val{font-size:21px}
+.kpirow.kpi-mini .kpi .sub{font-size:11px}
 .kpi{background:#fff;border-radius:12px;padding:15px 17px;box-shadow:var(--shadow);border-left:4px solid var(--sky)}
 .kpi .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
 .kpi .val{font-size:25px;font-weight:800;color:var(--navy);font-variant-numeric:tabular-nums;margin-top:3px}
@@ -266,6 +271,11 @@ table.geo-tbl th{padding:8px 10px;position:sticky;top:0;background:var(--navy);
 table.geo-tbl td{padding:6px 10px;border-bottom:1px solid var(--line)}
 table.geo-tbl tbody tr:hover > td{background:#F8FAFE}
 #v-geo .uf-path{transition:opacity .18s}
+/* o SVG manda na altura pelo viewBox; o max-height corta isso e o
+   object-fit do SVG (preserveAspectRatio) centraliza sem distorcer */
+#v-geo .geo-mapa svg{max-height:calc(100vh - 290px);width:auto;max-width:100%;
+  display:block;margin:0 auto}
+#v-geo .geo-mapa > div > div:first-child{display:flex;justify-content:center}
 </style>
 <style>
 /* ===========================================================================
@@ -1530,6 +1540,7 @@ const CART_POR_PAG=250;
    atenção, 121 e inativo. */
 const CART_DIAS_ATIVO   = 90;
 const CART_DIAS_ATENCAO = 120;
+let CART_QG_BUSCA = '';     // busca do quadro gerencial (CNPJ ou razão social)
 let CART_QG = {v:null, b:null};     // vendedor e balde abertos no quadro
 
 /* Ano do DADO, nao o do relogio (mesma licao do metasAno). */
@@ -1573,6 +1584,43 @@ function cartBalde(cn, ano){
   }
   return 'semano';
 }
+/* VALOR DO ULTIMO PEDIDO (14/10/2026, pedido do Igor).
+   Nao existe pronto em lugar nenhum: o CART_DATAS guarda a DATA do ultimo
+   pedido (do Consolidado, com historico desde 2024) e o CART_MET guarda o
+   ticket MEDIO. O valor do ultimo pedido so da para somar do FATO, que tem o
+   dia da nota - e o FATO comeca em janeiro do ano corrente.
+
+   ENTAO SO MOSTRO QUANDO AS DUAS PONTAS CONCORDAM: se a ultima data do FATO
+   para aquele cliente for exatamente a data que o Consolidado chama de ultimo
+   pedido. Divergiu - porque o ultimo pedido foi em 2025, ou porque a nota nao
+   entrou na BaseTrabalho -, fica travessao. Mostrar o ultimo pedido DO ANO
+   chamando de "ultimo pedido" seria um numero certo respondendo outra pergunta.
+
+   Montado uma vez, sob demanda, a partir do ROWS inteiro (e nao do linhas()):
+   a pergunta e sobre o cliente, nao sobre o recorte do filtro. */
+let CART_ULT_VAL = null;
+function cartIndexarUltimoPedido(){
+  if(CART_ULT_VAL) return;
+  CART_ULT_VAL = {};
+  try{
+    const porCn = {};
+    ROWS.forEach(r => {
+      if(!r.venda || !r.cn || !r.d) return;
+      const o = porCn[r.cn];
+      if(!o || r.d > o.dia) porCn[r.cn] = {dia: r.d, val: r.fat};
+      else if(r.d === o.dia) o.val += r.fat;
+    });
+    Object.keys(porCn).forEach(cn => { CART_ULT_VAL[cn] = porCn[cn]; });
+  }catch(e){ console.error('último pedido:', e); }
+}
+function cartValorUltimo(cn){
+  cartIndexarUltimoPedido();
+  const o = CART_ULT_VAL[cn];
+  const u = cartUltDe(cn);
+  if(!o || !u || o.dia !== u) return null;
+  return o.val;
+}
+
 function cartDiasDe(cn){
   const D = (typeof CART_DATAS === 'object' && CART_DATAS) ? CART_DATAS[cn] : null;
   return (D && D.diassem !== null && D.diassem !== undefined) ? D.diassem : null;
@@ -1601,6 +1649,14 @@ function cartQuadroGerencial(base){
   const ano = cartAnoDado();
   const porV = {};
   let semData = 0;          // quantos cairam na regua de meses por falta de data
+  /* a busca recorta ANTES de contar: os números do quadro passam a ser os do
+     recorte, senão clicar num 248 e ver 1 cliente na lista seria o que confunde */
+  if(CART_QG_BUSCA){
+    const q = CART_QG_BUSCA.toLowerCase(), qd = CART_QG_BUSCA.replace(/\D/g, '');
+    base = base.filter(c =>
+      (qd && String(c.cn).indexOf(qd) >= 0) ||
+      String(c.rz || '').toLowerCase().indexOf(q) >= 0);
+  }
   base.forEach(c => {
     const o = porV[c.v] = porV[c.v] ||
               {cart:[], ativo:[], atencao:[], inativo:[], semano:[]};
@@ -1658,13 +1714,21 @@ function cartQuadroGerencial(base){
     const corta = ord.slice(0, CART_QG_MAX);
     const linhasCli = corta.map(c => {
       const d = cartDiasDe(c.cn), u = cartUltDe(c.cn), f = cartFaixa(d);
+      const vUlt = cartValorUltimo(c.cn);
       return '<tr><td class="rowlab" title="' + c.cn + '">' +
         String(c.rz || '').substring(0, 44) + '</td>' +
+        '<td class="mono" style="white-space:nowrap;font-size:11px">' +
+          c.cn + '</td>' +
         '<td class="rowlab">' + ((c.ci ? c.ci.substring(0, 20) : '—') +
           (c.uf ? ' / ' + c.uf : '')) + '</td>' +
         '<td class="rowlab">' + (c.ca ? c.ca.substring(0, 18) : '—') + '</td>' +
         '<td class="mono" style="text-align:right;white-space:nowrap">' +
           cartDataBR(u) + '</td>' +
+        '<td class="mono" style="text-align:right;white-space:nowrap"' +
+          (vUlt === null ? ' title="o último pedido é anterior ao FATO deste ' +
+            'ano, ou a nota não entrou na BaseTrabalho"' : '') + '>' +
+          (vUlt !== null ? brl(vUlt) : '<span style="color:var(--line)">—</span>') +
+          '</td>' +
         '<td class="mono" style="text-align:right' +
           (f ? ';color:' + f.cor : '') +
           '">' + (d !== null ? n0(d) + 'd' : '—') + '</td>' +
@@ -1702,11 +1766,14 @@ function cartQuadroGerencial(base){
       '<div id="waContador" style="padding:0 14px 6px;font-size:11px;color:var(--muted)"></div>' +
       '<div style="max-height:360px;overflow:auto;padding:0 8px 10px">' +
       '<table class="qg-lista"><thead><tr><th style="text-align:left">Cliente</th>' +
+      '<th style="text-align:left">CNPJ</th>' +
       '<th style="text-align:left">Cidade / UF</th><th style="text-align:left">Canal</th>' +
       '<th style="text-align:right">Último pedido</th>' +
+      '<th style="text-align:right" title="valor do pedido daquela data, somado ' +
+        'do FATO">Valor</th>' +
       '<th style="text-align:right">Dias</th>' +
       '<th style="text-align:right">Contato</th></tr></thead><tbody>' +
-      (linhasCli || '<tr><td colspan="6" style="color:var(--muted);padding:8px">' +
+      (linhasCli || '<tr><td colspan="8" style="color:var(--muted);padding:8px">' +
         'Nenhum cliente neste grupo.</td></tr>') +
       '</tbody></table></div></td></tr>';
   };
@@ -1742,8 +1809,14 @@ function cartQuadroGerencial(base){
 
   return '<div class="card" id="cardCartQG"><div class="card-h">' +
     '<h3>Quadro gerencial por vendedor</h3>' +
-    '<span class="hint">dias corridos desde o último pedido · clique num número ' +
-    'para ver quem são · não segue a busca da tabela</span>' + btsMsg + '</div>' +
+    /* A BUSCA FICA AQUI, colada no titulo (14/10/2026, pedido do Igor). Ela
+       recorta o QUADRO INTEIRO - os números e as listas -, e por isso é
+       diferente da busca da tabela de baixo, que só filtra aquela tabela. */
+    '<input id="qgBusca" class="inp" placeholder="Buscar CNPJ ou razão social" ' +
+    'style="margin-left:14px;min-width:230px;padding:5px 10px;font-size:12.5px" ' +
+    'value="' + metasEsc(CART_QG_BUSCA) + '">' +
+    '<span class="hint" style="margin-left:12px">dias corridos desde o último ' +
+    'pedido · clique num número para ver quem são</span>' + btsMsg + '</div>' +
     '<div class="scroll"><table class="qg-tbl"><thead><tr>' +
     '<th style="text-align:left">Vendedor</th>' +
     /* Cabecalho em UMA linha, sem <br> com subtitulo: o exportador le o
@@ -2047,6 +2120,13 @@ function vCarteira(){
     if(CART_QG.v===v && CART_QG.b===b){ CART_QG={v:null,b:null}; }
     else { CART_QG={v:v,b:b}; }
     vCarteira();
+  });
+  const qgb=el('qgBusca');
+  if(qgb) qgb.addEventListener('input',e=>{
+    CART_QG_BUSCA=e.target.value; CART_QG={v:null,b:null}; vCarteira();
+    // devolve o cursor: o quadro inteiro e redesenhado a cada tecla
+    const nb=el('qgBusca');
+    if(nb){ nb.focus(); nb.setSelectionRange(nb.value.length, nb.value.length); }
   });
   /* o contador do WhatsApp so existe quando ha um grupo aberto */
   if(typeof waPintarContador === 'function'){ try{ waPintarContador(); }catch(e){} }
@@ -2507,6 +2587,7 @@ function vCalc(){
        <div><label class="calc-lab">Comissão RCA %</label><br><input id="calcComissao" class="inp" type="number" value="0" min="0" max="100" style="width:120px"></div>
        <div><label class="calc-lab">Frete *</label><br><select id="calcFreteModo" class="inp"><option value="auto">Médio real do estado</option><option value="manual">Valor manual</option></select></div>
        <div id="calcFreteManualWrap" style="display:none"><label class="calc-lab">Frete manual (R$)</label><br><input id="calcFreteManual" class="inp" type="number" value="0" min="0" style="width:130px"></div>
+       <div><label class="calc-lab" title="Dinheiro combinado à parte — verba, enxoval, patrocínio. Não entra na nota: não muda o faturamento nem o imposto, só o resultado do pedido.">Investimento monetário (R$)</label><br><input id="calcInvest" class="inp" type="number" value="0" min="0" style="width:150px"></div>
      </div>
      <div id="calcCondAviso" style="padding:0 20px 14px"></div>
    </div>
@@ -2543,6 +2624,9 @@ function vCalc(){
      é 'change' no seletor e não só o onCond do fim da função. */
   el('calcTabela').addEventListener('change',onCond);
   el('calcFreteModo').addEventListener('change',()=>{ el('calcFreteManualWrap').style.display=el('calcFreteModo').value==='manual'?'':'none'; onCond(); });
+  /* Investimento so mexe no resultado - nao muda preco nem grade. Entao
+     redesenha o resumo direto, sem passar pelo onCond, que remonta a tela. */
+  el('calcInvest').addEventListener('input',()=>{ renderCalcResumo(); });
   // tabs categorias
   [...document.querySelectorAll('#calcCatTabs .cat-tab')].forEach(b=>b.addEventListener('click',()=>{CALC_CATSEL=b.dataset.c; [...document.querySelectorAll('#calcCatTabs .cat-tab')].forEach(x=>x.classList.toggle('on',x===b)); renderCalcItens();}));
   [...document.querySelectorAll('#calcBoniTabs .cat-tab')].forEach(b=>b.addEventListener('click',()=>{CALC_BONISEL=b.dataset.c; [...document.querySelectorAll('#calcBoniTabs .cat-tab')].forEach(x=>x.classList.toggle('on',x===b)); renderCalcBoni();}));
@@ -2723,10 +2807,17 @@ function calcCompute(){
   const imp=liq*impPct;
   const fr=(freteModo==='manual')?freteManual:(liq*frPct);
   const comissaoVal=liq*comissao;
+  /* INVESTIMENTO MONETARIO (14/10/2026, pedido do Igor): dinheiro combinado a
+     parte - verba de ponta, enxoval, patrocinio de ação. NAO e desconto: nao
+     passa na nota, nao muda o faturamento nem o imposto. Entra depois de tudo,
+     como custo seco, exatamente onde o Igor descreveu ("um valor em dinheiro a
+     parte no final"). Por isso a margem bruta nao se mexe e a RENTABILIDADE
+     sim - que e o numero que decide se o pedido e aprovado. */
+  const investimento=Math.max(0, calcNum(((typeof el==='function'&&el('calcInvest'))||{}).value));
   const lucroBruto=liq-cmvT;
-  const lucro=lucroBruto-imp-fr-comissaoVal;
+  const lucro=lucroBruto-imp-fr-comissaoVal-investimento;
   const rent=liq?lucro/liq:0;
-  return {uf,tab,ignorados,impPct,frPct,itens,boni,brindes,bruto,liq,cmvItens,cmvBoni,cmvBrinde,cmvT,imp,fr,comissaoVal,lucroBruto,lucro,rent};
+  return {uf,tab,ignorados,impPct,frPct,itens,boni,brindes,bruto,liq,cmvItens,cmvBoni,cmvBrinde,cmvT,imp,fr,comissaoVal,investimento,lucroBruto,lucro,rent};
 }
 
 function renderCalcResumo(){
@@ -3110,6 +3201,33 @@ function statusNoMes(cn, mRef){
   return (mRef - ult) < JANELA_MESES ? 'Ativo' : 'Inativo';
 }
 
+/* AS MESMAS QUATRO FAIXAS DA ABA CARTEIRA, só que medidas em MESES (14/10/2026).
+   A aba Carteira conta dias corridos até hoje; aqui a conta é ancorada no mês
+   do filtro, porque é isso que permite perguntar "como estava a carteira em
+   Maio?". A tradução é direta, já que o FATO só tem mês:
+
+       até 90 dias   -> mês de referência e os 2 anteriores   (3 meses)
+       91 a 120      -> o 3º mês atrás
+       121 ou mais   -> além disso, mas com compra no ano
+       sem compra    -> nenhuma até o mês de referência
+
+   Os dois números não batem com os da aba Carteira, e não deviam: lá a régua é
+   de dias e inclui pedidos que nem chegam ao FATO. O rodapé do cartão diz isso. */
+const MESES_ATIVO = 3;          // mRef, mRef-1, mRef-2
+function faixaNoMes(cn, mRef){
+  indexarCompras();
+  const s = MESES_COMPRA[cn];
+  if(!s) return 'semano';
+  let ult = -1;
+  s.forEach(i => { if(i <= mRef && i > ult) ult = i; });
+  if(ult < 0) return 'semano';
+  const atras = mRef - ult;
+  if(atras < MESES_ATIVO) return 'ativo';
+  if(atras < JANELA_MESES) return 'atencao';
+  return 'inativo';
+}
+window.faixaNoMes = faixaNoMes;
+
 /* mantido para compatibilidade: usa o mes de referencia corrente */
 function statusCarteira(cn){ return statusNoMes(cn, mesReferencia()); }
 
@@ -3404,19 +3522,27 @@ function ativarChips(){
 function mostrarCarimbo(){
   const meta = (typeof _Z === 'object' && _Z && _Z.META) ? _Z.META : null;
   if(!meta) return;
+  /* FOI PARA O RODAPE em 14/10/2026, a pedido do Igor.
+     Ele ocupava uma faixa inteira embaixo da barra azul, com o carimbo do V8,
+     a contagem de linhas e o faturamento - informacao de conferencia, lida uma
+     vez por mes, roubando a primeira linha da tela todos os dias. No rodape
+     fica so o que se consulta de verdade: quando o Portal foi atualizado. */
   let box = el2('carimboV8');
   if(!box){
     box = document.createElement('div');
     box.id = 'carimboV8';
-    box.style.cssText = 'font-size:11px;color:#8a8f98;padding:2px 20px 8px;' +
+    box.style.cssText = 'font-size:11px;color:#8a8f98;padding:0 2px 10px;' +
                         'text-align:right;font-style:italic';
-    const top = document.querySelector('.app .topbar');
-    if(top && top.parentNode) top.parentNode.insertBefore(box, top.nextSibling);
-    else document.querySelector('.app').prepend(box);
+    const foot = document.querySelector('.content .foot') ||
+                 document.querySelector('.foot');
+    if(foot && foot.parentNode) foot.parentNode.insertBefore(box, foot);
+    else document.querySelector('.app').append(box);
   }
   const ger = meta.gerado_em ? new Date(meta.gerado_em).toLocaleString('pt-BR') : '?';
-  box.innerHTML = (meta.carimbo_v8 || 'sem carimbo do V8') +
-                  ' &nbsp;·&nbsp; JSON gerado em ' + ger;
+  /* O carimbo completo do V8 vira o title: quem precisa conferir linhas e
+     faturamento passa o mouse; quem nao precisa nao esbarra nele. */
+  box.title = meta.carimbo_v8 || '';
+  box.textContent = 'Atualizado em ' + ger;
 }
 
 /* --------------------------------------- 3) modal: quem sao os novos clientes */
@@ -3764,31 +3890,41 @@ function vResumoNovo(){
   const carteiraFiltrada = carteiraDoFiltro();
   const naoCompraram = carteiraFiltrada.filter(c => !compraram.has(c.cn)).length;
 
-  let ativos120 = 0, inativos120 = 0, semHist = 0;
-  carteiraFiltrada.forEach(c => {
-    const s = statusCarteira(c.cn);
-    if(s === 'Ativo') ativos120++;
-    else if(s === 'Inativo') inativos120++;
-    else semHist++;
-  });
+  const fx = {ativo:0, atencao:0, inativo:0, semano:0};
+  const mRef = mesReferencia();
+  carteiraFiltrada.forEach(c => { fx[faixaNoMes(c.cn, mRef)]++; });
 
-  /* --- 4 KPIs novos, as duas reguas, como o Igor pediu --- */
+  /* SEIS CARTOES, MENORES (14/10/2026, pedido do Igor): os dois do periodo mais
+     as quatro faixas da carteira. A classe `kpi-mini` encolhe a coluna minima de
+     170 para 120 px - com quatro cartoes a linha ficava larga demais para o que
+     cada um diz, que e um numero de tres digitos. */
+  const anoKpi = (() => {
+    const g = (typeof _Z === 'object' && _Z && _Z.META) ? _Z.META.gerado_em : null;
+    const a = g ? parseInt(String(g).slice(0,4), 10) : NaN;
+    return isFinite(a) ? a : (new Date()).getFullYear();
+  })();
   const kpiHtml =
-    '<div class="kpirow" id="kpiClientes" style="margin-top:4px">' +
+    '<div class="kpirow kpi-mini" id="kpiClientes" style="margin-top:4px">' +
     '<div class="kpi"><div class="lab">Compraram no período</div><div class="val">' +
       n0(compraram.size) + '</div><div class="sub">régua do filtro de mês</div></div>' +
     '<div class="kpi"><div class="lab">Não compraram no período</div><div class="val">' +
       n0(naoCompraram) + '</div><div class="sub">estão na carteira e não faturaram</div></div>' +
-    '<div class="kpi pos"><div class="lab">Clientes ativos</div><div class="val">' +
-      n0(ativos120) + '</div><div class="sub">compra há ≤ ' + DIAS_INATIVO + ' dias</div></div>' +
-    '<div class="kpi"><div class="lab">Clientes inativos</div><div class="val">' +
-      n0(inativos120) + '</div><div class="sub">há mais de ' + DIAS_INATIVO + ' dias sem comprar</div></div>' +
+    '<div class="kpi pos"><div class="lab">Ativos</div><div class="val">' +
+      n0(fx.ativo) + '</div><div class="sub">compra há até 90 dias</div></div>' +
+    '<div class="kpi sens"><div class="lab">Atenção</div><div class="val">' +
+      n0(fx.atencao) + '</div><div class="sub">91 a 120 dias sem comprar</div></div>' +
+    '<div class="kpi"><div class="lab">Inativos</div><div class="val">' +
+      n0(fx.inativo) + '</div><div class="sub">121 dias ou mais</div></div>' +
+    '<div class="kpi"><div class="lab">Não compraram em ' + anoKpi + '</div>' +
+      '<div class="val">' + n0(fx.semano) + '</div>' +
+      '<div class="sub">nenhuma compra no ano</div></div>' +
     '</div>' +
-    '<div class="note" style="margin-top:6px"><b>Duas réguas de propósito:</b> as duas ' +
-    'primeiras seguem o mês/período filtrado; as duas últimas seguem a régua da aba ' +
-    'Carteira (' + DIAS_INATIVO + ' dias sem comprar). Ativos + inativos' +
-    (semHist ? ' + ' + n0(semHist) + ' sem histórico' : '') +
-    ' = ' + n0(carteiraFiltrada.length) + ' clientes na carteira filtrada.</div>';
+    '<div class="note" style="margin-top:6px"><b>Duas réguas de propósito:</b> os ' +
+    'dois primeiros seguem o mês/período filtrado. As quatro faixas seguem o ' +
+    '<b>mês de referência</b> do filtro (até 90 dias = o mês e os 2 anteriores) e ' +
+    'somam ' + n0(carteiraFiltrada.length) + ' — a carteira filtrada. Na aba ' +
+    'Carteira a mesma divisão conta <b>dias corridos até hoje</b>, e por isso os ' +
+    'números de lá são um pouco diferentes.</div>';
 
   /* --- tabela por vendedor --- */
   const porVend = {};
@@ -3807,12 +3943,12 @@ function vResumoNovo(){
   L.forEach(r => { if(r.venda && r.cn) compraramNoPeriodo.add(r.cn); });
 
   carteiraFiltrada.forEach(c => {
-    const o = porVend[c.v] = porVend[c.v] || {cart:0, ativos:0, inativos:0,
-                                              semAno:0, compraram:0,
+    const o = porVend[c.v] = porVend[c.v] || {cart:0, ativos:0, atencao:0,
+                                              inativos:0, semAno:0, compraram:0,
                                               fat:0, pedidos:new Set(), novos:0};
     o.cart++;
     if(compraramNoPeriodo.has(c.cn)) o.compraram++;
-    const s = statusCarteira(c.cn);
+    const s = faixaNoMes(c.cn, mRef);
     /* O TERCEIRO BALDE TEM NOME AGORA (13/10/2026, pedido do Igor).
        Ele sempre existiu calado: statusCarteira devolve 'sem histórico' para
        quem nao tem NENHUMA compra ate o mes de referencia, e esse resto nunca
@@ -3820,8 +3956,12 @@ function vResumoNovo(){
        onde ler a diferenca. Como o FATO comeca em Janeiro e vai so ate o ano
        corrente, "sem histórico" e literalmente "nao comprou em " + o ano do
        dado. Entao o balde vira coluna, e as tres somam a carteira do vendedor. */
-    if(s === 'Ativo') o.ativos++;
-    else if(s === 'Inativo') o.inativos++;
+    /* AS MESMAS QUATRO FAIXAS DOS KPIs ACIMA (14/10/2026). Antes esta tabela
+       dizia "Ativos <120d" enquanto o cartao logo em cima dizia "Ativos" com
+       outro corte - dois numeros com o mesmo nome na mesma tela. */
+    if(s === 'ativo') o.ativos++;
+    else if(s === 'atencao') o.atencao++;
+    else if(s === 'inativo') o.inativos++;
     else o.semAno++;
   });
   // faturamento, pedidos e novos por vendedor, no periodo
@@ -3914,8 +4054,9 @@ function vResumoNovo(){
     const dv = dre(linsPorVend[v] || []);
     const d = descPorVend[v];
     return {
-      v, cart:o.cart, ativos:o.ativos, inativos:o.inativos,
-      semAno:o.semAno||0, compraram:o.compraram||0, novos:o.novos,
+      v, cart:o.cart, ativos:o.ativos, atencao:o.atencao||0,
+      inativos:o.inativos, semAno:o.semAno||0,
+      compraram:o.compraram||0, novos:o.novos,
       fat:o.fat, ticket: o.pedidos.size ? o.fat / o.pedidos.size : 0,
       dev: dv.dev, boni: dv.boni, rent: dv.rent, fatLiq: dv.fatLiq,
       lucro: dv.lucro,
@@ -3977,7 +4118,8 @@ function vResumoNovo(){
       : '<span class="mono">' + pct(r.pboni) + '</span>';
 
   const tot = arr.reduce((a,r) => ({
-    cart:a.cart+r.cart, ativos:a.ativos+r.ativos, inativos:a.inativos+r.inativos,
+    cart:a.cart+r.cart, ativos:a.ativos+r.ativos,
+    atencao:a.atencao+(r.atencao||0), inativos:a.inativos+r.inativos,
     semAno:a.semAno+(r.semAno||0), compraram:a.compraram+(r.compraram||0),
     novos:a.novos+r.novos, fat:a.fat+r.fat, dev:a.dev+r.dev, boni:a.boni+r.boni
   /* `compraram` FALTAVA na semente deste reduce desde que a coluna nasceu, em
@@ -3985,7 +4127,7 @@ function vResumoNovo(){
      Passava despercebido porque so a celula de percentual usava o numero e um
      "NaN%" no rodape se parece com um travessao de relance. Com a coluna
      "Compraram no período" na tela, o NaN ficou visivel - e corrigido. */
-  }), {cart:0,ativos:0,inativos:0,semAno:0,compraram:0,novos:0,fat:0,dev:0,boni:0});
+  }), {cart:0,ativos:0,atencao:0,inativos:0,semAno:0,compraram:0,novos:0,fat:0,dev:0,boni:0});
   const totDre = dre(L);
 
   /* O ano do DADO, nao o do relogio: o rotulo "Não compraram em 2026" tem que
@@ -4001,7 +4143,7 @@ function vResumoNovo(){
     '<div class="card" id="cardVendResumo"><div class="card-h">' +
     '<h3>Por vendedor</h3><span class="hint">ticket médio no período · desconto ' +
     'sobre o preço de consumidor, ponderado por receita · carteira = ativos + ' +
-    'inativos + não compraram em ' + anoDado +
+    'atenção + inativos + não compraram em ' + anoDado +
     '</span></div>' +
     '<div class="scroll"><table class="tbl-vend"><thead><tr>' +
     '<th>Vendedor</th><th style="text-align:right">Faturamento</th>' +
@@ -4021,12 +4163,13 @@ function vResumoNovo(){
        alto da aba, com a lista de quem sao. */
     '<th style="text-align:right" title="Total de clientes na carteira dele, ' +
       'pelo cadastro da segmentação.">Carteira</th>' +
-    '<th style="text-align:right" title="Compraram há menos de ' + DIAS_INATIVO +
-      ' dias (' + JANELA_MESES + ' meses de dado), contados a partir do último ' +
-      'mês selecionado no filtro.">Ativos &lt;' + DIAS_INATIVO + 'd</th>' +
+    '<th style="text-align:right" title="Compraram no mês de referência ou ' +
+      'nos 2 anteriores — a tradução de 90 dias para a régua mensal do FATO.">' +
+      'Ativos</th>' +
+    '<th style="text-align:right" title="Última compra no 3º mês antes do mês ' +
+      'de referência — equivale a 91 a 120 dias.">Atenção</th>' +
     '<th style="text-align:right" title="Já compraram em ' + anoDado + ', mas a ' +
-      'última compra foi há mais de ' + DIAS_INATIVO + ' dias.">Inativos &gt;' +
-      DIAS_INATIVO + 'd</th>' +
+      'última compra foi antes disso.">Inativos</th>' +
     '<th style="text-align:right" title="Estão na carteira e não têm nenhuma ' +
       'compra em ' + anoDado + ' até o mês de referência. Carteira = Ativos + ' +
       'Inativos + esta coluna.">Não compraram em ' + anoDado + '</th>' +
@@ -4052,6 +4195,7 @@ function vResumoNovo(){
       '<td style="text-align:right">' + celulaDesc(r) + '</td>' +
       '<td class="mono" style="text-align:right;color:var(--muted)">' + n0(r.cart) + '</td>' +
       '<td class="mono" style="text-align:right;color:#1BA466">' + n0(r.ativos) + '</td>' +
+      '<td class="mono" style="text-align:right;color:#E0A800">' + n0(r.atencao) + '</td>' +
       '<td class="mono" style="text-align:right;color:#C0392B">' + n0(r.inativos) + '</td>' +
       /* Cinza escuro, nao vermelho: quem nao compra no ano inteiro ja nao e um
          alerta de retomada, e base fria. Pintar de vermelho junto com os
@@ -4089,6 +4233,7 @@ function vResumoNovo(){
     })() + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.cart) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.ativos) + '</td>' +
+    '<td class="mono tot" style="text-align:right">' + n0(tot.atencao) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.inativos) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.semAno) + '</td>' +
     '<td class="mono tot" style="text-align:right">' + n0(tot.compraram) + '</td>' +
@@ -4880,7 +5025,16 @@ window.renderCalcResumo = function(){
     (el2('calcFreteModo') && el2('calcFreteModo').value === 'manual'
       ? ' (informado)'
       : ' (estim. média ' + (c.uf || 'UF') + ' ' + pct(c.frPct) + ')') +
-    (c.comissaoVal ? ' · com ' + brl2(c.comissaoVal) : '') + '</div></div>';
+    (c.comissaoVal ? ' · com ' + brl2(c.comissaoVal) : '') + '</div></div>' +
+    /* Cartao proprio, e so quando existe: investimento zero e o caso normal, e
+       um cartao zerado permanente vira ruido. Mostra o quanto ele custa EM
+       PONTOS de rentabilidade, que e a pergunta de quem esta negociando. */
+    (c.investimento > 0
+      ? '<div class="kpi sens"><div class="lab">Investimento monetário</div>' +
+        '<div class="val" style="font-size:20px">' + brl2(c.investimento) + '</div>' +
+        '<div class="sub">fora da nota · −' +
+        pct(c.liq ? c.investimento / c.liq : 0) + ' de rentab.</div></div>'
+      : '');
 
   /* Impacto de bonificacao e brinde, para o VENDEDOR, em PONTOS DE MARGEM.
      Em 30/07/2026 o Igor viu "R$ 0,00 / R$ 0,00" na linha de bonificacao e
@@ -7171,9 +7325,15 @@ function ligarCliquesExtras(){
       abririam a mesma lista. */
   /* Arrow e nao a funcao direta: o addEventListener passaria o MouseEvent como
      1o argumento e o titulo do modal viraria "[object MouseEvent]". */
+  /* "NO PERÍODO" NO PADRAO, e nao so "não compraram" (14/10/2026). Quando este
+     cartao ganhou a faixa "Não compraram em 2026", ela passou a casar com o
+     padrao antigo e ficava clicavel - abrindo a lista DO PERIODO. Com "Ano
+     todo" os dois numeros coincidem e ninguem veria; com um mes selecionado, o
+     cartao diria 1.533 e a lista mostraria 2.983. As quatro faixas seguem sem
+     clique de proposito, como ja era com Ativos e Inativos. */
   ligar(document.getElementById('kpiClientes'),
-        [[/não compraram|nao compraram/i, () => verNaoCompraram()],
-         [/compraram/i, () => verClientesAtivos('Compraram no período')]]);
+        [[/n[ãa]o compraram no per/i, () => verNaoCompraram()],
+         [/^compraram no per/i, () => verClientesAtivos('Compraram no período')]]);
   /* Canais & Ticket: uma linha, um canal, um clique. Delegação numa <tbody> em
      vez de listener por linha - a tabela é reconstruída a cada troca de filtro e
      ligar linha por linha acumularia listeners na mesma <tr> a cada render. */
@@ -10403,6 +10563,88 @@ function metasApurar(M){
           dias: umMes ? metasDiasNoMes(mes) : 0};
 }
 
+/* ==========================================================================
+   METAS DE BLOCO  (14/10/2026)
+   ==========================================================================
+
+   De janeiro a julho existe meta do COMERCIAL INTEIRO e do KEY ACCOUNT, mas nao
+   existe a divisao por vendedor - o Igor nao tem esse numero. Em vez de
+   inventar um rateio entre 25 pessoas (que ninguem combinou e que apareceria na
+   tela de cada um como se fosse a meta dele), a planilha ganhou linhas de
+   BLOCO: metas do conjunto, com o Modelo dizendo qual recorte cada uma cobre.
+
+   Este quadro e a leitura delas, mes a mes. Ele NAO soma com a tabela por
+   vendedor e nao substitui nenhuma - e um terceiro olhar, do tamanho do dado
+   que existe.
+
+   SO PARA ADMIN E MODERADOR, e nao por pudor: o realizado aqui e o da CASA
+   INTEIRA (metasPassa com ignorarCarteira). Para um vendedor, comparar a meta
+   do comercial com o faturamento dele seria um atingimento sem significado. */
+function metasBlocoCard(M){
+  const B = (M && M.blocos) || null;
+  if(!B || !Object.keys(B).length) return '';
+  const adm = !!(SESSION && SESSION.isAdmin) ||
+              (typeof ehModerador === 'function' && ehModerador());
+  if(!adm) return '';
+
+  const meses = mesesAtivos().filter(m => {
+    const ch = metasChave(m);
+    return ch && M.meses.indexOf(ch) >= 0;
+  });
+  if(!meses.length) return '';
+
+  const nomes = Object.keys(B);
+  const metaDe = (nome, mesNome) => {
+    const ch = metasChave(mesNome);
+    const v = ch ? (B[nome].meses || {})[ch] : null;
+    return (v === null || v === undefined) ? null : v;
+  };
+
+  /* SO A META, SEM REALIZADO (14/10/2026, decisão do Igor).
+     A primeira versao trazia meta, realizado e atingimento. O realizado nao
+     entrou: medido de quatro formas diferentes, janeiro no Key Account dava
+     R$ 301.092 (modelo do Portal), R$ 275.302 (so a Julia), R$ 164.233
+     (categoria KEY do OMIE) e R$ 143.257 (o controle do Igor). Quatro numeros
+     para a mesma pergunta.
+
+     Mostrar um deles ao lado da meta seria publicar um atingimento que
+     contradiz a planilha que ele usa para cobrar o time - e numero que
+     contradiz vira discussao sobre a ferramenta, nao sobre a venda. Entao o
+     quadro mostra a META, que e dele e e inequivoca. O realizado volta quando a
+     regra estiver combinada. */
+  const soma = {};
+  nomes.forEach(n => { soma[n] = {meta: 0, tem: false}; });
+  const linhas = meses.map(m => {
+    let tr = '<tr><td class="rowlab">' + metasEsc(m) + '</td>';
+    nomes.forEach(n => {
+      const mt = metaDe(n, m);
+      if(mt !== null){ soma[n].meta += mt; soma[n].tem = true; }
+      tr += '<td class="r">' + (mt !== null ? brl(mt) : '-') + '</td>';
+    });
+    return tr + '</tr>';
+  }).join('');
+
+  let tot = '<tfoot><tr><td>Total do período</td>';
+  nomes.forEach(n => {
+    tot += '<td class="r">' + (soma[n].tem ? brl(soma[n].meta) : '-') + '</td>';
+  });
+  tot += '</tr></tfoot>';
+
+  return '<div class="card"><div class="card-h"><h3>Metas de bloco</h3>' +
+    '<span class="hint">metas do conjunto — não têm divisão por vendedor</span>' +
+    '</div><div class="scroll"><table><thead><tr>' +
+    '<th style="text-align:left">Mês</th>' +
+    nomes.map(n => '<th class="r">' + metasEsc(n) +
+      (B[n].modelo ? ' <span style="font-weight:400;opacity:.8">· ' +
+      metasEsc(B[n].modelo) + '</span>' : '') + '</th>').join('') +
+    '</tr></thead><tbody>' + linhas + '</tbody>' + tot + '</table></div>' +
+    '<div style="padding:8px 14px;font-size:11px;color:var(--muted)">' +
+    'Só a meta: o realizado destes blocos ainda não tem regra combinada — o ' +
+    'modelo do Portal, a carteira do vendedor e o controle do comercial dão ' +
+    'números diferentes para o mesmo mês. Quando a regra estiver fechada, as ' +
+    'colunas de realizado e atingimento entram aqui.</div></div>';
+}
+
 function metasRender(M){
   const A = metasApurar(M);
   if(A.erro) return metasAvisoBox('Meta nao disponivel no filtro vigente', A.erro);
@@ -10570,8 +10812,10 @@ function metasRender(M){
 
   /* Moderador ve a meta POR MODELO, nao por vendedor (pedido do Igor em
      23/09/2026). A tabela de cima ja e a do modelo - a de vendedor sai. */
-  if(typeof ehModerador === 'function' && ehModerador()) return kpis + tabMod + fonte;
-  return kpis + tabMod + tabVend + fonte;
+  const blocos = metasBlocoCard(M);
+  if(typeof ehModerador === 'function' && ehModerador())
+    return kpis + blocos + tabMod + fonte;
+  return kpis + blocos + tabMod + tabVend + fonte;
 }
 
 /* Os dois blocos do Resumo (pedido do Igor em 21/09/2026).
@@ -13297,7 +13541,12 @@ function vGeo(){
     '<span class="hint">passe o mouse para ver o resumo · clique para abrir</span>' +
     '<button id="geoVoltar" class="btn-nav" style="margin-left:auto;display:none">' +
     '‹ Brasil inteiro</button></div>' +
-    '<div id="resMapa" style="padding:14px 20px;position:relative"></div></div>' +
+    /* O MAPA CABE NA TELA (14/10/2026, pedido do Igor). O SVG tem width:100% e
+       um viewBox quase quadrado (1000x938), entao numa tela larga ele ficava com
+       mais de 900 px de altura e o Igor precisava rolar para ver o Sul. Travo a
+       altura em uma fracao da JANELA, nao em pixels fixos: num monitor baixo
+       ele encolhe junto, em vez de continuar estourando. */
+    '<div id="resMapa" class="geo-mapa" style="padding:14px 20px;position:relative"></div></div>' +
     '<div id="geoDrill"></div>';
 
   /* o mapa inteiro continua vindo da renderMapa - esta aba so o pos-processa */
@@ -13383,7 +13632,16 @@ const LINKS_UTEIS = [
    url:  'https://soudobro-my.sharepoint.com/:f:/g/personal/juliana_seta_soudobro_com_br/IgDuSPlQF2aRRr0LSzg0Y-FuAUCN_-PDXXbpx9ooc83iVpc?e=SIDoV2'},
   {nome: 'Artes ambientadas',
    desc: 'Pasta de artes ambientadas no SharePoint — pede login da Dobro',
-   url:  'https://soudobro-my.sharepoint.com/:f:/g/personal/juliana_seta_soudobro_com_br/IgCwlTA-V3FvTaxAJTufbsCfAciyTkdVd525VIgk3u-GBi0?e=73sqqS'}
+   url:  'https://soudobro-my.sharepoint.com/:f:/g/personal/juliana_seta_soudobro_com_br/IgCwlTA-V3FvTaxAJTufbsCfAciyTkdVd525VIgk3u-GBi0?e=73sqqS'},
+  {nome: 'Planilha de Cubagem',
+   desc: 'Peso e caixa master por SKU — a mesma que alimenta a Calculadora',
+   url:  'https://soudobro-my.sharepoint.com/:x:/g/personal/luisa_soudobro_com_br/IQBTwzNlEAqPRZNETEpvtmWGAdFywxVcxf4jola2-Nj2GgA?rtime=FgfUyX4k30g'},
+  {nome: 'Solicitação de degustação',
+   desc: 'Quadro no monday.com para pedir uma degustação',
+   url:  'https://soudobro-company.monday.com/boards/18396941394/'},
+  {nome: 'Dashboard · Trade Promotoria',
+   desc: 'Merchandising e visitas da promotoria',
+   url:  'https://igorsoudobro.github.io/promotoria-dobro/DashMerchan_2.html'}
 ];
 
 function vLinks(){
@@ -13648,8 +13906,8 @@ document.addEventListener('click', ev => {
 (function(){
   if(typeof VIEWS === 'undefined' || !Array.isArray(VIEWS)) return;
 
-  const ORDEM = ['resumo','metas','dre','carteira','crm','gestcat','canais',
-                 'mix','penetracao','geo','cnpj','ranking','sla','calc',
+  const ORDEM = ['resumo','metas','dre','carteira','crm','calc','gestcat',
+                 'canais','mix','penetracao','geo','cnpj','ranking','sla',
                  'links','degustacoes','acessos','orcamento'];
   /* so os rotulos que mudam; o resto fica como o bloco de origem escreveu */
   const ROTULO = {crm: 'CRM de novos leads',
