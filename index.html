@@ -5712,13 +5712,28 @@ function shrDados(){
 
   const soma = (alvo, chave, m, r) => {
     const o = alvo[chave] = alvo[chave] || {};
-    const c = o[m] = o[m] || {fat: 0, vol: 0, luc: 0, liq: 0, cmv: 0};
+    const c = o[m] = o[m] || {fat: 0, vol: 0, luc: 0, liq: 0, cmv: 0,
+                              fatV: 0, cmvV: 0};
     c.fat += r.fat; c.vol += r.q;
     /* CMV para o modo M (custo / preco de venda), pedido do Igor em
        13/10/2026. Entra AQUI, na passada de venda+devolucao, e nao na segunda:
        M e custo sobre RECEITA, e bonificacao/amostra nao tem receita - incluir
        inflaria o custo contra uma base que nao existe. */
     c.cmv += r.cmv;
+    /* O M NAO LEVA DEVOLUCAO (15/10/2026, correcao pedida pelo Igor).
+       "O M e apenas uma referencia do valor de venda dividido pelo custo" - e
+       devolucao nao e venda. Por isso ele passou a ter base propria (fatV/cmvV),
+       so com Tipo=Venda, em vez de dividir a base liquida com o resto da tela.
+
+       O que motivou: a devolucao da TDL (NF 29797) deixou o mes do BT Gel
+       Laranja no RCA com faturamento liquido NEGATIVO (-R$ 5.162) e CMV tambem
+       negativo. Dois negativos divididos dao um M positivo enorme - 335,9% - que
+       nao descreve custo nenhum. Com base so de venda, o mesmo mes da 47,9%, que
+       e o custo real sobre o que foi vendido.
+
+       As outras colunas (faturamento, share, ticket, margem liquida) continuam
+       liquidas de proposito: la a devolucao TEM de pesar. */
+    if(r.venda){ c.fatV += r.fat; c.cmvV += r.cmv; }
   };
   /* O contrato por CNPJ e consultado uma vez por cliente e guardado: a conta
      passou a rodar por LINHA, e sao dezenas de milhares. */
@@ -5744,8 +5759,9 @@ function shrDados(){
     soma(cat, c, r.m, r);
     soma(sku, r.sk, r.m, r);
     catDoSku[r.sk] = c;
-    const t = tot[r.m] = tot[r.m] || {fat: 0, vol: 0, cmv: 0};
+    const t = tot[r.m] = tot[r.m] || {fat: 0, vol: 0, cmv: 0, fatV: 0, cmvV: 0};
     t.fat += r.fat; t.vol += r.q; t.cmv += r.cmv;
+    if(r.venda){ t.fatV += r.fat; t.cmvV += r.cmv; }
     const tc = totalCat[c] = totalCat[c] || {fat: 0, vol: 0};
     tc.fat += r.fat; tc.vol += r.q;
   });
@@ -5847,9 +5863,11 @@ function shrMotor(D, qual, modo){
   const ehPct = (qual === 'pct');
   const ehTic = (modo === 'tic');
   const ehMrg = (modo === 'mrg');
-  /* M = CMV / faturamento liquido. NAO e o inverso da 'Margem liquida' ao lado:
-     aquela desconta imposto, frete, comissao e contrato; esta e so custo sobre
-     preco. Sao duas perguntas diferentes e as duas cabem na mesma tela. */
+  /* M = CMV / faturamento DE VENDA (sem devolucao, desde 15/10/2026 - ver o
+     soma() do shrDados). NAO e o inverso da 'Margem liquida' ao lado: aquela
+     desconta imposto, frete, comissao e contrato e e liquida de devolucao;
+     esta e so custo sobre preco de venda. Sao duas perguntas diferentes e as
+     duas cabem na mesma tela. */
   const ehM = (modo === 'mcu');
   const cru = (o, m, campo) => (o && o[m]) ? (o[m][campo] || 0) : 0;
   /* No modo ticket o valor da célula é uma razão: sem volume não existe ticket,
@@ -5862,8 +5880,8 @@ function shrMotor(D, qual, modo){
       return b ? cru(o, m, 'luc') / b : null;
     }
     if(ehM){
-      const b = cru(o, m, 'fat');
-      return b ? cru(o, m, 'cmv') / b : null;
+      const b = cru(o, m, 'fatV');
+      return b ? cru(o, m, 'cmvV') / b : null;
     }
     if(!ehTic) return cru(o, m, modo);
     const v = cru(o, m, 'vol');
@@ -5891,7 +5909,7 @@ function shrMotor(D, qual, modo){
       /* ponderada pelo faturamento, mesma razao da margem: media de
          percentuais daria o mesmo peso a um mes de R$ 2 mil e a um de R$ 100 mil */
       let c = 0, f = 0;
-      D.meses.forEach(m => { c += cru(o, m, 'cmv'); f += cru(o, m, 'fat'); });
+      D.meses.forEach(m => { c += cru(o, m, 'cmvV'); f += cru(o, m, 'fatV'); });
       return f ? c / f : null;
     }
     if(ehTic){
@@ -6017,7 +6035,14 @@ function shrCard(qual, titulo, dica, ns){
     modo = SHARE_MODO[qual] = 'fat';
   /* O botão de ticket médio só existe no quadro de valores - ver o cabeçalho
      do shrTabela para o motivo. */
+  const DICA_MODO = {
+    mcu: 'Custo ÷ preço de venda. Só as linhas de venda — devolução não entra, ' +
+         'porque devolução não é venda.',
+    mrg: 'Lucro final ÷ faturamento líquido, já com devolução, imposto, frete, ' +
+         'comissão e contrato.'
+  };
   const bt = (m, rot) => '<button data-shr-modo="' + m + '"' +
+    (DICA_MODO[m] ? ' title="' + DICA_MODO[m] + '"' : '') +
     (modo === m ? ' class="on"' : '') + '>' + rot + '</button>';
   /* NAMESPACE (25/09/2026): os dois quadros passaram a aparecer no Resumo E na
      aba Gestao de categoria, entao existem DUAS copias no DOM ao mesmo tempo.
@@ -12794,17 +12819,23 @@ if(typeof VIEWS !== 'undefined' && Array.isArray(VIEWS)){
 let SKU_CRIT = {corte: 0.50, sku: null, canal: null};
 
 /* Soma por chave, so venda e devolucao: M e custo sobre RECEITA, e
-   bonificacao/amostra nao tem receita. */
+   bonificacao/amostra nao tem receita.
+
+   O M SAI DA BASE DE VENDA (fatV/cmvV), sem devolucao - 15/10/2026, mesma
+   correcao do quadro de Gestao de categoria. As colunas Faturamento e Volume do
+   card continuam LIQUIDAS, que e o que elas sempre mostraram: devolucao tem de
+   pesar no faturamento, so nao na referencia de custo sobre preco. */
 function skuCritAgrupar(rows, chaveDe){
   const m = {};
   rows.forEach(r => {
     if(!(r.venda || r.tipo === 0)) return;
     const k = chaveDe(r);
     if(k === null || k === undefined || k === '') return;
-    const o = m[k] = m[k] || {fat: 0, cmv: 0, q: 0};
+    const o = m[k] = m[k] || {fat: 0, cmv: 0, q: 0, fatV: 0, cmvV: 0};
     o.fat += r.fat; o.cmv += r.cmv; o.q += r.q;
+    if(r.venda){ o.fatV += r.fat; o.cmvV += r.cmv; }
   });
-  Object.values(m).forEach(o => { o.M = o.fat > 0 ? o.cmv / o.fat : null; });
+  Object.values(m).forEach(o => { o.M = o.fatV > 0 ? o.cmvV / o.fatV : null; });
   return m;
 }
 
@@ -12848,7 +12879,8 @@ function montarSkusCriticos(){
   const cabecalho =
     '<div class="card" id="cardSkuCrit"><div class="card-h">' +
     '<h3>SKUs críticos</h3>' +
-    '<span class="hint">M = custo ÷ preço de venda · clique para abrir por canal</span>' +
+    '<span class="hint">M = custo ÷ preço de venda, só venda (devolução não ' +
+    'entra) · clique para abrir por canal</span>' +
     '<span style="margin-left:auto;display:flex;align-items:center;gap:8px">' +
     '<label style="font-size:11px;color:var(--muted);font-weight:600">M acima de</label>' +
     '<input id="skuCritCorte" type="number" min="1" max="99" step="1" ' +
