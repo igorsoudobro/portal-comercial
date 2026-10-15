@@ -10711,16 +10711,29 @@ function metasRender(M){
   const atingSub = aberto
     ? ('mes em aberto - ' + diaCorte + ' de ' + dias + ' dias')
     : (comMeta.length + ' mes(es) fechado(s)');
+
+  /* A META DE BLOCO TAMBEM VALE AQUI (15/10/2026).
+     Em 14/10 ensinei o Resumo a ler as metas de bloco, mas esqueci este cartao:
+     o Resumo mostrava R$ 1.589.764 em janeiro e a aba Metas, ao lado, dizia
+     "sem meta" para o mesmo mes e o mesmo filtro. Mesma regra, mesma funcao -
+     filtrou vendedor, canal, UF ou regiao, o bloco sai de cena e o travessao
+     volta, porque ai ele nao descreve mais o que esta na tela. */
+  const bloco = (typeof metasBlocoDoFiltro === 'function')
+    ? metasBlocoDoFiltro(M, comMeta) : null;
+  const metaKpi = bloco ? bloco.meta : (temMeta ? somaMeta : null);
+  const pctKpi  = bloco ? metasPct(somaReal, bloco.meta) : pctGeral;
+  const metaSub = (bloco ? metasEsc(bloco.nome) + ' · ' : '') +
+                  metasEsc(comMeta.join(', '));
   const kpis =
     '<div class="kpis">' +
       '<div class="kpi"><div class="lab">Meta do periodo</div><div class="val">' +
-        (temMeta ? brl(somaMeta) : '<span class="semmeta">sem meta</span>') +
-        '</div><div class="sub">' + metasEsc(comMeta.join(', ')) + '</div></div>' +
+        (metaKpi !== null ? brl(metaKpi) : '<span class="semmeta">sem meta</span>') +
+        '</div><div class="sub">' + metaSub + '</div></div>' +
       '<div class="kpi"><div class="lab">Realizado</div><div class="val">' +
         brl(somaReal) + '</div><div class="sub">faturamento liquido</div></div>' +
       ritmoHtml +
       '<div class="' + atingCls + '"><div class="lab">Atingimento</div><div class="val">' +
-        metasPctTxt(pctGeral) + '</div><div class="sub">' + atingSub + '</div></div>' +
+        metasPctTxt(pctKpi) + '</div><div class="sub">' + atingSub + '</div></div>' +
     '</div>';
 
   /* --- tabela por Modelo: vem PRIMEIRO (pedido do Igor em 21/09/2026) ---
