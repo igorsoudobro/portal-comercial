@@ -3159,6 +3159,60 @@ function indexarCarteira(){
   });
 }
 
+/* ---------------- RECORRENCIA MEDIA (15/10/2026, pedido do Igor) -----------
+   Media SIMPLES da recorrencia dos clientes de um recorte da carteira - uma
+   linha por vendedor no Resumo, uma por canal em Canais & Ticket.
+
+   DE ONDE VEM: CART_MET[cn].rec, exatamente a coluna "Recorrência" da aba
+   Carteira. rec = (ultima compra - primeira compra) / (pedidos - 1), em dias.
+   Escolhi essa fonte, e nao o CART_DATAS.recor (que cobre mais CNPJs), para que
+   o numero seja auditavel: abrir a carteira do vendedor e tirar a media das
+   celulas da tela tem que dar o mesmo resultado. A diferenca entre as duas
+   fontes e de UM cliente em toda a base.
+
+   ESTATICO: nao olha o filtro de mes. A recorrencia de um cliente e a cadencia
+   dele no ano inteiro; recalcular "a recorrencia dentro de Outubro" daria o
+   intervalo entre os pedidos de um mes so, que e outra pergunta.
+
+   QUEM FICA DE FORA, e isto importa para ler o numero: quem tem UM pedido so
+   nao tem intervalo (sao 702 clientes), e quem nao comprou nenhuma vez nao tem
+   nada (sao ~1.640). Sobram 692 dos 3.032 da carteira. Entao a media descreve
+   QUEM JA TEM CADENCIA, nao a carteira inteira - por isso a contagem vai no
+   title de cada celula e a media some quando ninguem tem recorrencia.
+
+   MEDIA SIMPLES, nao ponderada por numero de pedidos como a linha "Todos" da
+   aba Carteira: foi o que o Igor pediu, e aqui faz sentido - a pergunta e "de
+   quanto em quanto tempo compra o cliente tipico deste vendedor", e nesse caso
+   um cliente grande nao vale por dez. */
+function recMediaDe(lista){
+  let soma = 0, n = 0, total = 0;
+  (lista || []).forEach(c => {
+    total++;
+    const M = (typeof CART_MET === 'object' && CART_MET) ? CART_MET[c.cn] : null;
+    if(M && M.rec !== null && M.rec !== undefined){ soma += M.rec; n++; }
+  });
+  return {media: n ? soma / n : null, n: n, total: total};
+}
+
+/* Poucos clientes com cadencia = media fraca. Abaixo de 5 ela aparece apagada,
+   como a cobertura baixa da coluna de desconto: o INATIVO tem UM cliente com
+   recorrencia, e "10d" ali, em preto, viraria um fato sobre 223 clientes. */
+const REC_MIN_CONFIAVEL = 5;
+function recCelula(o){
+  if(!o || o.media === null)
+    return '<span title="nenhum cliente deste recorte tem 2 ou mais pedidos — ' +
+           'sem dois pedidos não existe intervalo para medir" ' +
+           'style="color:var(--muted)">—</span>';
+  const fraco = o.n < REC_MIN_CONFIAVEL;
+  const dica = 'média simples da recorrência de ' + o.n + ' cliente(s) com 2 ou ' +
+               'mais pedidos, de ' + o.total + ' na carteira. Mesma conta da ' +
+               'coluna Recorrência da aba Carteira; não muda com o filtro de mês' +
+               (fraco ? ' — poucos clientes, leia com reserva' : '');
+  return '<span class="mono" title="' + dica + '"' +
+         (fraco ? ' style="opacity:.55"' : '') + '>' +
+         Math.round(o.media) + 'd</span>';
+}
+
 /* ------------------- AJUSTE 2: ativo/inativo POR MES DE REFERENCIA ---------
    Antes eu usava CART_MET[cn].diasUlt, que e uma foto tirada na geracao do
    JSON: dava o mesmo numero em Marco e em Abril, o que o Igor notou que estava
@@ -3991,6 +4045,17 @@ function vResumoNovo(){
     else if(s === 'inativo') o.inativos++;
     else o.semAno++;
   });
+  /* Recorrencia media do vendedor (15/10/2026). Sai da CARTEIRA filtrada, a
+     mesma lista das colunas de clientes ao lado - e nao do L, que e o recorte
+     do mes. Por isso ela nao se mexe quando o filtro de mes muda. */
+  const recPorVend = {};
+  (() => {
+    const g = {};
+    carteiraFiltrada.forEach(c => { (g[c.v] = g[c.v] || []).push(c); });
+    Object.keys(g).forEach(v => { recPorVend[v] = recMediaDe(g[v]); });
+  })();
+  const recTotVend = recMediaDe(carteiraFiltrada);
+
   // faturamento, pedidos e novos por vendedor, no periodo
   const primeira = {};
   ROWS.forEach(r => { if(r.venda && r.cn){
@@ -4096,6 +4161,7 @@ function vResumoNovo(){
          liquida nao existe percentual: devolve null e a celula mostra
          travessao, em vez de 0% lido como "nao bonificou". */
       pboni: dv.fatLiq > 0 ? dv.boni / dv.fatLiq : null,
+      rec: recPorVend[v] || null,
       desc: (d && d.tab > 0) ? 1 - d.real / d.tab : null,
       descCob: (d && d.fatTot > 0) ? d.real / d.fatTot : 0
     };
@@ -4169,7 +4235,8 @@ function vResumoNovo(){
   const tabela =
     '<div class="card" id="cardVendResumo"><div class="card-h">' +
     '<h3>Por vendedor</h3><span class="hint">ticket médio no período · desconto ' +
-    'sobre o preço de consumidor, ponderado por receita · carteira = ativos + ' +
+    'sobre o preço de consumidor, ponderado por receita · recorrência média da ' +
+    'carteira dele, sem olhar o filtro de mês · carteira = ativos + ' +
     'atenção + inativos + não compraram em ' + anoDado +
     '</span></div>' +
     '<div class="scroll"><table class="tbl-vend"><thead><tr>' +
@@ -4181,6 +4248,10 @@ function vResumoNovo(){
     '<th style="text-align:right">Bonif.+Amostra</th>' +
     '<th style="text-align:right" title="(bonificação + amostra) sobre o ' +
       'faturamento líquido — mesmo critério do cartão do Resumo">% bonif.</th>' +
+    /* Recorrencia media ao lado do % bonif., onde o Igor pediu (15/10/2026). */
+    '<th style="text-align:right" title="De quantos em quantos dias compra o ' +
+      'cliente típico da carteira dele. Média simples, só de quem tem 2 ou mais ' +
+      'pedidos. Não muda com o filtro de mês.">Recorrência média</th>' +
     '<th style="text-align:right">Rentab.</th>' +
     '<th style="text-align:right">Desc. médio</th>' +
     /* ORDEM NOVA (13/10/2026, pedido do Igor): depois do desconto vem o bloco
@@ -4218,6 +4289,9 @@ function vResumoNovo(){
       '<td class="mono" style="text-align:right">' +
         (r.boni ? brl(r.boni) : '—') + '</td>' +
       '<td style="text-align:right">' + celulaPboni(r) + '</td>' +
+      '<td style="text-align:right" data-v="' +
+        (r.rec && r.rec.media !== null ? Math.round(r.rec.media) : '') + '">' +
+        recCelula(r.rec) + '</td>' +
       '<td style="text-align:right">' + celulaRent(r) + '</td>' +
       '<td style="text-align:right">' + celulaDesc(r) + '</td>' +
       '<td class="mono" style="text-align:right;color:var(--muted)">' + n0(r.cart) + '</td>' +
@@ -4248,6 +4322,11 @@ function vResumoNovo(){
     '<td class="mono tot" style="text-align:right">' + brl(tot.boni) + '</td>' +
     '<td class="mono tot" style="text-align:right">' +
       (totDre.fatLiq > 0 ? pct(totDre.boni / totDre.fatLiq) : '—') + '</td>' +
+    /* O total e a media de TODA a carteira filtrada, nao a media das medias:
+       assim um vendedor com 4 clientes nao pesa igual a um com 248. */
+    '<td class="mono tot" style="text-align:right" data-v="' +
+      (recTotVend.media !== null ? Math.round(recTotVend.media) : '') + '">' +
+      (recTotVend.media !== null ? Math.round(recTotVend.media) + 'd' : '—') + '</td>' +
     // A rentabilidade do TOTAL nao e a soma nem a media das linhas: e o dre() do
     // recorte inteiro. Somar percentuais daria numero sem significado.
     '<td class="mono tot" style="text-align:right">' +
@@ -4395,6 +4474,20 @@ function vCanaisNovo(){
   Object.keys(porCanal).forEach(k => { dCanal[k] = dre(porCanal[k]); });
   const dTot = dre(L);
 
+  /* RECORRENCIA MEDIA POR CANAL (15/10/2026, pedido do Igor).
+     O canal do CLIENTE, lido da carteira - nao o canal da nota. Sao quase
+     sempre o mesmo, mas o cliente e que tem cadencia, e um cliente pertence a
+     um canal so. Respeita o filtro de vendedor/modelo (carteiraDoFiltro), nao o
+     de mes: a recorrencia e do ano, nao do recorte. */
+  const cartCanal = (typeof carteiraDoFiltro === 'function') ? carteiraDoFiltro() : [];
+  const recPorCanal = {};
+  (() => {
+    const g = {};
+    cartCanal.forEach(c => { const k = c.ca || '(vazio)'; (g[k] = g[k] || []).push(c); });
+    Object.keys(g).forEach(k => { recPorCanal[k] = recMediaDe(g[k]); });
+  })();
+  const recTotCanal = recMediaDe(cartCanal);
+
   const thExtra = verMargem ? '<th>Margem bruta</th><th>Margem líquida</th>' : '';
   const tdExtra = (k) => {
     if(!verMargem) return '';
@@ -4412,6 +4505,9 @@ function vCanaisNovo(){
     '<div class="card"><div class="card-h"><h3>Faturamento e ticket por canal</h3></div>' +
     '<div class="scroll"><table><thead><tr><th>Canal</th><th>Faturamento</th>' +
     '<th>% total</th><th>Clientes</th><th>Notas</th><th>Ticket médio</th>' +
+    '<th title="De quantos em quantos dias compra o cliente típico deste ' +
+      'canal. Média simples, só de quem tem 2 ou mais pedidos. Não muda com o ' +
+      'filtro de mês.">Recorrência média</th>' +
     thExtra + '</tr></thead><tbody>' +
     /* data-canal + cursor: o clique abre a lista de clientes daquele canal
        (pedido do Igor, 26/08/2026). O atributo carrega o nome do canal em vez de
@@ -4425,13 +4521,20 @@ function vCanaisNovo(){
       '<td class="mono" style="color:var(--muted)">' + (tf ? pct(r.fat / tf) : '') + '</td>' +
       '<td class="mono">' + r.clientes + '</td>' +
       '<td class="mono">' + n0(r.nfs) + '</td>' +
-      '<td class="mono">' + brl(r.ticket) + '</td>' + tdExtra(r.k) + '</tr>').join('') +
+      '<td class="mono">' + brl(r.ticket) + '</td>' +
+      '<td data-v="' + ((recPorCanal[r.k] && recPorCanal[r.k].media !== null)
+                          ? Math.round(recPorCanal[r.k].media) : '') + '">' +
+        recCelula(recPorCanal[r.k]) + '</td>' + tdExtra(r.k) + '</tr>').join('') +
     '<tr class="tot"><td class="tot">Total</td>' +
     '<td class="mono tot">' + brl(tf) + '</td><td class="tot"></td>' +
     '<td class="mono tot">' +
       new Set(L.filter(r => r.venda && r.cn).map(r => r.cn)).size + '</td>' +
     '<td class="mono tot">' + n0(arr.reduce((a, r) => a + r.nfs, 0)) + '</td>' +
     '<td class="tot"></td>' +
+    /* Media de toda a carteira filtrada, nao media das medias por canal. */
+    '<td class="mono tot" data-v="' +
+      (recTotCanal.media !== null ? Math.round(recTotCanal.media) : '') + '">' +
+      (recTotCanal.media !== null ? Math.round(recTotCanal.media) + 'd' : '—') + '</td>' +
     (adm ? '<td class="mono tot">' + pct(dTot.margem) + '</td>' +
            '<td class="mono tot">' + pct(dTot.rent) + '</td>' : '') +
     '</tr></tbody></table></div>' +
