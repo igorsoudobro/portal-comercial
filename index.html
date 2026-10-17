@@ -14193,6 +14193,211 @@ document.addEventListener('click', ev => {
   }catch(e){}
 })();
 
+/* ==========================================================================
+   FAIXA "HOJE ATÉ AGORA"  (17/10/2026, pedido do Igor)
+   ==========================================================================
+
+   DE ONDE VEM O DADO
+   ------------------
+   faixa.json, na MESMA pasta do dados_dashboard.json, gravado de 10 em 10
+   minutos por atualizar_faixa_portal.py — que lê o espelho do OMIE num
+   Supabase e grava numa pasta sincronizada do OneDrive.
+
+   POR QUE NÃO O NAVEGADOR FALANDO DIRETO COM O SUPABASE
+   -----------------------------------------------------
+   Seria mais simples e foi a primeira ideia. Mas exigiria a chave pública do
+   Supabase DENTRO deste arquivo — que é público no GitHub Pages. Qualquer
+   pessoa copiaria a chave e leria o faturamento do dia da Dobro. A regra do
+   Igor é que o HTML não carrega dado sensível, e uma chave que abre o dado é
+   a mesma coisa que o dado. Passando pelo SharePoint, a leitura exige o login
+   Microsoft que o vendedor já faz.
+
+   É o mesmo desenho do Polaris, o outro projeto que usa esse Supabase: as 19
+   funções dele só aceitam execução por 'postgres' e 'service_role' — nunca
+   pelo papel público. Confirmado no catálogo em 17/10/2026.
+
+   CADA UM VÊ O SEU
+   ----------------
+   Admin e moderador veem o total da casa. O vendedor vê a soma dos vendedores
+   que ele já enxerga no resto do Portal (VEND_VIS) — ninguém passa a ver o que
+   não via.
+
+   A quebra por vendedor usa o **de-para do V8** (Parametros!AI:AK), o mesmo que
+   a macro usa: no espelho o nome é "Luiz Gonzaga Netto" e aqui é
+   "RCA - Luiz Netto". Quando a nota vem sem vendedor — R$ 817 mil em 2026 — o
+   crédito vai para o dono do CNPJ na carteira, que é a regra escrita no próprio
+   bloco ("modelo vazio = pela carteira").
+
+   Conferido contra a tabela "Por vendedor" de outubro/2026: a maioria bate
+   exato, o resto fica em R$ 25 a R$ 100. A exceção é um par (Gabriela/Talita)
+   que troca R$ 2.041 entre si — uma nota de cliente que mudou de dono.
+
+   STALENESS VISÍVEL
+   -----------------
+   A faixa sempre mostra a hora do número. Se a máquina que publica dormir, a
+   tela diz "atualizado às 18:40" em vez de fingir que é de agora — a mesma
+   lição que a aba de orçamento aprendeu quando o OneDrive travou calado e o
+   Portal serviu dado de 8 dias.
+   ========================================================================== */
+const FAIXA_ARQ = "faixa.json";
+const FAIXA_REFRESCO_MS = 5 * 60 * 1000;   /* a origem muda a cada 10 min */
+const FAIXA_VELHA_MIN = 30;                /* acima disto, avisa na tela */
+let FAIXA_DADO = null, FAIXA_BUSCANDO = false, FAIXA_TIMER = null;
+
+function faixaEhCasa(){
+  try{
+    return !!(SESSION && SESSION.isAdmin) ||
+           (typeof ehModerador === 'function' && ehModerador());
+  }catch(e){ return false; }
+}
+
+/* O recorte de quem está olhando. Devolve null quando não há o que mostrar —
+   vendedor sem nenhuma venda hoje e sem quebra no arquivo (versão antiga do
+   faixa.json, por exemplo): melhor faixa ausente do que faixa zerada sem
+   explicação. */
+function faixaRecorte(d){
+  if(faixaEhCasa()) return {hoje: d.hoje || {}, mes: d.mes || {}, quem: null};
+  const pv = d.por_vendedor;
+  if(!pv) return null;
+  /* Soma os vendedores que esta pessoa já enxerga no resto do Portal. Para
+     quem vê um só — quase todo mundo — é o número dele. Para quem vê vários
+     (o Fellipe), 'clientes' pode contar duas vezes um cliente atendido por
+     dois vendedores; o faturamento e os pedidos continuam exatos. */
+  const soma = (mapa) => {
+    const r = {receita: 0, pedidos: 0, clientes: 0};
+    Object.keys(mapa || {}).forEach(v => {
+      if(!VEND_VIS.has(v)) return;
+      r.receita  += (mapa[v].receita  || 0);
+      r.pedidos  += (mapa[v].pedidos  || 0);
+      r.clientes += (mapa[v].clientes || 0);
+    });
+    return r;
+  };
+  return {hoje: soma(pv.hoje), mes: soma(pv.mes), quem: 'seus clientes'};
+}
+
+async function faixaBaixar(){
+  const token = await msToken();
+  if(!token) return null;
+  const caminho = (PASTA_DADOS + "/" + FAIXA_ARQ)
+                    .split("/").map(encodeURIComponent).join("/");
+  const url = GRAPH_BASE + "/sites/" + MS_SITE_ID + "/drive/root:/" + caminho;
+  const res = await fetch(url, { headers: { Authorization: "Bearer " + token } });
+  /* 404 = o arquivo ainda não foi publicado. A faixa some, sem erro na tela:
+     ela é um extra, e extra que quebra a aba inteira não vale a pena. */
+  if(!res.ok) return null;
+  const meta = await res.json();
+  const r2 = await fetch(meta["@microsoft.graph.downloadUrl"]);
+  if(!r2.ok) return null;
+  return await r2.json();
+}
+
+function faixaHtml(d, corte){
+  const h = corte.hoje || {}, m = corte.mes || {};
+  const ger = d.gerado_em ? new Date(d.gerado_em) : null;
+  /* Math.max(0, ...): relógio da máquina que publica adiantado em relação ao de
+     quem olha daria idade NEGATIVA — "há -55 min" na tela parece defeito, e o
+     leitor para para conferir se a faixa quebrou. Zero é a leitura honesta: o
+     número é de agora ou do futuro imediato, e nos dois casos é recente. */
+  const idade = ger ? Math.max(0, Math.round((Date.now() - ger.getTime()) / 60000))
+                    : null;
+  const velha = idade !== null && idade > FAIXA_VELHA_MIN;
+  const hora = ger ? ger.toLocaleTimeString('pt-BR',
+                       {hour: '2-digit', minute: '2-digit'}) : '—';
+  const bloco = (rot, valor, sub) =>
+    '<div style="min-width:150px">' +
+    '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;' +
+      'color:var(--muted);font-weight:700">' + rot + '</div>' +
+    '<div style="font-size:21px;font-weight:800;color:var(--navy);' +
+      'font-variant-numeric:tabular-nums;line-height:1.15">' + valor + '</div>' +
+    '<div style="font-size:11px;color:var(--muted)">' + sub + '</div></div>';
+
+  /* "nenhum pedido ainda" e não "R$ 0,00": às 8h da manhã o zero verdadeiro
+     parece defeito, e quem lê perde tempo conferindo se a faixa quebrou. */
+  const vHoje = h.pedidos ? brl(h.receita)
+    : '<span style="font-size:15px;font-weight:600;color:var(--muted)">' +
+      'nenhum pedido ainda</span>';
+  const sHoje = h.pedidos
+    ? (h.pedidos + (h.pedidos === 1 ? ' pedido' : ' pedidos') + ' · ' +
+       h.clientes + (h.clientes === 1 ? ' cliente' : ' clientes'))
+    : 'desde a meia-noite';
+  const mesNome = (() => {
+    try{ const [a, mm] = String((d.mes || {}).mes).split('-');
+         return (MESES_ORD[parseInt(mm, 10) - 1] || '') + ' ' + a; }
+    catch(e){ return 'no mês'; }
+  })();
+
+  return '<div class="card" id="cardFaixaHoje" style="display:flex;' +
+    'align-items:center;gap:28px;padding:13px 17px;margin-bottom:14px;' +
+    'border-left:4px solid var(--yellow);flex-wrap:wrap">' +
+    bloco('Hoje até agora', vHoje, sHoje) +
+    bloco(mesNome, brl(m.receita),
+          (m.pedidos || 0) + ' pedidos · ' + (m.clientes || 0) + ' clientes') +
+    '<div style="margin-left:auto;text-align:right;font-size:11px;' +
+      'color:' + (velha ? '#C0392B' : 'var(--muted)') + '">' +
+      (velha ? '<b>atrasada</b> — ' : '') + 'atualizado às ' + hora +
+      (idade !== null ? ' (há ' + idade + ' min)' : '') +
+      /* O AVISO DE QUE SÃO DUAS FONTES. Esta faixa vem do OMIE e INCLUI hoje;
+         os cartões logo abaixo vêm do V8 e vão até ontem. Em outubro/2026 a
+         diferença medida foi de R$ 46 no mês fechado — mas ao longo do dia ela
+         cresce, e é assim que tem de ser. Sem esta linha, alguém compara os
+         dois números e abre um chamado. */
+      '<br><span style="opacity:.8">' +
+      (corte.quem ? corte.quem + ' · ' : 'comercial PJ, sem o site · ') +
+      'direto do OMIE, inclui hoje — os cartões abaixo vão até ontem' +
+      '</span></div></div>';
+}
+
+function faixaPintar(){
+  const view = document.getElementById('v-resumo');
+  const velho = document.getElementById('cardFaixaHoje');
+  const corte = FAIXA_DADO ? faixaRecorte(FAIXA_DADO) : null;
+  if(!view || !corte){ if(velho) velho.remove(); return; }
+  const html = faixaHtml(FAIXA_DADO, corte);
+  if(velho) velho.outerHTML = html;
+  else view.insertAdjacentHTML('afterbegin', html);
+}
+
+async function faixaAtualizar(forcar){
+  if(FAIXA_BUSCANDO) return;
+  FAIXA_BUSCANDO = true;
+  try{
+    const d = await faixaBaixar();
+    if(d) FAIXA_DADO = d;
+    faixaPintar();
+  }catch(e){
+    console.error('faixa:', e);      /* silêncio na tela, barulho no console */
+  }finally{
+    FAIXA_BUSCANDO = false;
+  }
+}
+
+/* Entra no render do Resumo sem reescrevê-lo: captura a função da aba e
+   acrescenta. Mesmo padrão do resto do arquivo — o VIEWS guarda a referência,
+   então trocar a função solta não teria efeito. */
+(function(){
+  try{
+    const v = (typeof VIEWS !== 'undefined') &&
+              VIEWS.find(x => x.id === 'resumo');
+    if(!v) return;
+    const orig = v.fn;
+    v.fn = function(){
+      const r = orig.apply(this, arguments);
+      /* pinta o que já está em memória na hora (sem esperar a rede) e busca
+         o novo em seguida */
+      try{ faixaPintar(); }catch(e){ console.error('faixa:', e); }
+      faixaAtualizar();
+      return r;
+    };
+    if(!FAIXA_TIMER) FAIXA_TIMER = setInterval(() => {
+      /* só quando a aba do Resumo está na tela e a janela está à frente:
+         ninguém precisa de rede gastando em aba escondida */
+      const vr = document.getElementById('v-resumo');
+      if(vr && vr.classList.contains('on') && !document.hidden) faixaAtualizar();
+    }, FAIXA_REFRESCO_MS);
+  }catch(e){ console.error('faixa (ligação):', e); }
+})();
+
 </script>
 </body>
 </html>
