@@ -14327,12 +14327,25 @@ function faixaHtml(d, corte){
     catch(e){ return 'no mês'; }
   })();
 
+  /* O LUCRO AO VIVO, só para quem já vê lucro no resto do Portal.
+     Conferido contra o fechamento de outubro/2026: faturamento 0,01%,
+     CMV 0,00%, margem idêntica, lucro −0,8%. Duas peças são estimativa e
+     estão marcadas: o imposto (por UF, porque o real só existe por nota e a
+     tabela de notas do espelho cobre 3% das linhas) e o frete DO DIA — o dos
+     dias já fechados é o real, que veio do relatório do OMIE. */
+  const dre = (faixaEhCasa() && d.dre) ? d.dre.mes : null;
+  const blocoLucro = (dre && dre.fat)
+    ? bloco('Lucro no mês', brl(dre.lucro),
+            pct(dre.rentab) + ' de rentabilidade')
+    : '';
+
   return '<div class="card" id="cardFaixaHoje" style="display:flex;' +
     'align-items:center;gap:28px;padding:13px 17px;margin-bottom:14px;' +
     'border-left:4px solid var(--yellow);flex-wrap:wrap">' +
     bloco('Hoje até agora', vHoje, sHoje) +
     bloco(mesNome, brl(m.receita),
           (m.pedidos || 0) + ' pedidos · ' + (m.clientes || 0) + ' clientes') +
+    blocoLucro +
     '<div style="margin-left:auto;text-align:right;font-size:11px;' +
       'color:' + (velha ? '#C0392B' : 'var(--muted)') + '">' +
       (velha ? '<b>atrasada</b> — ' : '') + 'atualizado às ' + hora +
@@ -14345,7 +14358,47 @@ function faixaHtml(d, corte){
       '<br><span style="opacity:.8">' +
       (corte.quem ? corte.quem + ' · ' : 'comercial PJ, sem o site · ') +
       'direto do OMIE, inclui hoje — os cartões abaixo vão até ontem' +
-      '</span></div></div>';
+      '</span></div>' + faixaDetalhe(dre) + faixaAviso(d) + '</div>';
+}
+
+/* A linha de baixo: de onde o lucro saiu. Sem ela o número aparece sozinho e
+   ninguém consegue conferir nem desconfiar dele na hora certa. */
+function faixaDetalhe(dre){
+  if(!dre || !dre.fat) return '';
+  const it = (rot, v, obs) =>
+    '<span style="white-space:nowrap">' + rot + ' <b>' + brl(v) + '</b>' +
+    (obs ? '<span style="opacity:.7"> ' + obs + '</span>' : '') + '</span>';
+  return '<div style="flex-basis:100%;margin-top:9px;padding-top:9px;' +
+    'border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);' +
+    'display:flex;gap:16px;flex-wrap:wrap">' +
+    '<span style="white-space:nowrap">margem bruta <b>' + pct(dre.margem) +
+      '</b></span>' +
+    it('CMV', dre.cmv) +
+    it('imposto', dre.imp, '(estimado)') +
+    it('frete', dre.fr, dre.fr_estimado ? '(hoje estimado)' : '') +
+    it('comissão', dre.com) +
+    it('contrato', dre.contrato) +
+    it('bonif.+amostra', dre.boni) +
+    '</div>';
+}
+
+/* O VEREDITO DA TRAVA (17/10/2026).
+   Existem dois caminhos calculando o mesmo faturamento: a macro do V8, uma vez
+   por dia, e o espelho do OMIE, de dez em dez minutos. Uma conferência diária
+   compara os dois e escreve o resultado dentro do próprio faixa.json.
+
+   Só aparece quando há o que dizer, e só para quem pode agir — avisar o
+   vendedor que duas fontes internas divergem não o ajuda a vender. */
+function faixaAviso(d){
+  const c = d && d.conferencia;
+  if(!c || c.ok || !faixaEhCasa()) return '';
+  const lista = (c.avisos || []).map(a =>
+    '<li style="margin-top:2px">' + String(a).replace(/[<>]/g, '') + '</li>').join('');
+  return '<div style="flex-basis:100%;margin-top:10px;padding:8px 11px;' +
+    'background:#FDF1EC;border-left:3px solid #C0392B;border-radius:6px;' +
+    'font-size:12px;color:#8A2B20">' +
+    '<b>Conferência diária:</b> o número ao vivo e o do fechamento não estão ' +
+    'batendo.<ul style="margin:4px 0 0 16px;padding:0">' + lista + '</ul></div>';
 }
 
 function faixaPintar(){
